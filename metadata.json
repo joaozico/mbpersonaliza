@@ -1,0 +1,8 @@
+{
+  "name": "MB Personaliza Integrado ao Webservices",
+  "description": "Loja online e catálogo digital de brindes, papelaria e comunicação visual com painel de personalização de layout, gestão de orçamentos, pedidos, estoque e controle de acessos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
