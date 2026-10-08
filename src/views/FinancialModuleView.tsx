@@ -10,6 +10,8 @@ import {
   FinancialAuditEntry,
   RolePermissions,
   UserRole,
+  Category,
+  Subcategory,
 } from '../types';
 import { StorageService } from '../services/storage';
 import {
@@ -49,6 +51,10 @@ import {
   Check,
   AlertCircle,
   HelpCircle,
+  Power,
+  Percent,
+  Layers,
+  Info,
 } from 'lucide-react';
 
 interface FinancialModuleViewProps {
@@ -265,6 +271,7 @@ export const FinancialModuleView: React.FC<FinancialModuleViewProps> = ({
     setPaymentMethods(StorageService.getFinancialPaymentMethods(currentUser));
     setSettings(StorageService.getFinancialSettings(currentUser));
     setAuditLogs(StorageService.getFinancialAudit(currentUser));
+    setCatalogCategories(StorageService.getCategories());
   };
 
   // Feedback notifications
@@ -278,6 +285,70 @@ export const FinancialModuleView: React.FC<FinancialModuleViewProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+
+  // Estados para Gestão de Cadastros (Categorias, Centros de Custo, Contas e Formas de Pagamento)
+  const [cadastrosSearch, setCadastrosSearch] = useState('');
+  const [cadastrosStatusFilter, setCadastrosStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [categoryViewMode, setCategoryViewMode] = useState<'financial' | 'catalog'>('financial');
+  const [catalogCategories, setCatalogCategories] = useState<Category[]>(() => StorageService.getCategories());
+
+  // Modal Categoria Financeira
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<FinancialCategory | null>(null);
+  const [catFormName, setCatFormName] = useState('');
+  const [catFormType, setCatFormType] = useState<'receita' | 'despesa' | 'ambos'>('receita');
+  const [catFormColor, setCatFormColor] = useState('#10B981');
+  const [catFormDesc, setCatFormDesc] = useState('');
+  const [catFormActive, setCatFormActive] = useState(true);
+
+  // Modal Centro de Custo
+  const [isCostCenterModalOpen, setIsCostCenterModalOpen] = useState(false);
+  const [editingCostCenter, setEditingCostCenter] = useState<CostCenter | null>(null);
+  const [ccFormCode, setCcFormCode] = useState('');
+  const [ccFormName, setCcFormName] = useState('');
+  const [ccFormDesc, setCcFormDesc] = useState('');
+  const [ccFormActive, setCcFormActive] = useState(true);
+
+  // Modal Conta Bancária & Caixa
+  const [isBankAccountModalOpen, setIsBankAccountModalOpen] = useState(false);
+  const [editingBankAccount, setEditingBankAccount] = useState<BankAccount | null>(null);
+  const [bankFormName, setBankFormName] = useState('');
+  const [bankFormBankName, setBankFormBankName] = useState('');
+  const [bankFormAgency, setBankFormAgency] = useState('');
+  const [bankFormAccountNumber, setBankFormAccountNumber] = useState('');
+  const [bankFormType, setBankFormType] = useState<'corrente' | 'poupanca' | 'caixa_fisico' | 'carteira_digital'>('corrente');
+  const [bankFormInitialBalance, setBankFormInitialBalance] = useState(0);
+  const [bankFormCurrentBalance, setBankFormCurrentBalance] = useState(0);
+  const [bankFormIsDefault, setBankFormIsDefault] = useState(false);
+  const [bankFormActive, setBankFormActive] = useState(true);
+
+  // Modal Forma de Pagamento
+  const [isPaymentMethodModalOpen, setIsPaymentMethodModalOpen] = useState(false);
+  const [editingPaymentMethod, setEditingPaymentMethod] = useState<FinancialPaymentMethod | null>(null);
+  const [pmFormName, setPmFormName] = useState('');
+  const [pmFormCode, setPmFormCode] = useState('');
+  const [pmFormTaxPercent, setPmFormTaxPercent] = useState(0);
+  const [pmFormDaysToClear, setPmFormDaysToClear] = useState(0);
+  const [pmFormActive, setPmFormActive] = useState(true);
+
+  // Modal Categoria de Catálogo
+  const [isCatalogCategoryModalOpen, setIsCatalogCategoryModalOpen] = useState(false);
+  const [editingCatalogCategory, setEditingCatalogCategory] = useState<Category | null>(null);
+  const [catCatName, setCatCatName] = useState('');
+  const [catCatSlug, setCatCatSlug] = useState('');
+  const [catCatDesc, setCatCatDesc] = useState('');
+  const [catCatIcon, setCatCatIcon] = useState('Package');
+  const [catCatImage, setCatCatImage] = useState('');
+  const [catCatOrder, setCatCatOrder] = useState(1);
+
+  // Modal Confirmação de Exclusão (Deletar)
+  const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<{
+    type: 'financial_category' | 'cost_center' | 'bank_account' | 'payment_method' | 'catalog_category';
+    id: string;
+    title: string;
+    name: string;
+    warning?: string;
+  } | null>(null);
 
   // Modais de Operação
   const [isNewAccountModalOpen, setIsNewAccountModalOpen] = useState(false);
@@ -617,6 +688,393 @@ export const FinancialModuleView: React.FC<FinancialModuleViewProps> = ({
       window.print();
     } else {
       showToast('success', `Relatório financeiro gerado com sucesso (${format.toUpperCase()})!`);
+    }
+  };
+
+  // --------------------------------------------------------------------------
+  // HANDLERS DE CADASTROS (CATEGORIAS, CENTROS DE CUSTO, CONTAS, FORMAS PGTO)
+  // --------------------------------------------------------------------------
+
+  // 1. Categorias Financeiras
+  const handleOpenCategoryModal = (cat?: FinancialCategory) => {
+    if (!canManageCategories) {
+      showToast('error', 'Acesso negado: sem permissão para gerenciar categorias financeiras.');
+      return;
+    }
+    if (cat) {
+      setEditingCategory(cat);
+      setCatFormName(cat.name);
+      setCatFormType(cat.type);
+      setCatFormColor(cat.color || '#10B981');
+      setCatFormDesc(cat.description || '');
+      setCatFormActive(cat.active);
+    } else {
+      setEditingCategory(null);
+      setCatFormName('');
+      setCatFormType('despesa');
+      setCatFormColor('#E6007E');
+      setCatFormDesc('');
+      setCatFormActive(true);
+    }
+    setIsCategoryModalOpen(true);
+  };
+
+  const handleSaveFinancialCategory = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canManageCategories) {
+      showToast('error', 'Acesso negado: permissão necessária.');
+      return;
+    }
+    if (!catFormName.trim()) {
+      showToast('error', 'O nome da categoria é obrigatório.');
+      return;
+    }
+    const catToSave: FinancialCategory = {
+      id: editingCategory ? editingCategory.id : `fcat-${Date.now()}`,
+      name: catFormName.trim(),
+      type: catFormType,
+      color: catFormColor,
+      description: catFormDesc.trim() || undefined,
+      active: catFormActive,
+    };
+    const res = StorageService.saveFinancialCategory(catToSave, currentUser);
+    if (!res.success) {
+      showToast('error', res.error || 'Erro ao salvar categoria.');
+      return;
+    }
+    showToast('success', editingCategory ? 'Categoria atualizada com sucesso!' : 'Nova categoria cadastrada com sucesso!');
+    setIsCategoryModalOpen(false);
+    refreshAll();
+  };
+
+  const handleToggleCategoryActive = (cat: FinancialCategory) => {
+    if (!canManageCategories) return;
+    const updated = { ...cat, active: !cat.active };
+    StorageService.saveFinancialCategory(updated, currentUser);
+    showToast('success', `Categoria "${cat.name}" ${updated.active ? 'ativada' : 'desativada'}.`);
+    refreshAll();
+  };
+
+  // 2. Centros de Custo
+  const handleOpenCostCenterModal = (cc?: CostCenter) => {
+    if (!canManageCostCenters) {
+      showToast('error', 'Acesso negado: sem permissão para gerenciar centros de custo.');
+      return;
+    }
+    if (cc) {
+      setEditingCostCenter(cc);
+      setCcFormCode(cc.code);
+      setCcFormName(cc.name);
+      setCcFormDesc(cc.description || '');
+      setCcFormActive(cc.active);
+    } else {
+      setEditingCostCenter(null);
+      setCcFormCode(`CC-0${costCenters.length + 1}`);
+      setCcFormName('');
+      setCcFormDesc('');
+      setCcFormActive(true);
+    }
+    setIsCostCenterModalOpen(true);
+  };
+
+  const handleSaveCostCenter = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canManageCostCenters) {
+      showToast('error', 'Acesso negado: permissão necessária.');
+      return;
+    }
+    if (!ccFormName.trim() || !ccFormCode.trim()) {
+      showToast('error', 'Código e nome do centro de custo são obrigatórios.');
+      return;
+    }
+    const ccToSave: CostCenter = {
+      id: editingCostCenter ? editingCostCenter.id : `cc-${Date.now()}`,
+      code: ccFormCode.trim().toUpperCase(),
+      name: ccFormName.trim(),
+      description: ccFormDesc.trim() || undefined,
+      active: ccFormActive,
+    };
+    const res = StorageService.saveCostCenter(ccToSave, currentUser);
+    if (!res.success) {
+      showToast('error', res.error || 'Erro ao salvar centro de custo.');
+      return;
+    }
+    showToast('success', editingCostCenter ? 'Centro de custo atualizado com sucesso!' : 'Novo centro de custo cadastrado com sucesso!');
+    setIsCostCenterModalOpen(false);
+    refreshAll();
+  };
+
+  const handleToggleCostCenterActive = (cc: CostCenter) => {
+    if (!canManageCostCenters) return;
+    const updated = { ...cc, active: !cc.active };
+    StorageService.saveCostCenter(updated, currentUser);
+    showToast('success', `Centro de custo "${cc.name}" ${updated.active ? 'ativado' : 'desativado'}.`);
+    refreshAll();
+  };
+
+  // 3. Contas Bancárias & Caixas
+  const handleOpenBankAccountModal = (b?: BankAccount) => {
+    if (!canManageBankAccounts) {
+      showToast('error', 'Acesso negado: sem permissão para gerenciar contas bancárias.');
+      return;
+    }
+    if (b) {
+      setEditingBankAccount(b);
+      setBankFormName(b.name);
+      setBankFormBankName(b.bankName);
+      setBankFormAgency(b.agency);
+      setBankFormAccountNumber(b.accountNumber);
+      setBankFormType(b.accountType);
+      setBankFormInitialBalance(b.initialBalance);
+      setBankFormCurrentBalance(b.currentBalance);
+      setBankFormIsDefault(b.isDefault);
+      setBankFormActive(b.active);
+    } else {
+      setEditingBankAccount(null);
+      setBankFormName('');
+      setBankFormBankName('Banco Itaú Unibanco');
+      setBankFormAgency('');
+      setBankFormAccountNumber('');
+      setBankFormType('corrente');
+      setBankFormInitialBalance(0);
+      setBankFormCurrentBalance(0);
+      setBankFormIsDefault(bankAccounts.length === 0);
+      setBankFormActive(true);
+    }
+    setIsBankAccountModalOpen(true);
+  };
+
+  const handleSaveBankAccount = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canManageBankAccounts) {
+      showToast('error', 'Acesso negado: permissão necessária.');
+      return;
+    }
+    if (!bankFormName.trim() || !bankFormBankName.trim()) {
+      showToast('error', 'Nome identificador e banco/instituição são obrigatórios.');
+      return;
+    }
+    const bToSave: BankAccount = {
+      id: editingBankAccount ? editingBankAccount.id : `bank-${Date.now()}`,
+      name: bankFormName.trim(),
+      bankName: bankFormBankName.trim(),
+      agency: bankFormAgency.trim() || '0001',
+      accountNumber: bankFormAccountNumber.trim() || '00000-0',
+      accountType: bankFormType,
+      initialBalance: Number(bankFormInitialBalance) || 0,
+      currentBalance: Number(bankFormCurrentBalance) || 0,
+      isDefault: bankFormIsDefault,
+      active: bankFormActive,
+    };
+    const res = StorageService.saveBankAccount(bToSave, currentUser);
+    if (!res.success) {
+      showToast('error', res.error || 'Erro ao salvar conta bancária.');
+      return;
+    }
+    showToast('success', editingBankAccount ? 'Conta bancária atualizada com sucesso!' : 'Nova conta / caixa cadastrado com sucesso!');
+    setIsBankAccountModalOpen(false);
+    refreshAll();
+  };
+
+  const handleToggleBankAccountActive = (b: BankAccount) => {
+    if (!canManageBankAccounts) return;
+    const updated = { ...b, active: !b.active };
+    StorageService.saveBankAccount(updated, currentUser);
+    showToast('success', `Conta "${b.name}" ${updated.active ? 'ativada' : 'desativada'}.`);
+    refreshAll();
+  };
+
+  // 4. Formas de Pagamento
+  const handleOpenPaymentMethodModal = (pm?: FinancialPaymentMethod) => {
+    if (!canManagePaymentMethods) {
+      showToast('error', 'Acesso negado: sem permissão para gerenciar formas de pagamento.');
+      return;
+    }
+    if (pm) {
+      setEditingPaymentMethod(pm);
+      setPmFormName(pm.name);
+      setPmFormCode(pm.code);
+      setPmFormTaxPercent(pm.taxPercent);
+      setPmFormDaysToClear(pm.daysToClear);
+      setPmFormActive(pm.active);
+    } else {
+      setEditingPaymentMethod(null);
+      setPmFormName('');
+      setPmFormCode('');
+      setPmFormTaxPercent(0);
+      setPmFormDaysToClear(0);
+      setPmFormActive(true);
+    }
+    setIsPaymentMethodModalOpen(true);
+  };
+
+  const handleSavePaymentMethod = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canManagePaymentMethods) {
+      showToast('error', 'Acesso negado: permissão necessária.');
+      return;
+    }
+    if (!pmFormName.trim()) {
+      showToast('error', 'Nome da forma de pagamento é obrigatório.');
+      return;
+    }
+    const code = pmFormCode.trim() || pmFormName.toLowerCase().replace(/[^a-z0-9]/gi, '_');
+    const pmToSave: FinancialPaymentMethod = {
+      id: editingPaymentMethod ? editingPaymentMethod.id : `fpm-${Date.now()}`,
+      name: pmFormName.trim(),
+      code,
+      taxPercent: Number(pmFormTaxPercent) || 0,
+      daysToClear: Number(pmFormDaysToClear) || 0,
+      active: pmFormActive,
+    };
+    const res = StorageService.saveFinancialPaymentMethod(pmToSave, currentUser);
+    if (!res.success) {
+      showToast('error', res.error || 'Erro ao salvar forma de pagamento.');
+      return;
+    }
+    showToast('success', editingPaymentMethod ? 'Forma de pagamento atualizada com sucesso!' : 'Nova forma de pagamento cadastrada com sucesso!');
+    setIsPaymentMethodModalOpen(false);
+    refreshAll();
+  };
+
+  const handleTogglePaymentMethodActive = (pm: FinancialPaymentMethod) => {
+    if (!canManagePaymentMethods) return;
+    const updated = { ...pm, active: !pm.active };
+    StorageService.saveFinancialPaymentMethod(updated, currentUser);
+    showToast('success', `Forma de pagamento "${pm.name}" ${updated.active ? 'ativada' : 'desativada'}.`);
+    refreshAll();
+  };
+
+  // 5. Categorias do Catálogo (Produtos da Loja)
+  const handleOpenCatalogCategoryModal = (cat?: Category) => {
+    if (cat) {
+      setEditingCatalogCategory(cat);
+      setCatCatName(cat.name);
+      setCatCatSlug(cat.slug);
+      setCatCatDesc(cat.description || '');
+      setCatCatIcon(cat.icon || 'Package');
+      setCatCatImage(cat.image || '');
+      setCatCatOrder(cat.order || 1);
+    } else {
+      setEditingCatalogCategory(null);
+      setCatCatName('');
+      setCatCatSlug('');
+      setCatCatDesc('');
+      setCatCatIcon('Package');
+      setCatCatImage('https://images.unsplash.com/photo-1544816155-12df9643f363?w=500&auto=format&fit=crop&q=60');
+      setCatCatOrder(catalogCategories.length + 1);
+    }
+    setIsCatalogCategoryModalOpen(true);
+  };
+
+  const handleSaveCatalogCategory = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!catCatName.trim()) {
+      showToast('error', 'Nome da categoria do catálogo é obrigatório.');
+      return;
+    }
+    const slug =
+      catCatSlug.trim() ||
+      catCatName
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]/g, '-')
+        .replace(/-+/g, '-');
+    const catToSave: Category = {
+      id: editingCatalogCategory ? editingCatalogCategory.id : `cat-${Date.now()}`,
+      name: catCatName.trim(),
+      slug,
+      description: catCatDesc.trim() || '',
+      icon: catCatIcon.trim() || 'Package',
+      image:
+        catCatImage.trim() ||
+        'https://images.unsplash.com/photo-1544816155-12df9643f363?w=500&auto=format&fit=crop&q=60',
+      order: Number(catCatOrder) || 1,
+    };
+    const res = StorageService.saveCategory(catToSave);
+    if (!res.success) {
+      showToast('error', res.error || 'Erro ao salvar categoria.');
+      return;
+    }
+    showToast('success', editingCatalogCategory ? 'Categoria do catálogo atualizada!' : 'Nova categoria do catálogo criada!');
+    setIsCatalogCategoryModalOpen(false);
+    refreshAll();
+  };
+
+  // 6. Confirmação e Execução de Exclusão (Deletar)
+  const handlePromptDelete = (
+    type: 'financial_category' | 'cost_center' | 'bank_account' | 'payment_method' | 'catalog_category',
+    id: string,
+    name: string
+  ) => {
+    let title = 'Excluir Registro';
+    let warning: string | undefined;
+
+    if (type === 'financial_category') {
+      title = 'Excluir Categoria Financeira';
+      const linked = accounts.filter((a) => a.categoryId === id).length;
+      if (linked > 0) {
+        warning = `Atenção: existem ${linked} lançamento(s) vinculados a esta categoria. A exclusão será bloqueada enquanto houver lançamentos associados.`;
+      }
+    } else if (type === 'cost_center') {
+      title = 'Excluir Centro de Custo';
+      const linked = accounts.filter((a) => a.costCenterId === id).length;
+      if (linked > 0) {
+        warning = `Atenção: existem ${linked} lançamento(s) vinculados a este centro de custo.`;
+      }
+    } else if (type === 'bank_account') {
+      title = 'Excluir Conta Bancária / Caixa';
+      const target = bankAccounts.find((b) => b.id === id);
+      if (target && target.isDefault) {
+        warning = 'Esta é a conta bancária padrão do sistema. Defina outra conta como padrão antes de removê-la.';
+      } else if (target && target.currentBalance !== 0) {
+        warning = `Atenção: esta conta possui saldo atual de R$ ${target.currentBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}.`;
+      }
+    } else if (type === 'payment_method') {
+      title = 'Excluir Forma de Pagamento';
+    } else if (type === 'catalog_category') {
+      title = 'Excluir Categoria do Catálogo';
+      const prods = StorageService.getProducts();
+      const linked = prods.filter((p) => p.categoryId === id).length;
+      if (linked > 0) {
+        warning = `Atenção: existem ${linked} produto(s) vinculados a esta categoria no catálogo da loja. Mova os produtos antes de excluir.`;
+      }
+    }
+
+    setDeleteConfirmTarget({
+      type,
+      id,
+      title,
+      name,
+      warning,
+    });
+  };
+
+  const handleExecuteDelete = () => {
+    if (!deleteConfirmTarget) return;
+    const { type, id, name } = deleteConfirmTarget;
+
+    let res: { success: boolean; error?: string } = { success: false };
+
+    if (type === 'financial_category') {
+      res = StorageService.deleteFinancialCategory(id, currentUser);
+    } else if (type === 'cost_center') {
+      res = StorageService.deleteCostCenter(id, currentUser);
+    } else if (type === 'bank_account') {
+      res = StorageService.deleteBankAccount(id, currentUser);
+    } else if (type === 'payment_method') {
+      res = StorageService.deleteFinancialPaymentMethod(id, currentUser);
+    } else if (type === 'catalog_category') {
+      res = StorageService.deleteCategory(id);
+    }
+
+    if (!res.success) {
+      showToast('error', res.error || `Não foi possível excluir "${name}".`);
+    } else {
+      showToast('success', `"${name}" excluído(a) com sucesso!`);
+      setDeleteConfirmTarget(null);
+      refreshAll();
     }
   };
 
@@ -1693,141 +2151,652 @@ export const FinancialModuleView: React.FC<FinancialModuleViewProps> = ({
       )}
 
       {/* ==================================================================== */}
-      {/* 5. ABA CADASTROS FINANCEIROS (CATEGORIAS, CENTROS, CONTAS)           */}
+      {/* 5. ABA CADASTROS FINANCEIROS (CATEGORIAS, CENTROS, CONTAS, FORMAS)   */}
       {/* ==================================================================== */}
       {(activeTab === 'categories' ||
         activeTab === 'cost_centers' ||
         activeTab === 'bank_accounts' ||
         activeTab === 'payment_methods') && (
         <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6">
-          {/* Navegação interna de cadastros */}
-          <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 pb-3">
-            {canManageCategories && (
-              <button
-                type="button"
-                onClick={() => setActiveTab('categories')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'categories' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                Categorias ({categories.length})
-              </button>
-            )}
-            {canManageCostCenters && (
-              <button
-                type="button"
-                onClick={() => setActiveTab('cost_centers')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'cost_centers' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                Centros de Custo ({costCenters.length})
-              </button>
-            )}
-            {canManageBankAccounts && (
-              <button
-                type="button"
-                onClick={() => setActiveTab('bank_accounts')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'bank_accounts' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                Contas Bancárias & Caixas ({bankAccounts.length})
-              </button>
-            )}
-            {canManagePaymentMethods && (
-              <button
-                type="button"
-                onClick={() => setActiveTab('payment_methods')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'payment_methods' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                Formas de Pagamento ({paymentMethods.length})
-              </button>
-            )}
+          {/* Header e Ações de Cadastros */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-heading font-black uppercase text-slate-900">
+                  Cadastros Estruturais & Parâmetros
+                </h2>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-slate-100 text-slate-700 border border-slate-200">
+                  Gerenciamento Completo
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Cadastre, edite e exclua categorias, centros de custo, contas bancárias/caixas e formas de pagamento com auditoria e segurança.
+              </p>
+            </div>
+
+            {/* Botão Novo Registro de acordo com a aba ativa */}
+            <div className="flex items-center gap-2 shrink-0">
+              {activeTab === 'categories' && canManageCategories && (
+                categoryViewMode === 'financial' ? (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenCategoryModal()}
+                    className="px-4 py-2 bg-slate-900 hover:bg-[#E6007E] text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Cadastrar Categoria Financeira</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenCatalogCategoryModal()}
+                    className="px-4 py-2 bg-slate-900 hover:bg-[#00AEEF] text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Cadastrar Categoria do Catálogo</span>
+                  </button>
+                )
+              )}
+
+              {activeTab === 'cost_centers' && canManageCostCenters && (
+                <button
+                  type="button"
+                  onClick={() => handleOpenCostCenterModal()}
+                  className="px-4 py-2 bg-slate-900 hover:bg-[#E6007E] text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Cadastrar Centro de Custo</span>
+                </button>
+              )}
+
+              {activeTab === 'bank_accounts' && canManageBankAccounts && (
+                <button
+                  type="button"
+                  onClick={() => handleOpenBankAccountModal()}
+                  className="px-4 py-2 bg-slate-900 hover:bg-[#E6007E] text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Cadastrar Conta / Caixa</span>
+                </button>
+              )}
+
+              {activeTab === 'payment_methods' && canManagePaymentMethods && (
+                <button
+                  type="button"
+                  onClick={() => handleOpenPaymentMethodModal()}
+                  className="px-4 py-2 bg-slate-900 hover:bg-[#E6007E] text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Cadastrar Forma de Pagamento</span>
+                </button>
+              )}
+            </div>
           </div>
 
-          {/* Lista de Categorias */}
+          {/* Seletor de Sub-Abas de Cadastros */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 p-2.5 rounded-2xl border border-slate-200">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {canManageCategories && (
+                <button
+                  type="button"
+                  onClick={() => { setActiveTab('categories'); setCadastrosSearch(''); }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    activeTab === 'categories'
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <Tags className="w-3.5 h-3.5 text-pink-400" />
+                  <span>Categorias ({categories.length + catalogCategories.length})</span>
+                </button>
+              )}
+              {canManageCostCenters && (
+                <button
+                  type="button"
+                  onClick={() => { setActiveTab('cost_centers'); setCadastrosSearch(''); }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    activeTab === 'cost_centers'
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <Building2 className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Centros de Custo ({costCenters.length})</span>
+                </button>
+              )}
+              {canManageBankAccounts && (
+                <button
+                  type="button"
+                  onClick={() => { setActiveTab('bank_accounts'); setCadastrosSearch(''); }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    activeTab === 'bank_accounts'
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <Landmark className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Contas Bancárias & Caixas ({bankAccounts.length})</span>
+                </button>
+              )}
+              {canManagePaymentMethods && (
+                <button
+                  type="button"
+                  onClick={() => { setActiveTab('payment_methods'); setCadastrosSearch(''); }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    activeTab === 'payment_methods'
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <CreditCard className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Formas de Pagamento ({paymentMethods.length})</span>
+                </button>
+              )}
+            </div>
+
+            {/* Busca rápida */}
+            <div className="relative min-w-[200px] max-w-xs w-full sm:w-auto">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={cadastrosSearch}
+                onChange={(e) => setCadastrosSearch(e.target.value)}
+                placeholder="Buscar por nome, código..."
+                className="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-slate-900"
+              />
+            </div>
+          </div>
+
+          {/* ================================================================= */}
+          {/* 1. SUB-ABA: CATEGORIAS (Financeiras e do Catálogo)                */}
+          {/* ================================================================= */}
           {activeTab === 'categories' && (
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <h3 className="text-xs font-black uppercase text-slate-800">
-                  Categorias de Receitas & Despesas
-                </h3>
+            <div className="space-y-4">
+              {/* Alternador entre Categorias Financeiras e do Catálogo da Loja */}
+              <div className="flex items-center justify-between flex-wrap gap-2 pt-1 pb-1">
+                <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setCategoryViewMode('financial')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      categoryViewMode === 'financial'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Categorias Financeiras ({categories.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCategoryViewMode('catalog')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      categoryViewMode === 'catalog'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Categorias do Catálogo / Loja ({catalogCategories.length})
+                  </button>
+                </div>
+
+                <span className="text-[11px] text-slate-500">
+                  {categoryViewMode === 'financial'
+                    ? 'Classificação do plano de contas para receitas e despesas.'
+                    : 'Categorias de vitrine exibidas aos clientes no catálogo.'}
+                </span>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                {categories.map((c) => (
-                  <div key={c.id} className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50/50 space-y-1 text-xs">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-900">{c.name}</span>
-                      <span
-                        className={`text-[9px] font-black uppercase px-1.5 py-0.2 rounded ${
-                          c.type === 'receita' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-                        }`}
-                      >
-                        {c.type}
-                      </span>
-                    </div>
-                    {c.description && <p className="text-[11px] text-slate-500">{c.description}</p>}
-                  </div>
-                ))}
-              </div>
+
+              {/* Lista: Categorias Financeiras */}
+              {categoryViewMode === 'financial' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {categories
+                    .filter((c) => {
+                      if (!cadastrosSearch) return true;
+                      const q = cadastrosSearch.toLowerCase();
+                      return c.name.toLowerCase().includes(q) || (c.description || '').toLowerCase().includes(q);
+                    })
+                    .map((c) => {
+                      const linkedCount = accounts.filter((a) => a.categoryId === c.id).length;
+                      return (
+                        <div
+                          key={c.id}
+                          className="p-4 rounded-2xl border border-slate-200 bg-white hover:border-slate-300 transition-all shadow-xs flex flex-col justify-between space-y-3"
+                        >
+                          <div className="space-y-1.5">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className="w-3 h-3 rounded-full shrink-0"
+                                  style={{ backgroundColor: c.color || (c.type === 'receita' ? '#10B981' : '#E6007E') }}
+                                />
+                                <h4 className="font-bold text-slate-900 text-sm">{c.name}</h4>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <span
+                                  className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
+                                    c.type === 'receita'
+                                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                      : c.type === 'despesa'
+                                      ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                      : 'bg-blue-100 text-blue-800 border border-blue-200'
+                                  }`}
+                                >
+                                  {c.type}
+                                </span>
+                                <span
+                                  className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md ${
+                                    c.active ? 'bg-slate-100 text-slate-700' : 'bg-slate-200 text-slate-500'
+                                  }`}
+                                >
+                                  {c.active ? 'Ativa' : 'Inativa'}
+                                </span>
+                              </div>
+                            </div>
+                            {c.description ? (
+                              <p className="text-xs text-slate-500 line-clamp-2">{c.description}</p>
+                            ) : (
+                              <p className="text-xs text-slate-400 italic">Sem descrição detalhada.</p>
+                            )}
+                          </div>
+
+                          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                            <span className="text-[11px] text-slate-500">
+                              {linkedCount} lançamento(s)
+                            </span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleCategoryActive(c)}
+                                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                                  c.active
+                                    ? 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'
+                                    : 'text-emerald-600 hover:bg-emerald-50'
+                                }`}
+                                title={c.active ? 'Desativar Categoria' : 'Ativar Categoria'}
+                              >
+                                <Power className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenCategoryModal(c)}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer"
+                                title="Editar Categoria"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handlePromptDelete('financial_category', c.id, c.name)}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                title="Excluir Categoria"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+
+              {/* Lista: Categorias do Catálogo */}
+              {categoryViewMode === 'catalog' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {catalogCategories
+                    .filter((c) => {
+                      if (!cadastrosSearch) return true;
+                      const q = cadastrosSearch.toLowerCase();
+                      return c.name.toLowerCase().includes(q) || (c.slug || '').toLowerCase().includes(q);
+                    })
+                    .map((cat) => {
+                      const prods = StorageService.getProducts();
+                      const linkedProds = prods.filter((p) => p.categoryId === cat.id).length;
+                      return (
+                        <div
+                          key={cat.id}
+                          className="p-4 rounded-2xl border border-slate-200 bg-white hover:border-slate-300 transition-all shadow-xs flex flex-col justify-between space-y-3"
+                        >
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2.5">
+                                {cat.image ? (
+                                  <img
+                                    src={cat.image}
+                                    alt={cat.name}
+                                    className="w-8 h-8 rounded-lg object-cover border border-slate-200 shrink-0"
+                                  />
+                                ) : (
+                                  <div className="w-8 h-8 rounded-lg bg-pink-100 text-[#E6007E] flex items-center justify-center shrink-0">
+                                    <Tags className="w-4 h-4" />
+                                  </div>
+                                )}
+                                <div>
+                                  <h4 className="font-bold text-slate-900 text-sm leading-tight">{cat.name}</h4>
+                                  <span className="text-[10px] font-mono text-slate-400">/{cat.slug}</span>
+                                </div>
+                              </div>
+                              <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md shrink-0">
+                                Ordem: #{cat.order}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-500 line-clamp-2">
+                              {cat.description || 'Categoria de vitrine para produtos MB Personaliza.'}
+                            </p>
+                          </div>
+
+                          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                            <span className="text-[11px] text-slate-500 font-medium">
+                              {linkedProds} produto(s) cadastrado(s)
+                            </span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenCatalogCategoryModal(cat)}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer"
+                                title="Editar Categoria do Catálogo"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handlePromptDelete('catalog_category', cat.id, cat.name)}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                title="Excluir Categoria do Catálogo"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
             </div>
           )}
 
-          {/* Centros de Custo */}
+          {/* ================================================================= */}
+          {/* 2. SUB-ABA: CENTROS DE CUSTO                                      */}
+          {/* ================================================================= */}
           {activeTab === 'cost_centers' && (
-            <div className="space-y-3">
-              <h3 className="text-xs font-black uppercase text-slate-800">Centros de Custo</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {costCenters.map((cc) => (
-                  <div key={cc.id} className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50/50 text-xs space-y-1">
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-slate-900">{cc.name}</span>
-                      <span className="font-mono text-[10px] font-bold bg-slate-200 px-1.5 rounded">{cc.code}</span>
-                    </div>
-                    {cc.description && <p className="text-[11px] text-slate-500">{cc.description}</p>}
-                  </div>
-                ))}
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {costCenters
+                  .filter((cc) => {
+                    if (!cadastrosSearch) return true;
+                    const q = cadastrosSearch.toLowerCase();
+                    return cc.name.toLowerCase().includes(q) || cc.code.toLowerCase().includes(q);
+                  })
+                  .map((cc) => {
+                    const linked = accounts.filter((a) => a.costCenterId === cc.id).length;
+                    return (
+                      <div
+                        key={cc.id}
+                        className="p-4 rounded-2xl border border-slate-200 bg-white hover:border-slate-300 transition-all shadow-xs flex flex-col justify-between space-y-3"
+                      >
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-[10px] font-black bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md">
+                                {cc.code}
+                              </span>
+                              <h4 className="font-bold text-slate-900 text-sm">{cc.name}</h4>
+                            </div>
+                            <span
+                              className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
+                                cc.active
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                  : 'bg-slate-200 text-slate-600'
+                              }`}
+                            >
+                              {cc.active ? 'Ativo' : 'Inativo'}
+                            </span>
+                          </div>
+                          {cc.description ? (
+                            <p className="text-xs text-slate-500 line-clamp-2">{cc.description}</p>
+                          ) : (
+                            <p className="text-xs text-slate-400 italic">Sem descrição.</p>
+                          )}
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                          <span className="text-[11px] text-slate-500">
+                            {linked} lançamento(s) associado(s)
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleCostCenterActive(cc)}
+                              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                                cc.active
+                                  ? 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'
+                                  : 'text-emerald-600 hover:bg-emerald-50'
+                              }`}
+                              title={cc.active ? 'Desativar Centro' : 'Ativar Centro'}
+                            >
+                              <Power className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenCostCenterModal(cc)}
+                              className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer"
+                              title="Editar Centro de Custo"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handlePromptDelete('cost_center', cc.id, cc.name)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                              title="Excluir Centro de Custo"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
               </div>
             </div>
           )}
 
-          {/* Contas Bancárias */}
+          {/* ================================================================= */}
+          {/* 3. SUB-ABA: CONTAS BANCÁRIAS & CAIXAS FÍSICOS                     */}
+          {/* ================================================================= */}
           {activeTab === 'bank_accounts' && (
-            <div className="space-y-3">
-              <h3 className="text-xs font-black uppercase text-slate-800">Contas Bancárias e Caixas Físicos</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {bankAccounts.map((b) => (
-                  <div key={b.id} className="p-4 rounded-2xl border border-slate-200 bg-slate-50/60 text-xs space-y-2">
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-slate-900">{b.name}</span>
-                      <span className="text-[10px] uppercase font-bold text-blue-600">{b.accountType}</span>
-                    </div>
-                    <p className="text-[11px] text-slate-500">{b.bankName} • Agência: {b.agency} • Conta: {b.accountNumber}</p>
-                    <p className="font-mono font-black text-sm text-slate-900">
-                      Saldo: R$ {b.currentBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                    </p>
-                  </div>
-                ))}
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {bankAccounts
+                  .filter((b) => {
+                    if (!cadastrosSearch) return true;
+                    const q = cadastrosSearch.toLowerCase();
+                    return b.name.toLowerCase().includes(q) || b.bankName.toLowerCase().includes(q);
+                  })
+                  .map((b) => {
+                    const typeLabel =
+                      b.accountType === 'corrente'
+                        ? 'Conta Corrente'
+                        : b.accountType === 'poupanca'
+                        ? 'Poupança'
+                        : b.accountType === 'caixa_fisico'
+                        ? 'Caixa Físico / Cofre'
+                        : 'Carteira Digital';
+
+                    return (
+                      <div
+                        key={b.id}
+                        className="p-4 rounded-2xl border border-slate-200 bg-white hover:border-slate-300 transition-all shadow-xs flex flex-col justify-between space-y-3"
+                      >
+                        <div className="space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <h4 className="font-bold text-slate-900 text-sm">{b.name}</h4>
+                                {b.isDefault && (
+                                  <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200">
+                                    Padrão
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-slate-500 font-medium">
+                                {b.bankName} • Agência: {b.agency} • Conta: {b.accountNumber}
+                              </p>
+                            </div>
+                            <span
+                              className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full shrink-0 ${
+                                b.active
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                  : 'bg-slate-200 text-slate-600'
+                              }`}
+                            >
+                              {b.active ? 'Ativa' : 'Inativa'}
+                            </span>
+                          </div>
+
+                          <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between">
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-slate-400 block">Tipo:</span>
+                              <span className="text-xs font-bold text-slate-700">{typeLabel}</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-[10px] uppercase font-bold text-slate-400 block">Saldo Atual:</span>
+                              <span className="font-mono font-black text-sm text-slate-900">
+                                R$ {b.currentBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                          <span className="text-[11px] text-slate-400 font-mono">
+                            Inicial: R$ {b.initialBalance.toFixed(2)}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleBankAccountActive(b)}
+                              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                                b.active
+                                  ? 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'
+                                  : 'text-emerald-600 hover:bg-emerald-50'
+                              }`}
+                              title={b.active ? 'Desativar Conta' : 'Ativar Conta'}
+                            >
+                              <Power className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenBankAccountModal(b)}
+                              className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer"
+                              title="Editar Conta Bancária"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handlePromptDelete('bank_account', b.id, b.name)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                              title="Excluir Conta Bancária"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
               </div>
             </div>
           )}
 
-          {/* Formas de Pagamento */}
+          {/* ================================================================= */}
+          {/* 4. SUB-ABA: FORMAS DE PAGAMENTO & TAXAS                          */}
+          {/* ================================================================= */}
           {activeTab === 'payment_methods' && (
-            <div className="space-y-3">
-              <h3 className="text-xs font-black uppercase text-slate-800">Formas de Pagamento e Taxas</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {paymentMethods.map((pm) => (
-                  <div key={pm.id} className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50 text-xs space-y-1">
-                    <p className="font-bold text-slate-900">{pm.name}</p>
-                    <p className="text-[11px] text-slate-500">
-                      Taxa Operacional: {pm.taxPercent}% • Liquidação em {pm.daysToClear} dias
-                    </p>
-                  </div>
-                ))}
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {paymentMethods
+                  .filter((pm) => {
+                    if (!cadastrosSearch) return true;
+                    const q = cadastrosSearch.toLowerCase();
+                    return pm.name.toLowerCase().includes(q) || pm.code.toLowerCase().includes(q);
+                  })
+                  .map((pm) => (
+                    <div
+                      key={pm.id}
+                      className="p-4 rounded-2xl border border-slate-200 bg-white hover:border-slate-300 transition-all shadow-xs flex flex-col justify-between space-y-3"
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <CreditCard className="w-4 h-4 text-purple-600 shrink-0" />
+                            <div>
+                              <h4 className="font-bold text-slate-900 text-sm leading-tight">{pm.name}</h4>
+                              <span className="text-[10px] font-mono text-slate-400">cód: {pm.code}</span>
+                            </div>
+                          </div>
+                          <span
+                            className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full shrink-0 ${
+                              pm.active
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                : 'bg-slate-200 text-slate-600'
+                            }`}
+                          >
+                            {pm.active ? 'Ativa' : 'Inativa'}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-100 text-xs">
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Taxa Operador:</span>
+                            <span className="font-mono font-bold text-slate-900">{pm.taxPercent}%</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Prazo Liquidação:</span>
+                            <span className="font-mono font-bold text-slate-900">
+                              {pm.daysToClear === 0 ? 'Imediato (D+0)' : `D+${pm.daysToClear} dias`}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                        <span className="text-[11px] text-slate-400">MB Personaliza Checkout</span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleTogglePaymentMethodActive(pm)}
+                            className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                              pm.active
+                                ? 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'
+                                : 'text-emerald-600 hover:bg-emerald-50'
+                            }`}
+                            title={pm.active ? 'Desativar Forma' : 'Ativar Forma'}
+                          >
+                            <Power className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenPaymentMethodModal(pm)}
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer"
+                            title="Editar Forma de Pagamento"
+                          >
+                            <Edit className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handlePromptDelete('payment_method', pm.id, pm.name)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                            title="Excluir Forma de Pagamento"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
               </div>
             </div>
           )}
@@ -2406,6 +3375,661 @@ export const FinancialModuleView: React.FC<FinancialModuleViewProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* MODAL 5: CADASTRAR / EDITAR CATEGORIA FINANCEIRA                     */}
+      {/* ==================================================================== */}
+      {isCategoryModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl border border-slate-200 max-w-lg w-full p-6 sm:p-8 space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-pink-50 text-[#E6007E] rounded-xl">
+                  <Tags className="w-5 h-5" />
+                </div>
+                <h3 className="font-heading text-lg font-black uppercase text-slate-900">
+                  {editingCategory ? 'Editar Categoria Financeira' : 'Cadastrar Categoria Financeira'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCategoryModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveFinancialCategory} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Nome da Categoria *</label>
+                <input
+                  type="text"
+                  required
+                  value={catFormName}
+                  onChange={(e) => setCatFormName(e.target.value)}
+                  placeholder="Ex: Fornecedores Matéria-Prima DTF"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">Natureza da Operação *</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setCatFormType('despesa'); if (!editingCategory) setCatFormColor('#E6007E'); }}
+                    className={`py-2 px-3 rounded-xl font-bold border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      catFormType === 'despesa'
+                        ? 'bg-rose-50 border-rose-400 text-rose-800 shadow-xs'
+                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-rose-500" />
+                    <span>Despesa</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setCatFormType('receita'); if (!editingCategory) setCatFormColor('#10B981'); }}
+                    className={`py-2 px-3 rounded-xl font-bold border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      catFormType === 'receita'
+                        ? 'bg-emerald-50 border-emerald-400 text-emerald-800 shadow-xs'
+                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <span>Receita</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setCatFormType('ambos'); if (!editingCategory) setCatFormColor('#3B82F6'); }}
+                    className={`py-2 px-3 rounded-xl font-bold border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      catFormType === 'ambos'
+                        ? 'bg-blue-50 border-blue-400 text-blue-800 shadow-xs'
+                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-blue-500" />
+                    <span>Ambos</span>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">Cor de Destaque / Gráficos</label>
+                <div className="flex items-center gap-2">
+                  {['#E6007E', '#00AEEF', '#10B981', '#F59E0B', '#8B5CF6', '#64748B'].map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      onClick={() => setCatFormColor(color)}
+                      className={`w-7 h-7 rounded-full border-2 transition-transform cursor-pointer ${
+                        catFormColor === color ? 'scale-110 border-slate-900 shadow-xs' : 'border-transparent'
+                      }`}
+                      style={{ backgroundColor: color }}
+                    />
+                  ))}
+                  <input
+                    type="color"
+                    value={catFormColor}
+                    onChange={(e) => setCatFormColor(e.target.value)}
+                    className="w-8 h-8 rounded-lg cursor-pointer border border-slate-200 bg-white"
+                    title="Escolher cor personalizada"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Descrição Detalhada</label>
+                <textarea
+                  rows={2}
+                  value={catFormDesc}
+                  onChange={(e) => setCatFormDesc(e.target.value)}
+                  placeholder="Ex: Contas relativas a compras de insumos para estamparia e gravação laser..."
+                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="catActive"
+                  checked={catFormActive}
+                  onChange={(e) => setCatFormActive(e.target.checked)}
+                  className="rounded text-slate-900 focus:ring-slate-900"
+                />
+                <label htmlFor="catActive" className="font-bold text-slate-700 cursor-pointer">
+                  Categoria Ativa no Sistema
+                </label>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsCategoryModalOpen(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-slate-900 hover:bg-[#E6007E] text-white font-black text-xs rounded-xl shadow-md transition-colors cursor-pointer"
+                >
+                  {editingCategory ? 'Salvar Alterações' : 'Cadastrar Categoria'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* MODAL 6: CADASTRAR / EDITAR CENTRO DE CUSTO                           */}
+      {/* ==================================================================== */}
+      {isCostCenterModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl border border-slate-200 max-w-lg w-full p-6 sm:p-8 space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <h3 className="font-heading text-lg font-black uppercase text-slate-900">
+                  {editingCostCenter ? 'Editar Centro de Custo' : 'Cadastrar Centro de Custo'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCostCenterModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCostCenter} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Código *</label>
+                  <input
+                    type="text"
+                    required
+                    value={ccFormCode}
+                    onChange={(e) => setCcFormCode(e.target.value)}
+                    placeholder="Ex: CC-01"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold uppercase focus:bg-white focus:outline-none"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block font-bold text-slate-700 mb-1">Nome do Centro de Custo *</label>
+                  <input
+                    type="text"
+                    required
+                    value={ccFormName}
+                    onChange={(e) => setCcFormName(e.target.value)}
+                    placeholder="Ex: Produção & Gravação Laser/UV"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Descrição / Finalidade</label>
+                <textarea
+                  rows={2}
+                  value={ccFormDesc}
+                  onChange={(e) => setCcFormDesc(e.target.value)}
+                  placeholder="Ex: Custos vinculados diretamente às máquinas de gravação e operadores..."
+                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="ccActive"
+                  checked={ccFormActive}
+                  onChange={(e) => setCcFormActive(e.target.checked)}
+                  className="rounded text-slate-900 focus:ring-slate-900"
+                />
+                <label htmlFor="ccActive" className="font-bold text-slate-700 cursor-pointer">
+                  Centro de Custo Ativo
+                </label>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsCostCenterModalOpen(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-slate-900 hover:bg-[#E6007E] text-white font-black text-xs rounded-xl shadow-md transition-colors cursor-pointer"
+                >
+                  {editingCostCenter ? 'Salvar Alterações' : 'Cadastrar Centro de Custo'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* MODAL 7: CADASTRAR / EDITAR CONTA BANCÁRIA & CAIXA                   */}
+      {/* ==================================================================== */}
+      {isBankAccountModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl border border-slate-200 max-w-lg w-full p-6 sm:p-8 space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl">
+                  <Landmark className="w-5 h-5" />
+                </div>
+                <h3 className="font-heading text-lg font-black uppercase text-slate-900">
+                  {editingBankAccount ? 'Editar Conta Bancária / Caixa' : 'Cadastrar Conta Bancária / Caixa'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsBankAccountModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveBankAccount} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Nome Identificador *</label>
+                  <input
+                    type="text"
+                    required
+                    value={bankFormName}
+                    onChange={(e) => setBankFormName(e.target.value)}
+                    placeholder="Ex: Itaú PJ Matriz"
+                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Banco / Instituição *</label>
+                  <input
+                    type="text"
+                    required
+                    value={bankFormBankName}
+                    onChange={(e) => setBankFormBankName(e.target.value)}
+                    placeholder="Ex: Banco Itaú Unibanco"
+                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Tipo da Conta</label>
+                  <select
+                    value={bankFormType}
+                    onChange={(e) => setBankFormType(e.target.value as any)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold focus:outline-none"
+                  >
+                    <option value="corrente">Conta Corrente</option>
+                    <option value="poupanca">Poupança</option>
+                    <option value="caixa_fisico">Caixa Físico / PDV</option>
+                    <option value="carteira_digital">Carteira Digital</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Agência</label>
+                  <input
+                    type="text"
+                    value={bankFormAgency}
+                    onChange={(e) => setBankFormAgency(e.target.value)}
+                    placeholder="0001"
+                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono focus:bg-white focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Número da Conta</label>
+                  <input
+                    type="text"
+                    value={bankFormAccountNumber}
+                    onChange={(e) => setBankFormAccountNumber(e.target.value)}
+                    placeholder="12345-6"
+                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono focus:bg-white focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Saldo Inicial (R$)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={bankFormInitialBalance}
+                    onChange={(e) => setBankFormInitialBalance(parseFloat(e.target.value) || 0)}
+                    placeholder="0.00"
+                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold focus:bg-white focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Saldo Atual (R$)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={bankFormCurrentBalance}
+                    onChange={(e) => setBankFormCurrentBalance(parseFloat(e.target.value) || 0)}
+                    placeholder="0.00"
+                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono font-black text-sm focus:bg-white focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-3 pt-1">
+                <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={bankFormIsDefault}
+                    onChange={(e) => setBankFormIsDefault(e.target.checked)}
+                    className="rounded text-slate-900 focus:ring-slate-900"
+                  />
+                  <span>Definir como Conta Padrão do Sistema</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={bankFormActive}
+                    onChange={(e) => setBankFormActive(e.target.checked)}
+                    className="rounded text-slate-900 focus:ring-slate-900"
+                  />
+                  <span>Conta Ativa</span>
+                </label>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsBankAccountModalOpen(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-slate-900 hover:bg-[#E6007E] text-white font-black text-xs rounded-xl shadow-md transition-colors cursor-pointer"
+                >
+                  {editingBankAccount ? 'Salvar Alterações' : 'Cadastrar Conta / Caixa'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* MODAL 8: CADASTRAR / EDITAR FORMA DE PAGAMENTO                        */}
+      {/* ==================================================================== */}
+      {isPaymentMethodModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl border border-slate-200 max-w-lg w-full p-6 sm:p-8 space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-purple-50 text-purple-600 rounded-xl">
+                  <CreditCard className="w-5 h-5" />
+                </div>
+                <h3 className="font-heading text-lg font-black uppercase text-slate-900">
+                  {editingPaymentMethod ? 'Editar Forma de Pagamento' : 'Cadastrar Forma de Pagamento'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPaymentMethodModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSavePaymentMethod} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Nome da Forma *</label>
+                  <input
+                    type="text"
+                    required
+                    value={pmFormName}
+                    onChange={(e) => setPmFormName(e.target.value)}
+                    placeholder="Ex: Cartão de Crédito 3x"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Código / Slug</label>
+                  <input
+                    type="text"
+                    value={pmFormCode}
+                    onChange={(e) => setPmFormCode(e.target.value)}
+                    placeholder="Ex: cc_3x"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono focus:bg-white focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Taxa Operacional (%)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={pmFormTaxPercent}
+                    onChange={(e) => setPmFormTaxPercent(parseFloat(e.target.value) || 0)}
+                    placeholder="Ex: 2.99"
+                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold focus:bg-white focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Prazo de Liquidação (Dias)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={pmFormDaysToClear}
+                    onChange={(e) => setPmFormDaysToClear(parseInt(e.target.value) || 0)}
+                    placeholder="0 para D+0, 30 para D+30"
+                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold focus:bg-white focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="pmActive"
+                  checked={pmFormActive}
+                  onChange={(e) => setPmFormActive(e.target.checked)}
+                  className="rounded text-slate-900 focus:ring-slate-900"
+                />
+                <label htmlFor="pmActive" className="font-bold text-slate-700 cursor-pointer">
+                  Forma de Pagamento Ativa no Caixa e Checkout
+                </label>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsPaymentMethodModalOpen(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-slate-900 hover:bg-[#E6007E] text-white font-black text-xs rounded-xl shadow-md transition-colors cursor-pointer"
+                >
+                  {editingPaymentMethod ? 'Salvar Alterações' : 'Cadastrar Forma de Pagamento'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* MODAL 9: CADASTRAR / EDITAR CATEGORIA DE CATÁLOGO (LOJA)             */}
+      {/* ==================================================================== */}
+      {isCatalogCategoryModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl border border-slate-200 max-w-lg w-full p-6 sm:p-8 space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-pink-50 text-[#E6007E] rounded-xl">
+                  <Tags className="w-5 h-5" />
+                </div>
+                <h3 className="font-heading text-lg font-black uppercase text-slate-900">
+                  {editingCatalogCategory ? 'Editar Categoria do Catálogo' : 'Cadastrar Categoria do Catálogo'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCatalogCategoryModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCatalogCategory} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Nome da Categoria *</label>
+                  <input
+                    type="text"
+                    required
+                    value={catCatName}
+                    onChange={(e) => setCatCatName(e.target.value)}
+                    placeholder="Ex: Copos Térmicos Inox"
+                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Slug URL</label>
+                  <input
+                    type="text"
+                    value={catCatSlug}
+                    onChange={(e) => setCatCatSlug(e.target.value)}
+                    placeholder="Ex: copos-termicos-inox"
+                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono focus:bg-white focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Descrição</label>
+                <textarea
+                  rows={2}
+                  value={catCatDesc}
+                  onChange={(e) => setCatCatDesc(e.target.value)}
+                  placeholder="Ex: Copos e canecas térmicas com parede dupla e gravação a laser..."
+                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-2">
+                  <label className="block font-bold text-slate-700 mb-1">URL da Imagem de Capa</label>
+                  <input
+                    type="url"
+                    value={catCatImage}
+                    onChange={(e) => setCatCatImage(e.target.value)}
+                    placeholder="https://images.unsplash.com/..."
+                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Ordem</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={catCatOrder}
+                    onChange={(e) => setCatCatOrder(parseInt(e.target.value) || 1)}
+                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold focus:bg-white focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsCatalogCategoryModalOpen(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-slate-900 hover:bg-[#00AEEF] text-white font-black text-xs rounded-xl shadow-md transition-colors cursor-pointer"
+                >
+                  {editingCatalogCategory ? 'Salvar Alterações' : 'Cadastrar Categoria'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* MODAL 10: CONFIRMAÇÃO DE EXCLUSÃO (DELETAR)                          */}
+      {/* ==================================================================== */}
+      {deleteConfirmTarget && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl border border-rose-200 max-w-md w-full p-6 sm:p-8 space-y-5 shadow-2xl">
+            <div className="flex items-center gap-3 text-rose-600">
+              <div className="p-3 bg-rose-50 rounded-2xl">
+                <AlertTriangle className="w-6 h-6 shrink-0 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="font-heading text-lg font-black uppercase text-slate-900">
+                  {deleteConfirmTarget.title}
+                </h3>
+                <p className="text-xs text-slate-500 font-semibold">{deleteConfirmTarget.name}</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Você tem certeza de que deseja excluir permanentemente o registro{' '}
+              <strong className="text-slate-900">"{deleteConfirmTarget.name}"</strong>? Esta ação é irreversível e será registrada no histórico de auditoria.
+            </p>
+
+            {deleteConfirmTarget.warning && (
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                <span>{deleteConfirmTarget.warning}</span>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmTarget(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteDelete}
+                className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white font-black text-xs rounded-xl shadow-md transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Confirmar Exclusão</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

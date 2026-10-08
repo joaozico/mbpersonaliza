@@ -371,6 +371,14 @@ financialRouter.post(
   }
 );
 
+financialRouter.delete(
+  '/categories/:id',
+  requireFinancialPermission('canManageFinancialCategories'),
+  (req: Request, res: Response) => {
+    res.json({ success: true, message: 'Categoria financeira excluída.' });
+  }
+);
+
 // 17. Cadastros: Centros de Custo
 financialRouter.post(
   '/cost-centers',
@@ -380,12 +388,45 @@ financialRouter.post(
   }
 );
 
+financialRouter.delete(
+  '/cost-centers/:id',
+  requireFinancialPermission('canManageCostCenters'),
+  (req: Request, res: Response) => {
+    res.json({ success: true, message: 'Centro de custo excluído.' });
+  }
+);
+
 // 18. Cadastros: Contas Bancárias
 financialRouter.post(
   '/bank-accounts',
   requireFinancialPermission('canManageBankAccounts'),
   (req: Request, res: Response) => {
     res.json({ success: true, message: 'Conta bancária salva.' });
+  }
+);
+
+financialRouter.delete(
+  '/bank-accounts/:id',
+  requireFinancialPermission('canManageBankAccounts'),
+  (req: Request, res: Response) => {
+    res.json({ success: true, message: 'Conta bancária excluída.' });
+  }
+);
+
+// Formas de Pagamento
+financialRouter.post(
+  '/payment-methods',
+  requireFinancialPermission('canManagePaymentMethods'),
+  (req: Request, res: Response) => {
+    res.json({ success: true, message: 'Forma de pagamento salva.' });
+  }
+);
+
+financialRouter.delete(
+  '/payment-methods/:id',
+  requireFinancialPermission('canManagePaymentMethods'),
+  (req: Request, res: Response) => {
+    res.json({ success: true, message: 'Forma de pagamento excluída.' });
   }
 );
 

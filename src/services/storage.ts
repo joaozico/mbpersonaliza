@@ -165,9 +165,65 @@ export const StorageService = {
     const c = getStored<Category[]>(STORAGE_KEYS.CATEGORIES, INITIAL_CATEGORIES);
     return Array.isArray(c) ? c : INITIAL_CATEGORIES;
   },
+  saveCategories(categories: Category[]): void {
+    setStored(STORAGE_KEYS.CATEGORIES, categories);
+  },
+  saveCategory(category: Category): { success: boolean; error?: string } {
+    const list = this.getCategories();
+    const idx = list.findIndex((c) => c.id === category.id);
+    if (idx >= 0) {
+      list[idx] = category;
+    } else {
+      list.push(category);
+    }
+    this.saveCategories(list);
+    return { success: true };
+  },
+  deleteCategory(id: string): { success: boolean; error?: string } {
+    const prods = this.getProducts();
+    const linkedCount = prods.filter((p) => p.categoryId === id).length;
+    if (linkedCount > 0) {
+      return {
+        success: false,
+        error: `Não é possível excluir a categoria: existem ${linkedCount} produtos vinculados a ela. Mova os produtos para outra categoria antes de remover.`,
+      };
+    }
+    const categories = this.getCategories().filter((c) => c.id !== id);
+    this.saveCategories(categories);
+    const subcats = this.getSubcategories().filter((s) => s.categoryId !== id);
+    this.saveSubcategories(subcats);
+    return { success: true };
+  },
   getSubcategories(): Subcategory[] {
     const s = getStored<Subcategory[]>(STORAGE_KEYS.SUBCATEGORIES, INITIAL_SUBCATEGORIES);
     return Array.isArray(s) ? s : INITIAL_SUBCATEGORIES;
+  },
+  saveSubcategories(subcategories: Subcategory[]): void {
+    setStored(STORAGE_KEYS.SUBCATEGORIES, subcategories);
+  },
+  saveSubcategory(subcategory: Subcategory): { success: boolean; error?: string } {
+    const list = this.getSubcategories();
+    const idx = list.findIndex((s) => s.id === subcategory.id);
+    if (idx >= 0) {
+      list[idx] = subcategory;
+    } else {
+      list.push(subcategory);
+    }
+    this.saveSubcategories(list);
+    return { success: true };
+  },
+  deleteSubcategory(id: string): { success: boolean; error?: string } {
+    const prods = this.getProducts();
+    const linkedCount = prods.filter((p) => p.subcategoryId === id).length;
+    if (linkedCount > 0) {
+      return {
+        success: false,
+        error: `Não é possível excluir a subcategoria: existem ${linkedCount} produtos vinculados a ela.`,
+      };
+    }
+    const subcats = this.getSubcategories().filter((s) => s.id !== id);
+    this.saveSubcategories(subcats);
+    return { success: true };
   },
 
   // Quotes
@@ -1679,6 +1735,46 @@ export const StorageService = {
     return { success: true };
   },
 
+  deleteFinancialCategory(
+    id: string,
+    currentUser: UserProfile
+  ): { success: boolean; error?: string } {
+    if (!this.hasUserPermission(currentUser, 'canManageFinancialCategories')) {
+      return { success: false, error: 'Acesso negado: sem permissão para gerenciar categorias financeiras.' };
+    }
+    const categories = this.getFinancialCategories();
+    const target = categories.find((c) => c.id === id);
+    if (!target) {
+      return { success: false, error: 'Categoria não encontrada.' };
+    }
+    const accounts = this.getFinancialAccounts();
+    const linkedCount = accounts.filter((a) => a.categoryId === id).length;
+    if (linkedCount > 0) {
+      return {
+        success: false,
+        error: `Não é possível excluir a categoria "${target.name}": existem ${linkedCount} lançamentos vinculados.`,
+      };
+    }
+    const updated = categories.filter((c) => c.id !== id);
+    setStored(STORAGE_KEYS.FINANCIAL_CATEGORIES, updated);
+
+    this.addFinancialAuditEntry({
+      userId: currentUser.id,
+      userName: currentUser.name,
+      userEmail: currentUser.email,
+      userRole: currentUser.role,
+      operation: 'DELETAR_CATEGORIA_FINANCEIRA',
+      permissionUsed: 'canManageFinancialCategories',
+      affectedRecordId: id,
+      affectedRecordType: 'categoria_financeira',
+      result: 'sucesso',
+      details: `Categoria financeira "${target.name}" excluída com sucesso.`,
+      origin: 'web_painel',
+      previousValues: target,
+    });
+    return { success: true };
+  },
+
   // Centros de Custo
   getCostCenters(currentUser?: UserProfile): CostCenter[] {
     if (currentUser && !this.hasUserPermission(currentUser, 'canViewFinancialModule')) {
@@ -1698,6 +1794,7 @@ export const StorageService = {
 
     const centers = this.getCostCenters();
     const idx = centers.findIndex((c) => c.id === center.id);
+    const prev = idx >= 0 ? centers[idx] : null;
     if (idx >= 0) {
       centers[idx] = center;
     } else {
@@ -1710,15 +1807,57 @@ export const StorageService = {
       userName: currentUser.name,
       userEmail: currentUser.email,
       userRole: currentUser.role,
-      operation: 'GERENCIAR_CENTRO_DE_CUSTO',
+      operation: prev ? 'EDITAR_CENTRO_DE_CUSTO' : 'CRIAR_CENTRO_DE_CUSTO',
       permissionUsed: 'canManageCostCenters',
       affectedRecordId: center.id,
       affectedRecordType: 'centro_custo',
       result: 'sucesso',
       details: `Centro de custo ${center.name} (${center.code}) salvo com sucesso.`,
       origin: 'web_painel',
+      previousValues: prev,
+      newValues: center,
     });
 
+    return { success: true };
+  },
+
+  deleteCostCenter(
+    id: string,
+    currentUser: UserProfile
+  ): { success: boolean; error?: string } {
+    if (!this.hasUserPermission(currentUser, 'canManageCostCenters')) {
+      return { success: false, error: 'Acesso negado: sem permissão para gerenciar centros de custo.' };
+    }
+    const centers = this.getCostCenters();
+    const target = centers.find((c) => c.id === id);
+    if (!target) {
+      return { success: false, error: 'Centro de custo não encontrado.' };
+    }
+    const accounts = this.getFinancialAccounts();
+    const linkedCount = accounts.filter((a) => a.costCenterId === id).length;
+    if (linkedCount > 0) {
+      return {
+        success: false,
+        error: `Não é possível excluir o centro de custo "${target.name}": existem ${linkedCount} lançamentos vinculados.`,
+      };
+    }
+    const updated = centers.filter((c) => c.id !== id);
+    setStored(STORAGE_KEYS.COST_CENTERS, updated);
+
+    this.addFinancialAuditEntry({
+      userId: currentUser.id,
+      userName: currentUser.name,
+      userEmail: currentUser.email,
+      userRole: currentUser.role,
+      operation: 'DELETAR_CENTRO_DE_CUSTO',
+      permissionUsed: 'canManageCostCenters',
+      affectedRecordId: id,
+      affectedRecordType: 'centro_custo',
+      result: 'sucesso',
+      details: `Centro de custo "${target.name}" (${target.code}) excluído com sucesso.`,
+      origin: 'web_painel',
+      previousValues: target,
+    });
     return { success: true };
   },
 
@@ -1741,6 +1880,15 @@ export const StorageService = {
 
     const accounts = this.getBankAccounts();
     const idx = accounts.findIndex((b) => b.id === account.id);
+    const prev = idx >= 0 ? accounts[idx] : null;
+
+    // Se marcado como padrão, desmarca outros
+    if (account.isDefault) {
+      accounts.forEach((b) => {
+        if (b.id !== account.id) b.isDefault = false;
+      });
+    }
+
     if (idx >= 0) {
       accounts[idx] = account;
     } else {
@@ -1753,15 +1901,63 @@ export const StorageService = {
       userName: currentUser.name,
       userEmail: currentUser.email,
       userRole: currentUser.role,
-      operation: 'GERENCIAR_CONTA_BANCARIA',
+      operation: prev ? 'EDITAR_CONTA_BANCARIA' : 'CRIAR_CONTA_BANCARIA',
       permissionUsed: 'canManageBankAccounts',
       affectedRecordId: account.id,
       affectedRecordType: 'conta_bancaria',
       result: 'sucesso',
       details: `Conta bancária/caixa ${account.name} salva com sucesso.`,
       origin: 'web_painel',
+      previousValues: prev,
+      newValues: account,
     });
 
+    return { success: true };
+  },
+
+  deleteBankAccount(
+    id: string,
+    currentUser: UserProfile
+  ): { success: boolean; error?: string } {
+    if (!this.hasUserPermission(currentUser, 'canManageBankAccounts')) {
+      return { success: false, error: 'Acesso negado: sem permissão para gerenciar contas bancárias.' };
+    }
+    const accounts = this.getBankAccounts();
+    const target = accounts.find((b) => b.id === id);
+    if (!target) {
+      return { success: false, error: 'Conta bancária não encontrada.' };
+    }
+    if (target.isDefault && accounts.length > 1) {
+      return {
+        success: false,
+        error: `A conta "${target.name}" é a conta bancária padrão do sistema. Defina outra conta como padrão antes de excluí-la.`,
+      };
+    }
+    const finAccounts = this.getFinancialAccounts();
+    const linkedCount = finAccounts.filter((a) => a.bankAccountId === id).length;
+    if (linkedCount > 0) {
+      return {
+        success: false,
+        error: `Não é possível excluir a conta "${target.name}": existem ${linkedCount} lançamentos vinculados a esta conta.`,
+      };
+    }
+    const updated = accounts.filter((b) => b.id !== id);
+    setStored(STORAGE_KEYS.BANK_ACCOUNTS, updated);
+
+    this.addFinancialAuditEntry({
+      userId: currentUser.id,
+      userName: currentUser.name,
+      userEmail: currentUser.email,
+      userRole: currentUser.role,
+      operation: 'DELETAR_CONTA_BANCARIA',
+      permissionUsed: 'canManageBankAccounts',
+      affectedRecordId: id,
+      affectedRecordType: 'conta_bancaria',
+      result: 'sucesso',
+      details: `Conta bancária/caixa "${target.name}" excluída com sucesso.`,
+      origin: 'web_painel',
+      previousValues: target,
+    });
     return { success: true };
   },
 
@@ -1784,6 +1980,7 @@ export const StorageService = {
 
     const methods = this.getFinancialPaymentMethods();
     const idx = methods.findIndex((m) => m.id === method.id);
+    const prev = idx >= 0 ? methods[idx] : null;
     if (idx >= 0) {
       methods[idx] = method;
     } else {
@@ -1796,15 +1993,49 @@ export const StorageService = {
       userName: currentUser.name,
       userEmail: currentUser.email,
       userRole: currentUser.role,
-      operation: 'GERENCIAR_FORMA_PAGAMENTO',
+      operation: prev ? 'EDITAR_FORMA_PAGAMENTO' : 'CRIAR_FORMA_PAGAMENTO',
       permissionUsed: 'canManagePaymentMethods',
       affectedRecordId: method.id,
       affectedRecordType: 'forma_pagamento',
       result: 'sucesso',
       details: `Forma de pagamento ${method.name} salva com sucesso.`,
       origin: 'web_painel',
+      previousValues: prev,
+      newValues: method,
     });
 
+    return { success: true };
+  },
+
+  deleteFinancialPaymentMethod(
+    id: string,
+    currentUser: UserProfile
+  ): { success: boolean; error?: string } {
+    if (!this.hasUserPermission(currentUser, 'canManagePaymentMethods')) {
+      return { success: false, error: 'Acesso negado: sem permissão para gerenciar formas de pagamento.' };
+    }
+    const methods = this.getFinancialPaymentMethods();
+    const target = methods.find((m) => m.id === id);
+    if (!target) {
+      return { success: false, error: 'Forma de pagamento não encontrada.' };
+    }
+    const updated = methods.filter((m) => m.id !== id);
+    setStored(STORAGE_KEYS.FINANCIAL_PAYMENT_METHODS, updated);
+
+    this.addFinancialAuditEntry({
+      userId: currentUser.id,
+      userName: currentUser.name,
+      userEmail: currentUser.email,
+      userRole: currentUser.role,
+      operation: 'DELETAR_FORMA_PAGAMENTO',
+      permissionUsed: 'canManagePaymentMethods',
+      affectedRecordId: id,
+      affectedRecordType: 'forma_pagamento',
+      result: 'sucesso',
+      details: `Forma de pagamento "${target.name}" excluída com sucesso.`,
+      origin: 'web_painel',
+      previousValues: target,
+    });
     return { success: true };
   },
 

@@ -57,6 +57,7 @@ import {
   Globe2,
   Palette,
   Flame,
+  Tags,
   ChevronLeft,
   ChevronRight,
   HardDriveDownload,
@@ -1274,6 +1275,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => setActiveTab('financial')}
+                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-200"
+                title="Cadastrar, editar e excluir categorias, centros de custo e parâmetros"
+              >
+                <Tags className="w-3.5 h-3.5 text-pink-500" />
+                <span>Gerenciar Categorias & Cadastros</span>
+              </button>
               <button
                 onClick={handleOpenNewProduct}
                 className="px-4 py-2 bg-slate-900 hover:bg-[#E6007E] text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
