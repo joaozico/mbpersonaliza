@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Product, Category, SystemLayoutSettings } from '../types';
 import { StorageService } from '../services/storage';
 import { SEOHead } from '../components/SEOHead';
+import { OffersBanner } from '../components/OffersBanner';
 import {
   ArrowRight,
   Sparkles,
@@ -60,8 +61,13 @@ export const HomeView: React.FC<HomeViewProps> = ({
     .filter((b) => b.isVisible)
     .sort((a, b) => a.order - b.order);
 
+  // Filter other blocks so offers_banner is not duplicated in the map
+  const contentBlocks = visibleBlocks.filter((b) => b.type !== 'offers_banner');
+
+  const isBannerEnabled = layout.offersBanner?.enabled ?? true;
+
   return (
-    <div className="space-y-16 pb-16">
+    <div className="w-full min-w-0 max-w-full pb-16 overflow-x-hidden">
       <SEOHead
         title="Brindes Personalizados, Presentes Corporativos & Comunicação Visual"
         description="Especialistas em brindes corporativos, presentes personalizados, papelaria e comunicação visual. Orçamentos rápidos, personalização a laser, silk e DTF com entrega para todo o Brasil."
@@ -79,7 +85,23 @@ export const HomeView: React.FC<HomeViewProps> = ({
         ]}
       />
 
-      {visibleBlocks.map((block) => {
+      {/* ========================================================================= */}
+      {/* 1. PRIMEIRA PARTE DA PÁGINA: BANNER DE OFERTAS (CARROSSEL DINÂMICO MB) */}
+      {/* ========================================================================= */}
+      {isBannerEnabled && (
+        <section className="w-full pt-2 pb-2 sm:pt-4 sm:pb-3 bg-gradient-to-b from-slate-900/5 via-transparent to-transparent">
+          <OffersBanner
+            products={products}
+            settings={layout.offersBanner}
+            onNavigate={onNavigate}
+            className=""
+          />
+        </section>
+      )}
+
+      {/* DEMAIS SEÇÕES DA HOME COM ESPAÇAMENTO RESPONSIVO E HARMONIOSO */}
+      <div className="space-y-12 sm:space-y-16">
+        {contentBlocks.map((block) => {
         // ==========================================
         // 1. HERO SECTION
         // ==========================================
@@ -250,7 +272,23 @@ export const HomeView: React.FC<HomeViewProps> = ({
         }
 
         // ==========================================
-        // 2. CATEGORIES GRID
+        // 2. OFFERS BANNER CAROUSEL
+        // ==========================================
+        if (block.type === 'offers_banner') {
+          const isFirst = visibleBlocks[0]?.id === block.id;
+          return (
+            <OffersBanner
+              key={block.id}
+              products={products}
+              settings={layout.offersBanner}
+              onNavigate={onNavigate}
+              className={isFirst ? 'pt-4 sm:pt-6' : ''}
+            />
+          );
+        }
+
+        // ==========================================
+        // 3. CATEGORIES GRID
         // ==========================================
         if (block.type === 'categories') {
           return (
@@ -595,6 +633,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
         return null;
       })}
+      </div>
     </div>
   );
 };

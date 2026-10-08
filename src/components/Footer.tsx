@@ -45,7 +45,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
   const cleanWhatsappNumber = settings.whatsapp.replace(/\D/g, '');
 
   return (
-    <footer className="bg-slate-950 text-slate-300 pt-16 pb-8 border-t border-slate-800 no-print" id="site-footer">
+    <footer className="w-full min-w-0 max-w-full bg-slate-950 text-slate-300 pt-16 pb-8 border-t border-slate-800 no-print" id="site-footer">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-10 mb-12">
           {/* Brand Col */}

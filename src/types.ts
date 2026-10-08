@@ -14,6 +14,42 @@ export interface RolePermissions {
   canViewReports: boolean;
   canEditPrices: boolean;
   canDeleteData: boolean;
+  // PDV e Pagamentos
+  canAccessPDV: boolean;
+  canOpenCloseCashRegister: boolean;
+  canApplyDiscountPDV: boolean;
+  canCancelPDVSale: boolean;
+  canPerformSangriaSuprimento: boolean;
+  canManagePaymentGateways: boolean;
+  canViewFinancialTransactions: boolean;
+  canManageMaintenanceMode: boolean;
+  // Módulo Financeiro — Controle de Acesso e Segurança (Restrito)
+  canViewFinancialModule: boolean;
+  canViewFinancialDashboard: boolean;
+  canViewReceivables: boolean;
+  canCreateReceivable: boolean;
+  canEditReceivable: boolean;
+  canReceivePayment: boolean;
+  canCancelReceivable: boolean;
+  canRefundReceivable: boolean;
+  canViewPayables: boolean;
+  canCreatePayable: boolean;
+  canEditPayable: boolean;
+  canPayBill: boolean;
+  canCancelPayable: boolean;
+  canRefundPayable: boolean;
+  canViewCashFlow: boolean;
+  canViewRealizedValues: boolean;
+  canViewProjectedValues: boolean;
+  canViewFinancialReports: boolean;
+  canExportFinancialReports: boolean;
+  canManageFinancialCategories: boolean;
+  canManageCostCenters: boolean;
+  canManageBankAccounts: boolean;
+  canManagePaymentMethods: boolean;
+  canManageRecurringTransactions: boolean;
+  canManageFinancialSettings: boolean;
+  canViewFinancialAudit: boolean;
 }
 
 export type PermissionKey = keyof RolePermissions;
@@ -80,7 +116,44 @@ export interface CompanySettings {
   pixDiscountPercent?: number;
   tradeName?: string;
   shippingNotes?: string;
+  maintenance?: MaintenanceSettings;
   updatedAt: string;
+}
+
+export interface MaintenanceModeAuditEntry {
+  id: string;
+  action: 'activated' | 'deactivated' | 'config_updated';
+  timestamp: string;
+  performedBy: {
+    id: string;
+    name: string;
+    email: string;
+    role: UserRole;
+  };
+  details?: string;
+}
+
+export interface MaintenanceSettings {
+  enabled: boolean;
+  title: string;
+  headline: string;
+  message: string;
+  returnAt?: string;
+  showCompanyLogo?: boolean;
+  showContacts?: boolean;
+  themeStyle?: 'brand_gradient' | 'modern_dark' | 'clean_light';
+  iconType?: 'tools' | 'cog' | 'server' | 'sparkles' | 'rocket';
+  customBgColor?: string;
+  customTextColor?: string;
+  allowedRoles?: UserRole[];
+  auditLog?: MaintenanceModeAuditEntry[];
+  updatedAt?: string;
+  updatedBy?: {
+    id: string;
+    name: string;
+    email: string;
+    role?: UserRole;
+  };
 }
 
 export interface UserProfile {
@@ -139,6 +212,7 @@ export interface ProductVariant {
   id: string;
   name: string;
   sku: string;
+  barcode?: string;
   colorHex?: string;
   size?: string;
   material?: string;
@@ -149,6 +223,8 @@ export interface ProductVariant {
 export interface Product {
   id: string;
   code: string;
+  barcode?: string; // Código de barras EAN-13, GTIN ou Code-128
+  qrCode?: string; // Identificador ou payload do QR Code
   name: string;
   slug: string;
   categoryId: string;
@@ -177,6 +253,14 @@ export interface Product {
   variants: ProductVariant[];
   price_tiers: PriceTier[];
   createdAt: string;
+
+  // Banner de Ofertas
+  showInOffersBanner?: boolean;
+  offersBannerOrder?: number;
+  offersBannerImage?: string;
+  offersBannerBadge?: string;
+  offerStartDate?: string;
+  offerEndDate?: string;
 }
 
 export interface StockMovement {
@@ -518,6 +602,7 @@ export interface SiteMetricsReport {
 
 export type LayoutSectionType =
   | 'hero'
+  | 'offers_banner'
   | 'categories'
   | 'featured_products'
   | 'b2b_banner'
@@ -638,6 +723,69 @@ export interface LayoutFooterSettings {
   showSecurityBadge: boolean;
 }
 
+export type OffersBannerTransition = 'fade' | 'slide_horizontal' | 'slide_vertical' | 'zoom';
+
+export type OffersBannerBackgroundTheme =
+  | 'industrial_light'   // Studio concreto claro (Campeões da Obra / Ferramentas / Loja)
+  | 'holiday_festive'    // Verde e dourado festivo (Então já é Natal / Fim de ano)
+  | 'dark_tech'          // Studio grafite escuro (Upgrade na sua Jornada / Linha Dark)
+  | 'modern_lavender'    // Lavanda e azul tech suave (Tech que Cabe no seu Bolso)
+  | 'vibrant_green'      // Verde vibrante de e-commerce (Frete Grátis)
+  | 'corporate_pink'     // Rosa magenta MB Personaliza
+  | 'custom';            // Cor ou gradiente personalizado
+
+export interface OffersBannerProductConfig {
+  id?: string;
+  productId: string;
+  order: number;
+  active: boolean;
+  customTitle?: string;
+  customSubtitle?: string;
+  customDescription?: string;
+  customImage?: string;
+  secondaryImage?: string;
+  backgroundTheme?: OffersBannerBackgroundTheme;
+  customBgColor?: string;
+  customBgImage?: string;
+  customTextColor?: string;
+  imagePosition?: 'center' | 'left' | 'right' | 'bottom';
+  imagePositionHorizontal?: 'left' | 'center' | 'right';
+  imagePositionVertical?: 'top' | 'center' | 'bottom';
+  imageFit?: 'contain' | 'cover';
+  promoPrice?: number;
+  startDate?: string;
+  endDate?: string;
+  badge?: string;
+  badgeColor?: 'black' | 'yellow' | 'green' | 'blue' | 'pink';
+  benefitBadge?: string;
+  benefitBadge2?: string;
+  validityText?: string;
+  ctaText?: string;
+  targetLink?: string;
+}
+
+export interface OffersBannerSettings {
+  enabled: boolean;
+  title: string;
+  subtitle: string;
+  badgeText: string;
+  autoplay: boolean;
+  intervalMs: number;
+  transitionSpeedMs: number;
+  transitionType: OffersBannerTransition;
+  showArrows: boolean;
+  showDots: boolean;
+  showProgressBar: boolean;
+  showCtaButton: boolean;
+  ctaButtonText: string;
+  disclaimerText?: string;
+  height: 'panoramic' | 'compact' | 'normal' | 'tall';
+  fullWidth: boolean;
+  autoOrderCriteria: 'custom' | 'discount_desc' | 'featured' | 'newest';
+  maxSlides?: number;
+  items: OffersBannerProductConfig[];
+}
+
 export interface SystemLayoutSettings {
   version: number;
   updatedAt: string;
@@ -645,6 +793,7 @@ export interface SystemLayoutSettings {
   colors: LayoutColorSettings;
   header: LayoutHeaderSettings;
   hero: LayoutHeroSettings;
+  offersBanner: OffersBannerSettings;
   categoriesSection: {
     title: string;
     subtitle: string;
@@ -660,4 +809,438 @@ export interface SystemLayoutSettings {
   footer: LayoutFooterSettings;
   blocks: LayoutBlockConfig[];
 }
+
+// ==========================================
+// GATEWAYS DE PAGAMENTO & TRANSAÇÕES
+// ==========================================
+
+export type PaymentGatewayProvider = 'mercadopago' | 'pagbank' | 'manual';
+export type PaymentEnvironment = 'sandbox' | 'production';
+export type PaymentTransactionStatus =
+  | 'aguardando'
+  | 'processando'
+  | 'aprovado'
+  | 'recusado'
+  | 'cancelado'
+  | 'estornado'
+  | 'erro'
+  | 'expirado';
+
+export interface PaymentGatewayConfig {
+  id: string;
+  provider: PaymentGatewayProvider;
+  name: string;
+  enabled: boolean;
+  environment: PaymentEnvironment;
+  // Credenciais Mercado Pago
+  mpPublicKey?: string;
+  mpAccessToken?: string;
+  mpWebhookSecret?: string;
+  // Credenciais PagBank
+  pbPublicKey?: string;
+  pbToken?: string;
+  pbWebhookSecret?: string;
+  // Meios Aceitos
+  acceptedMethods: {
+    creditCard: boolean;
+    pix: boolean;
+    debitCard: boolean;
+    boleto: boolean;
+  };
+  maxInstallments: number;
+  interestFreeInstallments: number;
+  feePercentageCredit: number; // ex: 3.99%
+  feePercentagePix: number; // ex: 0.99%
+  autoApproveSandbox: boolean;
+  updatedAt: string;
+}
+
+export interface PaymentTransaction {
+  id: string;
+  saleId: string; // ID do pedido ou venda PDV
+  saleCode: string; // PED-2026-XXXX ou PDV-2026-XXXX
+  origin: 'loja_online' | 'pdv' | 'orcamento';
+  customerName: string;
+  customerCpfCnpj?: string;
+  gateway: PaymentGatewayProvider;
+  gatewayTransactionId?: string;
+  method: 'credit_card' | 'debit_card' | 'pix' | 'dinheiro' | 'boleto' | 'multiplo';
+  installments: number;
+  installmentValue?: number;
+  grossAmount: number;
+  feeAmount: number;
+  netAmount: number;
+  status: PaymentTransactionStatus;
+  statusDetail?: string;
+  qrCodePix?: string;
+  qrCodePixText?: string;
+  operatorId?: string;
+  operatorName?: string;
+  cardLastFour?: string;
+  cardBrand?: string;
+  metadata?: Record<string, any>;
+  history: {
+    timestamp: string;
+    status: PaymentTransactionStatus;
+    note: string;
+    operator?: string;
+  }[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ==========================================
+// MÓDULO PDV (PONTO DE VENDA LOJA FÍSICA)
+// ==========================================
+
+export interface PDVSaleItem {
+  id: string;
+  productId: string;
+  productName: string;
+  productSku: string;
+  productImage?: string;
+  variantId?: string;
+  variantName?: string;
+  quantity: number;
+  unitPrice: number;
+  discount: number;
+  total: number;
+  customizationNote?: string;
+  customArtworkName?: string;
+}
+
+export interface PDVPaymentSplit {
+  method: 'dinheiro' | 'pix' | 'cartao_credito' | 'cartao_debito' | 'outro';
+  amount: number;
+  gateway?: PaymentGatewayProvider;
+  installments?: number;
+  gatewayTransactionId?: string;
+  cardBrand?: string;
+  receivedAmount?: number;
+  changeAmount?: number;
+}
+
+export interface PDVSale {
+  id: string;
+  code: string; // PDV-2026-0001
+  cashRegisterId: string;
+  cashRegisterNumber: number;
+  operatorId: string;
+  operatorName: string;
+  customerId?: string;
+  customerName: string;
+  customerCpfCnpj?: string;
+  customerPhone?: string;
+  customerEmail?: string;
+  items: PDVSaleItem[];
+  subtotal: number;
+  discount: number;
+  additions: number;
+  total: number;
+  payments: PDVPaymentSplit[];
+  status: 'concluida' | 'cancelada' | 'pendente';
+  cancellationReason?: string;
+  cancelledAt?: string;
+  cancelledBy?: string;
+  isCustomized: boolean;
+  productionDays?: number;
+  productionStatus?: 'aguardando_arte' | 'em_producao' | 'pronto' | 'entregue';
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface CashRegisterMovement {
+  id: string;
+  registerId: string;
+  type: 'abertura' | 'fechamento' | 'venda' | 'sangria' | 'suprimento' | 'estorno';
+  amount: number;
+  paymentMethod?: string;
+  reason: string;
+  saleId?: string;
+  operatorId: string;
+  operatorName: string;
+  createdAt: string;
+}
+
+export interface CashRegisterSession {
+  id: string;
+  registerNumber: number;
+  registerName: string;
+  operatorId: string;
+  operatorName: string;
+  openedAt: string;
+  closedAt?: string;
+  initialFund: number;
+  status: 'aberto' | 'fechado';
+  totalSalesCount: number;
+  totalSalesAmount: number;
+  totalCashSales: number;
+  totalPixSales: number;
+  totalDebitSales: number;
+  totalCreditSales: number;
+  totalSangrias: number;
+  totalSuprimentos: number;
+  expectedCash: number;
+  actualCash?: number;
+  cashDifference?: number;
+  closingNotes?: string;
+  movements: CashRegisterMovement[];
+}
+
+export interface PDVSettings {
+  registerNumber: number;
+  registerName: string;
+  defaultOperatorId?: string;
+  allowNegativeStock: boolean;
+  maxDiscountPercent: number;
+  mandatoryCashOpening: boolean;
+  autoPrintReceipt: boolean;
+  defaultGateway: PaymentGatewayProvider;
+  receiptHeaderCustomText?: string;
+  receiptFooterCustomText?: string;
+}
+
+// ============================================================================
+// MÓDULO FINANCEIRO (CONTAS A RECEBER, PAGAR, FLUXO DE CAIXA, AUDITORIA)
+// ============================================================================
+
+export type FinancialAccountType = 'receber' | 'pagar';
+export type FinancialAccountStatus = 'pendente' | 'pago' | 'vencido' | 'cancelado' | 'estornado';
+
+export interface FinancialAccount {
+  id: string;
+  code: string; // ex: REC-2026-001 ou PAG-2026-001
+  type: FinancialAccountType;
+  description: string;
+  entityName: string; // Nome do Cliente ou Fornecedor
+  entityDocument?: string; // CPF / CNPJ
+  amount: number;
+  dueDate: string; // ISO string YYYY-MM-DD
+  issueDate: string; // ISO string
+  paymentDate?: string; // Data da liquidação/baixa
+  status: FinancialAccountStatus;
+  categoryId: string;
+  categoryName: string;
+  costCenterId?: string;
+  costCenterName?: string;
+  bankAccountId?: string;
+  bankAccountName?: string;
+  paymentMethod?: string;
+  orderCode?: string; // Vínculo com Pedido de Venda / Compra
+  quoteCode?: string; // Vínculo com Orçamento
+  paidAmount?: number;
+  interestAmount?: number;
+  discountAmount?: number;
+  notes?: string;
+  // Campos de controle de cancelamento e estorno
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancelledByName?: string;
+  cancellationReason?: string;
+  refundedAt?: string;
+  refundedBy?: string;
+  refundedByName?: string;
+  refundReason?: string;
+  createdBy: string;
+  createdByName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FinancialCategory {
+  id: string;
+  name: string;
+  type: 'receita' | 'despesa' | 'ambos';
+  color?: string;
+  active: boolean;
+  description?: string;
+}
+
+export interface CostCenter {
+  id: string;
+  code: string;
+  name: string;
+  active: boolean;
+  description?: string;
+}
+
+export interface BankAccount {
+  id: string;
+  name: string;
+  bankName: string;
+  agency: string;
+  accountNumber: string;
+  accountType: 'corrente' | 'poupanca' | 'caixa_fisico' | 'carteira_digital';
+  initialBalance: number;
+  currentBalance: number;
+  isDefault: boolean;
+  active: boolean;
+}
+
+export interface FinancialPaymentMethod {
+  id: string;
+  name: string;
+  code: string;
+  taxPercent: number;
+  daysToClear: number;
+  active: boolean;
+}
+
+export interface FinancialRecurringTransaction {
+  id: string;
+  type: FinancialAccountType;
+  description: string;
+  entityName: string;
+  amount: number;
+  frequency: 'mensal' | 'semanal' | 'quinzenal' | 'anual';
+  dueDay: number;
+  categoryId: string;
+  costCenterId?: string;
+  active: boolean;
+  nextDueDate: string;
+}
+
+export interface FinancialSettings {
+  defaultDueDays: number;
+  interestRateMonthly: number;
+  penaltyRatePercent: number;
+  alertDueDaysBefore: number;
+  lockPastTransactions: boolean;
+  requireReasonOnCancel: boolean;
+  requireReasonOnRefund: boolean;
+  allowPartialSettlement: boolean;
+  autoSyncPDVSales: boolean;
+  updatedAt: string;
+  updatedBy?: string;
+}
+
+export interface FinancialAuditEntry {
+  id: string;
+  timestamp: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  userRole: UserRole;
+  operation: string; // e.g. 'ACESSO_MODULO', 'CRIAR_CONTA', 'BAIXAR_CONTA', 'CANCELAR_CONTA', 'ESTORNAR_PAGAMENTO', 'EXPORTAR_RELATORIO', 'CONCEDER_PERMISSAO', 'REMOVER_PERMISSAO', 'ACESSO_NEGADO'
+  permissionUsed?: string;
+  affectedRecordId?: string;
+  affectedRecordType?: string; // 'conta_receber' | 'conta_pagar' | 'permissao' | 'configuracao' | 'relatorio'
+  result: 'sucesso' | 'bloqueado' | 'erro';
+  details: string;
+  origin?: string; // 'web_painel' | 'api' | 'pdv'
+  ip?: string;
+  previousValues?: any;
+  newValues?: any;
+}
+
+// ==========================================
+// BACKUP E RECUPERAÇÃO DE DESASTRES (JSON SEGURO)
+// ==========================================
+
+export type BackupFrequency = 'hourly' | 'daily' | 'weekly' | 'custom_interval';
+
+export interface BackupScheduleConfig {
+  enabled: boolean;
+  frequency: BackupFrequency;
+  intervalHours: number; // Ex: a cada 6, 12, 24 horas
+  scheduledTime: string; // Ex: "03:00" (madrugada para menor impacto)
+  daysOfWeek: number[]; // [0=Dom, 1=Seg, ..., 6=Sáb]
+  retentionCount: number; // Ex: manter os últimos 15 ou 30 backups
+  retentionDays: number; // Ex: 30 dias
+  // Entidades cobertas
+  includeProducts: boolean; // Produtos, variações, categorias, subcategorias
+  includeQuotes: boolean; // Orçamentos
+  includeOrders: boolean; // Pedidos e itens
+  includeStock: boolean; // Movimentações de estoque
+  includeCustomers: boolean; // Clientes cadastrados
+  includeSettings: boolean; // Configurações da empresa e layout
+  // Camada de segurança
+  encryptPayload: boolean; // Criptografia/assinatura estendida
+  securitySalt?: string;
+  autoDownloadBrowser: boolean; // Baixar automaticamente no navegador quando disparado
+  saveOnServer: boolean; // Salvar cópia no servidor Express
+  lastRunAt?: string;
+  lastRunStatus?: 'success' | 'warning' | 'error';
+  lastRunMessage?: string;
+  nextRunAt?: string;
+  updatedAt: string;
+}
+
+export interface BackupMetadata {
+  system: string; // "MB Personaliza"
+  appletId: string;
+  version: string;
+  exportTimestamp: string;
+  exportType: 'scheduled' | 'manual' | 'disaster_recovery_preflight';
+  schemaVersion: '1.0.0';
+  counts: {
+    products: number;
+    categories: number;
+    subcategories: number;
+    quotes: number;
+    orders: number;
+    stockMovements: number;
+    customers: number;
+  };
+  security: {
+    algorithm: 'SHA-256';
+    checksumSha256: string;
+    signature: string;
+    encrypted: boolean;
+    integrityVerified: boolean;
+  };
+  disasterRecoveryNote: string;
+}
+
+export interface SecureBackupPayload {
+  metadata: BackupMetadata;
+  data: {
+    products: Product[];
+    categories: Category[];
+    subcategories?: Subcategory[];
+    quotes: Quote[];
+    orders: Order[];
+    stockMovements?: StockMovement[];
+    customers?: UserProfile[];
+    companySettings?: CompanySettings;
+  };
+}
+
+export interface BackupHistoryEntry {
+  id: string;
+  filename: string;
+  timestamp: string;
+  sizeBytes: number;
+  sizeFormatted: string;
+  checksum: string;
+  trigger: 'scheduled' | 'manual' | 'disaster_recovery_preflight';
+  status: 'success' | 'failed' | 'verified';
+  counts: {
+    products: number;
+    quotes: number;
+    orders: number;
+  };
+  downloadUrl?: string;
+  storedOnServer?: boolean;
+  error?: string;
+}
+
+export interface BackupVerificationResult {
+  valid: boolean;
+  checksumMatches: boolean;
+  calculatedChecksum: string;
+  statedChecksum: string;
+  metadata?: BackupMetadata;
+  counts?: {
+    products: number;
+    quotes: number;
+    orders: number;
+    categories: number;
+  };
+  errors: string[];
+  warnings: string[];
+}
+
+
 

@@ -233,7 +233,7 @@ export const SiteMetricsView: React.FC<SiteMetricsViewProps> = ({
   ];
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8" id="site-metrics-page">
+    <div className="w-full min-w-0 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8" id="site-metrics-page">
       <SEOHead
         title="Métricas do Site & Insights de Acesso | MB Personaliza"
         description="Painel profissional de acompanhamento de acessos, tráfego, fontes de visitantes e conversões da MB Personaliza."

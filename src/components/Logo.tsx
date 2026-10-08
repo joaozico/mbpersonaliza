@@ -256,8 +256,8 @@ export const Logo: React.FC<LogoProps> = ({
             )}
           </span>
         </div>
-        {showSubtitle || settings.showLogoSubtitle ? (
-          <span className={`font-semibold uppercase tracking-wider mt-0.5 ${subColor} ${dimensions.subSize}`}>
+        {(showSubtitle !== undefined ? showSubtitle : settings.showLogoSubtitle) ? (
+          <span className={`font-semibold uppercase tracking-wider mt-0.5 ${subColor} ${dimensions.subSize} max-w-[200px] lg:max-w-[280px] xl:max-w-[340px] truncate hidden sm:inline-block`}>
             {tagline}
           </span>
         ) : (

@@ -5,10 +5,11 @@ import { Shield, User, ChevronDown, Check, Sparkles, RefreshCw } from 'lucide-re
 
 interface RoleSwitcherProps {
   currentUser: UserProfile;
-  onUserChange: (user: UserProfile) => void;
+  onUserChange?: (user: UserProfile) => void;
+  onRoleChange?: (role: UserRole) => void;
 }
 
-export const RoleSwitcher: React.FC<RoleSwitcherProps> = ({ currentUser, onUserChange }) => {
+export const RoleSwitcher: React.FC<RoleSwitcherProps> = ({ currentUser, onUserChange, onRoleChange }) => {
   const [isOpen, setIsOpen] = useState(false);
 
   const roles: { role: UserRole; title: string; desc: string; badgeColor: string }[] = [
@@ -52,7 +53,8 @@ export const RoleSwitcher: React.FC<RoleSwitcherProps> = ({ currentUser, onUserC
 
   const handleSelectRole = (role: UserRole) => {
     const newUser = StorageService.switchRole(role);
-    onUserChange(newUser);
+    if (onUserChange) onUserChange(newUser);
+    if (onRoleChange) onRoleChange(role);
     setIsOpen(false);
   };
 

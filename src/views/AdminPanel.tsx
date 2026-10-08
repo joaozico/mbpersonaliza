@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import {
   Product,
   Category,
@@ -15,6 +15,11 @@ import { UserManagementTab } from './UserManagementTab';
 import { SiteMetricsView } from './SiteMetricsView';
 import { StrickerIntegrationTab } from './StrickerIntegrationTab';
 import { LayoutCustomizationTab } from './LayoutCustomizationTab';
+import { PaymentGatewaysTab } from './PaymentGatewaysTab';
+import { PaymentTransactionsTab } from './PaymentTransactionsTab';
+import { CashRegisterTab } from './CashRegisterTab';
+import { FinancialModuleView } from './FinancialModuleView';
+import { DisasterRecoveryBackupTab } from './DisasterRecoveryBackupTab';
 import { SEOHead } from '../components/SEOHead';
 import {
   LayoutDashboard,
@@ -47,9 +52,14 @@ import {
   SlidersHorizontal,
   LogOut,
   Store,
+  CreditCard,
   BarChart3,
   Globe2,
   Palette,
+  Flame,
+  ChevronLeft,
+  ChevronRight,
+  HardDriveDownload,
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -70,8 +80,34 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onNavigate,
 }) => {
   const [activeTab, setActiveTab] = useState<
-    'dashboard' | 'products' | 'quotes' | 'orders' | 'stock' | 'users' | 'company' | 'layout' | 'metrics' | 'stricker'
+    | 'dashboard'
+    | 'products'
+    | 'quotes'
+    | 'orders'
+    | 'stock'
+    | 'users'
+    | 'company'
+    | 'layout'
+    | 'offers_banner'
+    | 'metrics'
+    | 'stricker'
+    | 'gateways'
+    | 'transactions'
+    | 'cash_register'
+    | 'financial'
+    | 'backup'
   >('dashboard');
+
+  // Category filter and scroll ref for tabs
+  const [tabCategoryFilter, setTabCategoryFilter] = useState<'all' | 'operacional' | 'vendas_caixa' | 'configuracoes'>('all');
+  const tabsContainerRef = useRef<HTMLDivElement>(null);
+
+  const scrollTabs = (direction: 'left' | 'right') => {
+    if (tabsContainerRef.current) {
+      const scrollAmount = direction === 'left' ? -300 : 300;
+      tabsContainerRef.current.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+    }
+  };
 
   // Quotes and Orders from storage
   const [quotes, setQuotes] = useState<Quote[]>(() => StorageService.getQuotes());
@@ -79,6 +115,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [stockMovements, setStockMovements] = useState<StockMovement[]>(() => StorageService.getStockMovements());
 
   // Permissions checks for current logged in employee
+  const canViewFinancialModule = StorageService.hasUserPermission(currentUser, 'canViewFinancialModule');
   const canViewSiteMetrics = StorageService.hasUserPermission(currentUser, 'canViewSiteMetrics');
   const canManageUsers = StorageService.hasUserPermission(currentUser, 'canManageUsers');
   const canManageCompany = StorageService.hasUserPermission(currentUser, 'canManageCompanySettings');
@@ -87,6 +124,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const canManageQuotes = StorageService.hasUserPermission(currentUser, 'canManageQuotes');
   const canManageOrders = StorageService.hasUserPermission(currentUser, 'canManageOrders');
   const canManageStock = StorageService.hasUserPermission(currentUser, 'canManageStock');
+  const canManageGateways = StorageService.hasUserPermission(currentUser, 'canManagePaymentGateways');
+  const canViewTransactions = StorageService.hasUserPermission(currentUser, 'canViewFinancialTransactions');
+  const canAccessPDV = StorageService.hasUserPermission(currentUser, 'canAccessPDV');
 
   // Product Modal State
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -107,7 +147,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   // Search and filters
   const [productSearch, setProductSearch] = useState('');
-  const [productStockFilter, setProductStockFilter] = useState<'all' | 'low_stock' | 'out_of_stock' | 'normal' | 'active' | 'inactive'>('all');
+  const [productStockFilter, setProductStockFilter] = useState<
+    'all' | 'low_stock' | 'out_of_stock' | 'normal' | 'active' | 'inactive' | 'banner'
+  >('all');
   const [stockTableFilter, setStockTableFilter] = useState<'all' | 'low_stock'>('all');
   const [dismissLowStockBanner, setDismissLowStockBanner] = useState(false);
   const [quoteFilterStatus, setQuoteFilterStatus] = useState<string>('all');
@@ -211,6 +253,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     };
 
     StorageService.saveProduct(finalProduct);
+
+    if (finalProduct.showInOffersBanner !== undefined) {
+      StorageService.toggleProductInOffersBanner(
+        finalProduct.id,
+        Boolean(finalProduct.showInOffersBanner),
+        finalProduct.promo_price,
+        finalProduct.offersBannerBadge,
+        finalProduct.offersBannerOrder,
+        finalProduct.offersBannerImage,
+        finalProduct.offerStartDate,
+        finalProduct.offerEndDate
+      );
+    }
+
     setIsProductModalOpen(false);
     setEditingProduct(null);
     refreshAll();
@@ -317,7 +373,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8" id="admin-panel-page">
+    <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 min-w-0" id="admin-panel-page">
       <SEOHead
         title="Painel de Controle & Gestão (ERP)"
         description="Painel de controle do catálogo de brindes, orçamentos, pedidos, estoque e configurações da MB Personaliza."
@@ -351,6 +407,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <span>Ver Loja</span>
           </button>
 
+          {canAccessPDV && (
+            <button
+              onClick={() => onNavigate('pdv')}
+              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+              title="Abrir Ponto de Venda (Frente de Caixa Balcão)"
+            >
+              <Store className="w-4 h-4 text-white" />
+              <span>Abrir PDV (Caixa)</span>
+            </button>
+          )}
+
           <button
             onClick={handleOpenNewProduct}
             className="px-4 py-2.5 bg-[#E6007E] hover:bg-[#c9006e] text-white text-xs font-bold rounded-xl transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
@@ -381,152 +448,387 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       </div>
 
-      {/* Navigation Tabs */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-slate-200">
-        <button
-          onClick={() => setActiveTab('dashboard')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-            activeTab === 'dashboard' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <LayoutDashboard className="w-4 h-4" />
-          <span>Visão Geral</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('products')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-            activeTab === 'products' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <Package className="w-4 h-4" />
-          <span>Produtos ({products.length})</span>
-          {lowStockProducts.length > 0 && (
-            <span
-              className="px-1.5 py-0.5 rounded-full bg-rose-600 text-white text-[10px] flex items-center gap-0.5 font-bold animate-pulse"
-              title={`${lowStockProducts.length} produto(s) abaixo do estoque mínimo`}
+      {/* Navigation Category Filter & Tab Navigation */}
+      <div className="space-y-2.5 border-b border-slate-200 pb-3 w-full min-w-0 max-w-full">
+        {/* Top Control Bar: Category Filters & Scroll Controls */}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          {/* Category Chips */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-1 hidden md:inline">
+              Módulos:
+            </span>
+            <button
+              onClick={() => setTabCategoryFilter('all')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                tabCategoryFilter === 'all'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
             >
-              <AlertTriangle className="w-2.5 h-2.5" />
-              <span>{lowStockProducts.length}</span>
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('quotes')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-            activeTab === 'quotes' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <FileSpreadsheet className="w-4 h-4" />
-          <span>Orçamentos & Cotações ({quotes.length})</span>
-          {pendingQuotes > 0 && (
-            <span className="w-5 h-5 rounded-full bg-[#E6007E] text-white text-[10px] flex items-center justify-center font-bold">
-              {pendingQuotes}
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('orders')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-            activeTab === 'orders' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <ShoppingBag className="w-4 h-4" />
-          <span>Pedidos & Produção ({orders.length})</span>
-          {inProductionOrders > 0 && (
-            <span className="w-5 h-5 rounded-full bg-[#00AEEF] text-white text-[10px] flex items-center justify-center font-bold">
-              {inProductionOrders}
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('stock')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-            activeTab === 'stock' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <Boxes className="w-4 h-4" />
-          <span>Estoque & Inventário</span>
-          {lowStockProducts.length > 0 && (
-            <span
-              className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-[10px] flex items-center gap-1 font-bold shadow-xs"
-              title={`${lowStockProducts.length} produto(s) com estoque baixo ou zerado`}
+              Todas as Abas (15)
+            </button>
+            <button
+              onClick={() => {
+                setTabCategoryFilter('operacional');
+                if (!['dashboard', 'products', 'quotes', 'orders', 'stock'].includes(activeTab)) {
+                  setActiveTab('dashboard');
+                }
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                tabCategoryFilter === 'operacional'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
             >
-              <AlertTriangle className="w-3 h-3" />
-              <span>{lowStockProducts.length} em alerta</span>
-            </span>
-          )}
-        </button>
+              <Package className="w-3.5 h-3.5 text-blue-500" />
+              <span>Operacional & Estoque</span>
+            </button>
+            <button
+              onClick={() => {
+                setTabCategoryFilter('vendas_caixa');
+                if (!['transactions', 'gateways', 'cash_register'].includes(activeTab)) {
+                  setActiveTab('transactions');
+                }
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                tabCategoryFilter === 'vendas_caixa'
+                  ? 'bg-emerald-700 text-white shadow-xs'
+                  : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/60'
+              }`}
+            >
+              <Store className="w-3.5 h-3.5 text-emerald-500" />
+              <span>Vendas, PDV & Caixa</span>
+            </button>
+            <button
+              onClick={() => {
+                setTabCategoryFilter('configuracoes');
+                if (!['stricker', 'metrics', 'users', 'company', 'offers_banner', 'layout', 'backup'].includes(activeTab)) {
+                  setActiveTab('stricker');
+                }
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                tabCategoryFilter === 'configuracoes'
+                  ? 'bg-[#E6007E] text-white shadow-xs'
+                  : 'bg-pink-50 text-[#E6007E] hover:bg-pink-100 border border-pink-200/60'
+              }`}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5 text-pink-500" />
+              <span>Configurações & Loja</span>
+            </button>
+          </div>
 
-        {canViewSiteMetrics && (
-          <button
-            onClick={() => setActiveTab('metrics')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-              activeTab === 'metrics'
-                ? 'bg-gradient-to-r from-[#E6007E] to-[#00AEEF] text-white shadow-xs'
-                : 'text-slate-600 hover:bg-slate-100'
-            }`}
+          {/* Scroll Navigation Arrows for Horizontal Tab Bar */}
+          <div className="flex items-center gap-1 ml-auto">
+            <span className="text-[11px] text-slate-400 hidden xl:inline">Navegar abas:</span>
+            <button
+              onClick={() => scrollTabs('left')}
+              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer border border-slate-200"
+              title="Rolar abas para a esquerda"
+              aria-label="Rolar para esquerda"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => scrollTabs('right')}
+              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer border border-slate-200"
+              title="Rolar abas para a direita"
+              aria-label="Rolar para direita"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Mobile Quick Select Dropdown */}
+        <div className="sm:hidden">
+          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+            Selecione a aba:
+          </label>
+          <select
+            value={activeTab}
+            onChange={(e) => setActiveTab(e.target.value as any)}
+            className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#00AEEF]"
           >
-            <BarChart3 className="w-4 h-4" />
-            <span>Métricas do Site</span>
-          </button>
-        )}
+            <optgroup label="Operacional & Estoque">
+              <option value="dashboard">Visão Geral</option>
+              <option value="products">Produtos ({products.length})</option>
+              <option value="quotes">Orçamentos ({quotes.length})</option>
+              <option value="orders">Pedidos & Produção ({orders.length})</option>
+              <option value="stock">Estoque & Inventário</option>
+            </optgroup>
+            <optgroup label="Vendas & Caixa">
+              {canViewFinancialModule && (
+                <option value="financial">Módulo Financeiro (Restrito)</option>
+              )}
+              <option value="transactions">Transações & Pagamentos</option>
+              <option value="gateways">Gateways de Pagamento (Mercado Pago / PagBank)</option>
+              <option value="cash_register">Controle de Caixa</option>
+            </optgroup>
+            <optgroup label="Configurações & Integrações">
+              <option value="stricker">Integração Stricker / SPOT</option>
+              <option value="offers_banner">Banner de Ofertas</option>
+              <option value="layout">Personalização do Layout</option>
+              <option value="metrics">Métricas do Site</option>
+              <option value="users">Usuários & Permissões</option>
+              <option value="company">Dados da Empresa</option>
+              <option value="backup">Backup & Recuperação (DRP)</option>
+            </optgroup>
+          </select>
+        </div>
 
-        {canManageUsers && (
-          <button
-            onClick={() => setActiveTab('users')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-              activeTab === 'users' ? 'bg-[#E6007E] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
-            }`}
-          >
-            <Users className="w-4 h-4" />
-            <span>Usuários & Permissões</span>
-          </button>
-        )}
-
-        {canManageCompany && (
-          <button
-            onClick={() => setActiveTab('company')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-              activeTab === 'company' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
-            }`}
-          >
-            <Building2 className="w-4 h-4 text-[#00AEEF]" />
-            <span>Dados & Logo da Empresa</span>
-          </button>
-        )}
-
-        {canCustomizeLayout && (
-          <button
-            onClick={() => setActiveTab('layout')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-              activeTab === 'layout'
-                ? 'bg-gradient-to-r from-[#E6007E] to-[#00AEEF] text-white shadow-xs'
-                : 'text-slate-600 hover:bg-slate-100'
-            }`}
-          >
-            <Palette className="w-4 h-4 text-[#FFDD00]" />
-            <span>Personalização do Layout</span>
-          </button>
-        )}
-
-        <button
-          onClick={() => setActiveTab('stricker')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-            activeTab === 'stricker'
-              ? 'bg-gradient-to-r from-blue-700 to-indigo-700 text-white shadow-sm ring-2 ring-blue-400/30'
-              : 'text-slate-700 bg-blue-50/50 hover:bg-blue-100/70 border border-blue-200/60'
-          }`}
+        {/* Horizontal Scrollable Tabs Bar */}
+        <div
+          ref={tabsContainerRef}
+          className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-transparent scroll-smooth w-full min-w-0 max-w-full"
         >
-          <Globe2 className={`w-4 h-4 ${activeTab === 'stricker' ? 'text-white' : 'text-blue-600'}`} />
-          <span>Integração Stricker / SPOT</span>
-          <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase bg-blue-500 text-white tracking-wider">
-            API v1.0
-          </span>
-        </button>
+          {/* Operacional Tabs */}
+          {(tabCategoryFilter === 'all' || tabCategoryFilter === 'operacional') && (
+            <>
+              <button
+                onClick={() => setActiveTab('dashboard')}
+                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                  activeTab === 'dashboard' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <LayoutDashboard className="w-4 h-4 text-[#00AEEF]" />
+                <span>Visão Geral</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('products')}
+                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                  activeTab === 'products' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <Package className="w-4 h-4 text-emerald-400" />
+                <span>Produtos ({products.length})</span>
+                {lowStockProducts.length > 0 && (
+                  <span
+                    className="px-1.5 py-0.5 rounded-full bg-rose-600 text-white text-[10px] flex items-center gap-0.5 font-bold animate-pulse"
+                    title={`${lowStockProducts.length} produto(s) abaixo do estoque mínimo`}
+                  >
+                    <AlertTriangle className="w-2.5 h-2.5" />
+                    <span>{lowStockProducts.length}</span>
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setActiveTab('quotes')}
+                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                  activeTab === 'quotes' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <FileSpreadsheet className="w-4 h-4 text-pink-400" />
+                <span>Orçamentos ({quotes.length})</span>
+                {pendingQuotes > 0 && (
+                  <span className="w-5 h-5 rounded-full bg-[#E6007E] text-white text-[10px] flex items-center justify-center font-bold">
+                    {pendingQuotes}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setActiveTab('orders')}
+                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                  activeTab === 'orders' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <ShoppingBag className="w-4 h-4 text-blue-400" />
+                <span>Pedidos ({orders.length})</span>
+                {inProductionOrders > 0 && (
+                  <span className="w-5 h-5 rounded-full bg-[#00AEEF] text-white text-[10px] flex items-center justify-center font-bold">
+                    {inProductionOrders}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setActiveTab('stock')}
+                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                  activeTab === 'stock' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <Boxes className="w-4 h-4 text-amber-400" />
+                <span>Estoque & Inventário</span>
+                {lowStockProducts.length > 0 && (
+                  <span
+                    className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-[10px] flex items-center gap-1 font-bold shadow-xs"
+                    title={`${lowStockProducts.length} produto(s) com estoque baixo ou zerado`}
+                  >
+                    <AlertTriangle className="w-3 h-3" />
+                    <span>{lowStockProducts.length}</span>
+                  </span>
+                )}
+              </button>
+            </>
+          )}
+
+          {/* Vendas & Caixa Tabs */}
+          {(tabCategoryFilter === 'all' || tabCategoryFilter === 'vendas_caixa') && (
+            <>
+              {canViewFinancialModule && (
+                <button
+                  onClick={() => setActiveTab('financial')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'financial'
+                      ? 'bg-gradient-to-r from-[#E6007E] to-rose-600 text-white shadow-md ring-2 ring-pink-300'
+                      : 'text-slate-800 bg-rose-50/80 hover:bg-rose-100 border border-rose-200/80'
+                  }`}
+                  title="Módulo Financeiro (Acesso Restrito)"
+                >
+                  <DollarSign className={`w-4 h-4 ${activeTab === 'financial' ? 'text-[#FFDD00]' : 'text-rose-600'}`} />
+                  <span>Módulo Financeiro</span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase bg-rose-500 text-white tracking-wider">
+                    Restrito
+                  </span>
+                </button>
+              )}
+
+              {canViewTransactions && (
+                <button
+                  onClick={() => setActiveTab('transactions')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'transactions'
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <DollarSign className="w-4 h-4 text-emerald-400" />
+                  <span>Transações & Pagamentos</span>
+                </button>
+              )}
+
+              {canManageGateways && (
+                <button
+                  onClick={() => setActiveTab('gateways')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'gateways'
+                      ? 'bg-gradient-to-r from-[#00AEEF] to-sky-700 text-white shadow-xs'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <CreditCard className="w-4 h-4 text-sky-400" />
+                  <span>Gateways de Pagamento</span>
+                </button>
+              )}
+
+              <button
+                onClick={() => setActiveTab('cash_register')}
+                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                  activeTab === 'cash_register'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <Store className="w-4 h-4 text-amber-500" />
+                <span>Controle de Caixa</span>
+              </button>
+            </>
+          )}
+
+          {/* Configurações & Loja Tabs */}
+          {(tabCategoryFilter === 'all' || tabCategoryFilter === 'configuracoes') && (
+            <>
+              <button
+                onClick={() => setActiveTab('stricker')}
+                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                  activeTab === 'stricker'
+                    ? 'bg-gradient-to-r from-blue-700 to-indigo-700 text-white shadow-sm ring-2 ring-blue-400/30'
+                    : 'text-slate-700 bg-blue-50/50 hover:bg-blue-100/70 border border-blue-200/60'
+                }`}
+              >
+                <Globe2 className={`w-4 h-4 ${activeTab === 'stricker' ? 'text-white' : 'text-blue-600'}`} />
+                <span>Integração Stricker</span>
+                <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase bg-blue-500 text-white tracking-wider">
+                  API
+                </span>
+              </button>
+
+              {canCustomizeLayout && (
+                <button
+                  onClick={() => setActiveTab('offers_banner')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'offers_banner'
+                      ? 'bg-gradient-to-r from-[#E6007E] to-rose-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <Flame className="w-4 h-4 text-[#FFDD00]" />
+                  <span>Banner de Ofertas</span>
+                </button>
+              )}
+
+              {canCustomizeLayout && (
+                <button
+                  onClick={() => setActiveTab('layout')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'layout'
+                      ? 'bg-gradient-to-r from-[#E6007E] to-[#00AEEF] text-white shadow-xs'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <Palette className="w-4 h-4 text-[#FFDD00]" />
+                  <span>Layout da Loja</span>
+                </button>
+              )}
+
+              {canViewSiteMetrics && (
+                <button
+                  onClick={() => setActiveTab('metrics')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'metrics'
+                      ? 'bg-gradient-to-r from-[#E6007E] to-[#00AEEF] text-white shadow-xs'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <BarChart3 className="w-4 h-4 text-[#00AEEF]" />
+                  <span>Métricas</span>
+                </button>
+              )}
+
+              {canManageUsers && (
+                <button
+                  onClick={() => setActiveTab('users')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'users' ? 'bg-[#E6007E] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <Users className="w-4 h-4 text-purple-400" />
+                  <span>Usuários & Permissões</span>
+                </button>
+              )}
+
+              {canManageCompany && (
+                <button
+                  onClick={() => setActiveTab('company')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'company' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <Building2 className="w-4 h-4 text-[#00AEEF]" />
+                  <span>Dados da Empresa</span>
+                </button>
+              )}
+
+              <button
+                onClick={() => setActiveTab('backup')}
+                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                  activeTab === 'backup'
+                    ? 'bg-gradient-to-r from-slate-900 via-indigo-950 to-indigo-900 text-white shadow-sm ring-2 ring-indigo-400/30'
+                    : 'text-indigo-950 bg-indigo-50/70 hover:bg-indigo-100 border border-indigo-200/70'
+                }`}
+                title="Backup Agendado & Recuperação de Desastres (JSON Seguro)"
+              >
+                <HardDriveDownload className={`w-4 h-4 ${activeTab === 'backup' ? 'text-[#FFDD00]' : 'text-indigo-600'}`} />
+                <span>Backup & Recuperação</span>
+                <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase bg-indigo-600 text-white tracking-wider">
+                  DRP
+                </span>
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* AUTOMATIC LOW STOCK AUDIT ALERT BANNER */}
@@ -957,6 +1259,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               >
                 Ativos ({activeProducts})
               </button>
+
+              <button
+                onClick={() => setProductStockFilter('banner')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+                  productStockFilter === 'banner'
+                    ? 'bg-[#E6007E] text-white shadow-xs'
+                    : 'bg-pink-50 text-[#E6007E] hover:bg-pink-100 border border-pink-200'
+                }`}
+              >
+                <Flame className="w-3.5 h-3.5 text-[#E6007E]" />
+                <span>No Banner ({products.filter((p) => p.showInOffersBanner).length})</span>
+              </button>
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
@@ -1011,6 +1325,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       if (productStockFilter === 'inactive') {
                         return !p.is_active;
                       }
+                      if (productStockFilter === 'banner') {
+                        return Boolean(p.showInOffersBanner);
+                      }
                       return true;
                     })
                     .map((prod) => {
@@ -1035,7 +1352,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                 className="w-10 h-10 object-cover rounded-lg border border-slate-200 shrink-0"
                               />
                               <div>
-                                <p className="font-bold text-slate-900">{prod.name}</p>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <p className="font-bold text-slate-900">{prod.name}</p>
+                                  {prod.showInOffersBanner && (
+                                    <span
+                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-black bg-pink-100 text-[#E6007E] border border-pink-200 shrink-0"
+                                      title={`No Banner de Ofertas (Ordem #${prod.offersBannerOrder ?? 1})`}
+                                    >
+                                      <Flame className="w-2.5 h-2.5 text-[#E6007E]" />
+                                      <span>Banner Ofertas #{prod.offersBannerOrder ?? 1}</span>
+                                    </span>
+                                  )}
+                                  {prod.promo_price && prod.promo_price < prod.base_price && (
+                                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-800 shrink-0">
+                                      {Math.round(((prod.base_price - prod.promo_price) / prod.base_price) * 100)}% OFF
+                                    </span>
+                                  )}
+                                </div>
                                 <p className="text-[10px] text-slate-400">
                                   {categories.find((c) => c.id === prod.categoryId)?.name}
                                 </p>
@@ -1602,12 +1935,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
       {/* TAB 7: COMPANY SETTINGS & LOGO */}
       {activeTab === 'company' && canManageCompany && (
-        <CompanySettingsTab />
+        <CompanySettingsTab currentUser={currentUser} onNavigate={onNavigate} />
       )}
 
       {/* TAB: SYSTEM LAYOUT CUSTOMIZATION */}
       {activeTab === 'layout' && canCustomizeLayout && (
         <LayoutCustomizationTab onRefreshData={refreshAll} />
+      )}
+
+      {/* TAB: OFFERS BANNER DEDICATED MANAGEMENT */}
+      {activeTab === 'offers_banner' && canCustomizeLayout && (
+        <LayoutCustomizationTab onRefreshData={refreshAll} initialTab="offers_banner" />
       )}
 
       {/* TAB 8: SITE METRICS & ANALYTICS (INSTAGRAM INSIGHTS STYLE) */}
@@ -1618,6 +1956,38 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       {/* TAB 9: STRICKER BRASIL / SPOT WEBSERVICE INTEGRATION */}
       {activeTab === 'stricker' && (
         <StrickerIntegrationTab onRefreshData={refreshAll} />
+      )}
+
+      {/* TAB 10: FINANCIAL TRANSACTIONS & PAYMENTS */}
+      {activeTab === 'transactions' && canViewTransactions && (
+        <PaymentTransactionsTab currentUser={currentUser} />
+      )}
+
+      {/* TAB 11: PAYMENT GATEWAYS (MERCADO PAGO & PAGBANK) */}
+      {activeTab === 'gateways' && canManageGateways && (
+        <PaymentGatewaysTab />
+      )}
+
+      {/* TAB 12: CASH REGISTER SESSIONS & CONTROL */}
+      {activeTab === 'cash_register' && (
+        <CashRegisterTab />
+      )}
+
+      {/* TAB 13: MÓDULO FINANCEIRO (CONTROLE DE ACESSO RESTRITO) */}
+      {activeTab === 'financial' && (
+        <FinancialModuleView
+          currentUser={currentUser}
+          onNavigate={onNavigate}
+        />
+      )}
+
+      {/* TAB 14: BACKUP AGENDADO & RECUPERAÇÃO DE DESASTRES (JSON SEGURO) */}
+      {activeTab === 'backup' && (
+        <DisasterRecoveryBackupTab
+          currentUser={currentUser}
+          onNavigate={onNavigate}
+          onRefreshData={refreshAll}
+        />
       )}
 
       {/* MODAL: CREATE / EDIT PRODUCT WITH PRICE TIERS */}
@@ -1908,6 +2278,208 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     </div>
                   ))}
                 </div>
+              </div>
+
+              {/* CONFIGURAÇÃO PARA O BANNER DE OFERTAS */}
+              <div className="p-4 sm:p-5 rounded-2xl border border-pink-200 bg-pink-50/50 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <span className="p-2 rounded-xl bg-[#E6007E] text-white shadow-xs">
+                      <Flame className="w-4 h-4 text-[#FFDD00]" />
+                    </span>
+                    <div>
+                      <h4 className="text-xs font-black uppercase text-slate-900 tracking-wider">
+                        Exibir no Banner de Ofertas
+                      </h4>
+                      <p className="text-[11px] text-slate-500">
+                        Destacar este produto no carrossel de ofertas com transição na página inicial da loja
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Radio / Select Sim / Não */}
+                  <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-pink-200 shadow-2xs self-start sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => setEditingProduct({ ...editingProduct, showInOffersBanner: true })}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                        editingProduct.showInOffersBanner
+                          ? 'bg-[#E6007E] text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                      }`}
+                    >
+                      Sim
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingProduct({ ...editingProduct, showInOffersBanner: false })}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                        !editingProduct.showInOffersBanner
+                          ? 'bg-slate-800 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                      }`}
+                    >
+                      Não
+                    </button>
+                  </div>
+                </div>
+
+                {editingProduct.showInOffersBanner && (
+                  <div className="pt-3 border-t border-pink-200/80 space-y-3.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Ordem de Exibição no Banner
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={editingProduct.offersBannerOrder ?? 1}
+                          onChange={(e) =>
+                            setEditingProduct({
+                              ...editingProduct,
+                              offersBannerOrder: parseInt(e.target.value) || 1,
+                            })
+                          }
+                          className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl font-bold"
+                          placeholder="Ex: 1"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Preço Promocional (R$)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={editingProduct.promo_price ?? ''}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            setEditingProduct({
+                              ...editingProduct,
+                              promo_price: !isNaN(val) && val > 0 ? val : undefined,
+                            });
+                          }}
+                          className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl font-bold text-pink-600"
+                          placeholder="Ex: 39.90"
+                        />
+                        {editingProduct.promo_price && editingProduct.base_price > 0 && editingProduct.promo_price < editingProduct.base_price && (
+                          <span className="text-[10px] font-bold text-emerald-600 mt-1 block">
+                            Desconto de {Math.round(((editingProduct.base_price - editingProduct.promo_price) / editingProduct.base_price) * 100)}% (Economia: R$ {(editingProduct.base_price - editingProduct.promo_price).toFixed(2)})
+                          </span>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Selo de Destaque / Badge
+                        </label>
+                        <input
+                          type="text"
+                          value={editingProduct.offersBannerBadge || ''}
+                          onChange={(e) =>
+                            setEditingProduct({
+                              ...editingProduct,
+                              offersBannerBadge: e.target.value,
+                            })
+                          }
+                          placeholder="Ex: OFERTA ESPECIAL"
+                          className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl uppercase font-bold text-slate-800"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Periodo da Oferta */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Início da Oferta (Data/Hora)
+                        </label>
+                        <input
+                          type="date"
+                          value={editingProduct.offerStartDate || ''}
+                          onChange={(e) =>
+                            setEditingProduct({
+                              ...editingProduct,
+                              offerStartDate: e.target.value,
+                            })
+                          }
+                          className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Término da Oferta (Data/Hora)
+                        </label>
+                        <input
+                          type="date"
+                          value={editingProduct.offerEndDate || ''}
+                          onChange={(e) =>
+                            setEditingProduct({
+                              ...editingProduct,
+                              offerEndDate: e.target.value,
+                            })
+                          }
+                          className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Imagem específica para o banner */}
+                    <div className="space-y-1.5">
+                      <label className="block text-[11px] font-bold text-slate-700">
+                        Imagem Específica para o Banner (Opcional)
+                      </label>
+                      <p className="text-[10px] text-slate-500">
+                        Se não definida, o banner exibirá automaticamente a foto principal já cadastrada do produto.
+                      </p>
+                      <div className="flex items-center gap-3">
+                        {editingProduct.offersBannerImage ? (
+                          <img
+                            src={editingProduct.offersBannerImage}
+                            alt="Banner Preview"
+                            className="w-12 h-12 rounded-xl object-cover border border-slate-300 shadow-2xs shrink-0"
+                          />
+                        ) : (
+                          editingProduct.images && editingProduct.images[0] && (
+                            <img
+                              src={editingProduct.images[0]}
+                              alt="Foto Principal"
+                              className="w-12 h-12 rounded-xl object-cover border border-slate-200 opacity-60 shrink-0"
+                              title="Foto principal atual"
+                            />
+                          )
+                        )}
+                        <input
+                          type="text"
+                          value={editingProduct.offersBannerImage || ''}
+                          onChange={(e) =>
+                            setEditingProduct({
+                              ...editingProduct,
+                              offersBannerImage: e.target.value,
+                            })
+                          }
+                          placeholder="URL da imagem específica ou cole imagem base64"
+                          className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl font-mono text-slate-700"
+                        />
+                        {editingProduct.offersBannerImage && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setEditingProduct({ ...editingProduct, offersBannerImage: undefined })
+                            }
+                            className="text-xs text-rose-500 hover:text-rose-700 font-bold whitespace-nowrap cursor-pointer"
+                          >
+                            Usar Principal
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Toggles */}

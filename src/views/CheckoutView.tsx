@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { CartItem, Order, UserProfile, CompanySettings } from '../types';
+import { CartItem, Order, UserProfile, CompanySettings, PaymentGatewayConfig } from '../types';
 import { StorageService } from '../services/storage';
+import { PaymentService } from '../services/paymentService';
 import { StrickerOrderService } from '../services/stricker/StrickerOrderService';
 import { SEOHead } from '../components/SEOHead';
 import {
@@ -84,6 +85,9 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   const [completedOrder, setCompletedOrder] = useState<Order | null>(null);
   const [copiedPix, setCopiedPix] = useState(false);
 
+  const [gateways] = useState(() => StorageService.getPaymentGateways());
+  const activeGateway = gateways.find((g) => g.enabled) || gateways[0];
+
   const pixDiscountRate = (companySettings.pixDiscountPercent ?? 5) / 100;
   const subtotal = (cart || []).reduce(
     (acc, item) => acc + (item?.calculatedUnitPrice || 0) * (item?.quantity || 0),
@@ -92,6 +96,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   const shippingCost = subtotal > 500 ? 0 : 45.00;
   const pixDiscount = paymentMethod === 'pix' ? subtotal * pixDiscountRate : 0;
   const total = subtotal + shippingCost - pixDiscount;
+  const installmentOptions = PaymentService.calculateInstallments(total, activeGateway);
 
   const handleCopyPixKey = () => {
     const customPixKey = companySettings.pixKey || 'mbpersonaliza-pix-key-2026';
@@ -155,6 +160,62 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
       };
 
       StorageService.addOrder(newOrder);
+
+      // Baixa de estoque imediata para os produtos vendidos online
+      cart.forEach((item) => {
+        StorageService.adjustStock(
+          item.product.id,
+          item.quantity,
+          'saida',
+          `Venda Loja Online #${newOrder.code}`,
+          'Loja Virtual MB'
+        );
+      });
+
+      // Registra transação financeira no módulo de pagamentos
+      const activeGateways = StorageService.getPaymentGateways();
+      const activeGw = activeGateways.find((g) => g.enabled)?.provider || 'mercadopago';
+      const gwConfig = StorageService.getPaymentGateway(activeGw);
+      const feeRate = paymentMethod === 'credit_card' ? (gwConfig?.feePercentageCredit ?? 3.49) / 100 : paymentMethod === 'pix' ? (gwConfig?.feePercentagePix ?? 0.99) / 100 : 0;
+      const feeAmount = Number((total * feeRate).toFixed(2));
+      const netAmount = Number((total - feeAmount).toFixed(2));
+
+      StorageService.addPaymentTransaction({
+        id: `tx-web-${newOrder.code}`,
+        saleId: newOrder.id,
+        saleCode: newOrder.code,
+        origin: 'loja_online',
+        customerName: name,
+        customerCpfCnpj: cpfCnpj || undefined,
+        gateway: activeGw,
+        gatewayTransactionId: `${activeGw === 'mercadopago' ? 'mp' : 'pb'}_tx_${Date.now()}`,
+        method: paymentMethod === 'credit_card' ? 'credit_card' : paymentMethod === 'pix' ? 'pix' : 'boleto',
+        installments: paymentMethod === 'credit_card' ? installments : 1,
+        installmentValue: paymentMethod === 'credit_card' && installments > 1 ? Number((total / installments).toFixed(2)) : total,
+        grossAmount: total,
+        feeAmount,
+        netAmount,
+        status: paymentMethod === 'faturado_pj' ? 'aguardando' : 'aprovado',
+        statusDetail: `Pedido recebido via checkout online (${paymentMethod}).`,
+        cardBrand: paymentMethod === 'credit_card' ? 'Mastercard' : undefined,
+        cardLastFour: paymentMethod === 'credit_card' ? cardNumber.replace(/\D/g, '').slice(-4) || '4242' : undefined,
+        operatorName: 'Loja Virtual MB',
+        metadata: {
+          shippingCost,
+          subtotal,
+          pixDiscount,
+        },
+        history: [
+          {
+            timestamp: new Date().toISOString(),
+            status: paymentMethod === 'faturado_pj' ? 'aguardando' : 'aprovado',
+            note: 'Cobrança gerada e aprovada no checkout transparente.',
+            operator: 'Loja Virtual MB',
+          },
+        ],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
 
       // Sincroniza pedido no WebService da Stricker para produtos importados/integrados
       const strickerCartItems = cart.filter(
@@ -301,7 +362,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8" id="checkout-page">
+    <div className="w-full min-w-0 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8" id="checkout-page">
       <SEOHead
         title="Checkout Seguro & Finalização de Pedido"
         description="Finalização segura de pedido de brindes corporativos e produtos personalizados na MB Personaliza."
@@ -590,17 +651,23 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Parcelamento</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-slate-700">Parcelamento no Cartão</label>
+                    <span className="text-[10px] text-[#00AEEF] font-bold">
+                      Processado via {activeGateway.name}
+                    </span>
+                  </div>
                   <select
                     value={installments}
                     onChange={(e) => setInstallments(parseInt(e.target.value))}
                     className="w-full px-3.5 py-2 text-xs font-semibold bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-[#00AEEF]"
                   >
-                    <option value={1}>1x de R$ {total.toFixed(2)} (À vista sem juros)</option>
-                    <option value={2}>2x de R$ {(total / 2).toFixed(2)} sem juros</option>
-                    <option value={3}>3x de R$ {(total / 3).toFixed(2)} sem juros</option>
-                    <option value={6}>6x de R$ {(total / 6).toFixed(2)} sem juros</option>
-                    <option value={12}>12x de R$ {(total / 12).toFixed(2)} sem juros</option>
+                    {installmentOptions.map((opt) => (
+                      <option key={opt.installment} value={opt.installment}>
+                        {opt.installment}x de R$ {opt.value.toFixed(2)}{' '}
+                        {!opt.hasInterest ? '(Sem juros)' : `(Total: R$ ${opt.total.toFixed(2)})`}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>

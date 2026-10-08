@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Product, Category, Subcategory } from '../types';
+import { Product, ProductVariant, Category, Subcategory } from '../types';
 import { SEOHead } from '../components/SEOHead';
 import {
   Search,
@@ -24,6 +24,7 @@ interface CatalogViewProps {
   subcategories: Subcategory[];
   selectedCategoryId?: string;
   onNavigate: (view: string, param?: string) => void;
+  onOpenQuoteModal?: (initial?: { product: Product; variant?: ProductVariant; quantity: number }) => void;
 }
 
 export const CatalogView: React.FC<CatalogViewProps> = ({
@@ -32,6 +33,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   subcategories,
   selectedCategoryId,
   onNavigate,
+  onOpenQuoteModal,
 }) => {
   const [selectedCat, setSelectedCat] = useState<string>(selectedCategoryId || 'all');
   const [selectedSubcat, setSelectedSubcat] = useState<string>('all');
@@ -139,7 +141,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    <div className="w-full min-w-0 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       <SEOHead
         title={seoTitle}
         description={seoDescription}
@@ -467,12 +469,29 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                       )}
                     </div>
 
-                    <button
-                      onClick={() => onNavigate('product-detail', product.id)}
-                      className="px-3 py-1.5 bg-slate-900 hover:bg-[#E6007E] text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
-                    >
-                      Detalhes
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => {
+                          if (onOpenQuoteModal) {
+                            onOpenQuoteModal({ product, quantity: product.min_order_qty || 50 });
+                          } else {
+                            onNavigate('quote');
+                          }
+                        }}
+                        className="px-2.5 py-1.5 bg-[#E6007E] hover:bg-[#d0006e] text-white text-xs font-bold rounded-xl transition-all shadow-2xs flex items-center gap-1 cursor-pointer"
+                        title="Adicionar ao Orçamento com foto"
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5 text-[#FFDD00]" />
+                        <span>+ Orçamento</span>
+                      </button>
+
+                      <button
+                        onClick={() => onNavigate('product-detail', product.id)}
+                        className="px-2.5 py-1.5 bg-slate-900 hover:bg-[#00AEEF] text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                      >
+                        Detalhes
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -536,12 +555,29 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                     Produto Sob Cotação
                   </div>
                 )}
-                <button
-                  onClick={() => onNavigate('product-detail', product.id)}
-                  className="w-full sm:w-auto px-4 py-2 bg-slate-900 hover:bg-[#E6007E] text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
-                >
-                  Ver Detalhes e Faixas
-                </button>
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <button
+                    onClick={() => {
+                      if (onOpenQuoteModal) {
+                        onOpenQuoteModal({ product, quantity: product.min_order_qty || 50 });
+                      } else {
+                        onNavigate('quote');
+                      }
+                    }}
+                    className="flex-1 sm:flex-none px-3.5 py-2 bg-[#E6007E] hover:bg-[#d0006e] text-white text-xs font-bold rounded-xl transition-all shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer"
+                    title="Adicionar ao Orçamento"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-[#FFDD00]" />
+                    <span>+ Orçamento</span>
+                  </button>
+
+                  <button
+                    onClick={() => onNavigate('product-detail', product.id)}
+                    className="flex-1 sm:flex-none px-4 py-2 bg-slate-900 hover:bg-[#00AEEF] text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                  >
+                    Ver Detalhes
+                  </button>
+                </div>
               </div>
             </div>
           ))}

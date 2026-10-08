@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
-import { CompanySettings, WhatsAppContact } from '../types';
+import { CompanySettings, WhatsAppContact, UserProfile, MaintenanceSettings } from '../types';
 import { StorageService } from '../services/storage';
+import { INITIAL_MAINTENANCE_SETTINGS } from '../data/initialData';
 import { compressImageFile } from '../utils/imageOptimizer';
 import { Logo } from '../components/Logo';
 import {
@@ -45,12 +46,32 @@ import {
   ToggleLeft,
   ToggleRight,
   AlertCircle,
+  Wrench,
+  AlertTriangle,
+  Power,
+  History,
+  Server,
+  Rocket,
+  Cog,
+  ShieldAlert,
 } from 'lucide-react';
 
-export const CompanySettingsTab: React.FC = () => {
+interface CompanySettingsTabProps {
+  currentUser?: UserProfile;
+  onNavigate?: (view: string, param?: string) => void;
+  initialSubSection?: 'geral' | 'whatsapp' | 'logo' | 'fiscal' | 'pagamento' | 'manutencao';
+}
+
+export const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({
+  currentUser,
+  onNavigate,
+  initialSubSection = 'geral',
+}) => {
   const [settings, setSettings] = useState<CompanySettings>(() => StorageService.getCompanySettings());
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const [activeSubSection, setActiveSubSection] = useState<'geral' | 'whatsapp' | 'logo' | 'fiscal' | 'pagamento'>('geral');
+  const [activeSubSection, setActiveSubSection] = useState<
+    'geral' | 'whatsapp' | 'logo' | 'fiscal' | 'pagamento' | 'manutencao'
+  >(initialSubSection);
 
   // WhatsApp Multi-Contact Management States
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
@@ -481,6 +502,126 @@ export const CompanySettingsTab: React.FC = () => {
     }
   };
 
+  // Maintenance Mode Management Handlers
+  const currentMaint = settings.maintenance || INITIAL_MAINTENANCE_SETTINGS;
+
+  const handleToggleMaintenanceMode = (enable: boolean) => {
+    if (enable) {
+      const confirmActivate = window.confirm(
+        'Ao ativar o modo de manutenção, os usuários não administradores serão direcionados para a página de manutenção. Deseja continuar?'
+      );
+      if (!confirmActivate) return;
+    } else {
+      const confirmDeactivate = window.confirm(
+        'Deseja desativar o modo de manutenção e liberar o acesso público ao sistema para todos os clientes?'
+      );
+      if (!confirmDeactivate) return;
+    }
+
+    const adminUser = currentUser || {
+      id: 'admin',
+      name: 'Administrador',
+      email: 'admin@mbpersonaliza.com.br',
+      role: 'admin' as const,
+      active: true,
+      createdAt: '',
+    };
+
+    const res = StorageService.toggleMaintenanceMode(enable, adminUser, currentMaint.returnAt);
+
+    if (res.success) {
+      const fresh = StorageService.getCompanySettings();
+      setSettings(fresh);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 4000);
+    } else {
+      alert(res.error || 'Erro ao alterar o status do modo de manutenção.');
+    }
+  };
+
+  const handleUpdateMaintenanceField = <K extends keyof MaintenanceSettings>(
+    field: K,
+    value: MaintenanceSettings[K]
+  ) => {
+    const updated: MaintenanceSettings = {
+      ...currentMaint,
+      [field]: value,
+    };
+    setSettings((prev) => ({
+      ...prev,
+      maintenance: updated,
+    }));
+  };
+
+  const handleSaveMaintenanceConfig = () => {
+    const adminUser = currentUser || {
+      id: 'admin',
+      name: 'Administrador',
+      email: 'admin@mbpersonaliza.com.br',
+      role: 'admin' as const,
+      active: true,
+      createdAt: '',
+    };
+
+    const res = StorageService.saveMaintenanceSettings(
+      currentMaint,
+      adminUser,
+      'config_updated'
+    );
+
+    if (res.success) {
+      const fresh = StorageService.getCompanySettings();
+      setSettings(fresh);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 4000);
+    } else {
+      alert(res.error || 'Erro ao salvar configurações de manutenção.');
+    }
+  };
+
+  const handleSetPresetReturnTime = (hoursAhead: number) => {
+    const date = new Date(Date.now() + hoursAhead * 3600 * 1000);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const formatted = `${day}/${month}/${year} às ${hours}:${minutes}`;
+    handleUpdateMaintenanceField('returnAt', formatted);
+  };
+
+  const handleResetMaintenanceConfig = () => {
+    if (
+      window.confirm(
+        'Deseja restaurar as mensagens, temas e ícones padrão da página de manutenção?'
+      )
+    ) {
+      const adminUser = currentUser || {
+        id: 'admin',
+        name: 'Administrador',
+        email: 'admin@mbpersonaliza.com.br',
+        role: 'admin' as const,
+        active: true,
+        createdAt: '',
+      };
+      const resetMaint: MaintenanceSettings = {
+        ...INITIAL_MAINTENANCE_SETTINGS,
+        enabled: currentMaint.enabled,
+        auditLog: currentMaint.auditLog,
+      };
+      const res = StorageService.saveMaintenanceSettings(
+        resetMaint,
+        adminUser,
+        'config_updated'
+      );
+      if (res.success) {
+        setSettings(StorageService.getCompanySettings());
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 3000);
+      }
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -610,6 +751,33 @@ export const CompanySettingsTab: React.FC = () => {
         >
           <CreditCard className="w-4 h-4 text-[#FFDD00]" />
           <span>Chave PIX & Conta Bancária</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubSection('manutencao')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${
+            activeSubSection === 'manutencao'
+              ? 'bg-amber-600 text-white shadow-xs'
+              : 'bg-white text-slate-700 hover:bg-slate-100 border border-amber-200/60'
+          }`}
+        >
+          <Wrench className="w-4 h-4 text-amber-500" />
+          <span>Modo de Manutenção</span>
+          <span
+            className={`px-2 py-0.5 rounded-full text-[10px] font-black tracking-wider uppercase flex items-center gap-1.5 ${
+              settings.maintenance?.enabled
+                ? 'bg-amber-400 text-amber-950 animate-pulse'
+                : 'bg-emerald-100 text-emerald-800'
+            }`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                settings.maintenance?.enabled ? 'bg-amber-950' : 'bg-emerald-600'
+              }`}
+            />
+            {settings.maintenance?.enabled ? 'EM MANUTENÇÃO' : 'ONLINE'}
+          </span>
         </button>
       </div>
 
@@ -2151,6 +2319,475 @@ export const CompanySettingsTab: React.FC = () => {
                   placeholder="MB Personaliza Brindes Ltda"
                 />
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* SUBSECTION: MODO DE MANUTENÇÃO */}
+        {activeSubSection === 'manutencao' && (
+          <div className="space-y-6">
+            {/* Main Status & Switch Control Card */}
+            <div
+              className={`p-6 sm:p-8 rounded-2xl border transition-all ${
+                currentMaint.enabled
+                  ? 'bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-amber-600/10 border-amber-300 shadow-md'
+                  : 'bg-white border-slate-200 shadow-xs'
+              }`}
+            >
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2.5">
+                    <span
+                      className={`p-2 rounded-xl flex items-center justify-center shrink-0 ${
+                        currentMaint.enabled
+                          ? 'bg-amber-500 text-slate-950 animate-pulse'
+                          : 'bg-emerald-100 text-emerald-700'
+                      }`}
+                    >
+                      {currentMaint.enabled ? (
+                        <AlertTriangle className="w-6 h-6 text-slate-950" />
+                      ) : (
+                        <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+                      )}
+                    </span>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-heading font-black uppercase text-slate-900">
+                          {currentMaint.enabled
+                            ? '🟠 Sistema em Manutenção'
+                            : '🟢 Sistema Funcionando Normalmente'}
+                        </h3>
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-[11px] font-black tracking-wide uppercase ${
+                            currentMaint.enabled
+                              ? 'bg-amber-500 text-slate-950 shadow-xs'
+                              : 'bg-emerald-100 text-emerald-800'
+                          }`}
+                        >
+                          {currentMaint.enabled ? 'ATIVADO' : 'ONLINE'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 mt-0.5">
+                        {currentMaint.enabled
+                          ? 'Visitantes e clientes veem exclusivamente a Página de Manutenção. Administradores e gerentes continuam com acesso total ao sistema.'
+                          : 'Acesso público totalmente liberado. Loja virtual, PDV, orçamentos e pedidos operando em capacidade normal.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {currentMaint.updatedAt && (
+                    <div className="text-[11px] text-slate-500 flex items-center gap-2 pt-1 pl-10">
+                      <span>Última alteração:</span>
+                      <span className="font-mono font-medium">
+                        {new Date(currentMaint.updatedAt).toLocaleString('pt-BR')}
+                      </span>
+                      {currentMaint.updatedBy && (
+                        <span>por {currentMaint.updatedBy.name} ({currentMaint.updatedBy.email})</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Big Switch / Toggle Control */}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 shrink-0">
+                  <div className="bg-slate-100 p-1.5 rounded-2xl flex items-center border border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (currentMaint.enabled) {
+                          handleToggleMaintenanceMode(false);
+                        }
+                      }}
+                      className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 ${
+                        !currentMaint.enabled
+                          ? 'bg-white text-emerald-700 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-900'
+                      }`}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${!currentMaint.enabled ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                      <span>DESATIVADO</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!currentMaint.enabled) {
+                          handleToggleMaintenanceMode(true);
+                        }
+                      }}
+                      className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 ${
+                        currentMaint.enabled
+                          ? 'bg-amber-500 text-slate-950 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-900'
+                      }`}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${currentMaint.enabled ? 'bg-slate-950 animate-pulse' : 'bg-slate-300'}`} />
+                      <span>ATIVADO</span>
+                    </button>
+                  </div>
+
+                  {onNavigate && (
+                    <button
+                      type="button"
+                      onClick={() => onNavigate('maintenance')}
+                      className="px-4 py-2.5 rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                      title="Visualizar a página de manutenção como um visitante"
+                    >
+                      <Eye className="w-4 h-4 text-[#00AEEF]" />
+                      <span>Ver Tela de Manutenção</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Customization Card */}
+            <div className="bg-white p-6 sm:p-8 rounded-2xl border border-slate-200 shadow-xs space-y-6">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                <div className="flex items-center gap-2.5">
+                  <Sliders className="w-5 h-5 text-[#E6007E]" />
+                  <div>
+                    <h4 className="text-sm font-extrabold uppercase text-slate-900">
+                      Personalização da Página de Manutenção
+                    </h4>
+                    <p className="text-xs text-slate-500">
+                      Configure o visual, mensagens, contatos de emergência e previsão de retorno exibidos aos clientes.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleResetMaintenanceConfig}
+                  className="text-xs font-bold text-slate-500 hover:text-slate-900 flex items-center gap-1.5 cursor-pointer underline"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Restaurar Padrões</span>
+                </button>
+              </div>
+
+              {/* Previsão de Retorno */}
+              <div className="space-y-2 bg-amber-50/60 p-4 rounded-xl border border-amber-200/80">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-amber-600" />
+                    <span>Previsão de Retorno (Opcional)</span>
+                  </label>
+                  <span className="text-[11px] text-slate-500 italic">
+                    Se vazio, nenhuma previsão será exibida.
+                  </span>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                  <input
+                    type="text"
+                    value={currentMaint.returnAt || ''}
+                    onChange={(e) => handleUpdateMaintenanceField('returnAt', e.target.value)}
+                    placeholder="Ex: 18:00 ou 06/10/2026 às 08:00 ou Em breve"
+                    className="flex-1 px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500 font-medium"
+                  />
+                  {currentMaint.returnAt && (
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateMaintenanceField('returnAt', '')}
+                      className="px-3 py-2 text-xs font-bold text-red-600 hover:bg-red-50 rounded-xl border border-red-200 cursor-pointer transition-colors"
+                    >
+                      Limpar
+                    </button>
+                  )}
+                </div>
+
+                {/* Quick Presets */}
+                <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                  <span className="text-[10px] font-bold uppercase text-slate-400">Atalhos rápidos:</span>
+                  <button
+                    type="button"
+                    onClick={() => handleSetPresetReturnTime(1)}
+                    className="px-2 py-0.5 text-[11px] font-bold bg-white hover:bg-amber-100 text-slate-700 rounded-md border border-slate-200 transition-colors cursor-pointer"
+                  >
+                    +1 Hora
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetPresetReturnTime(2)}
+                    className="px-2 py-0.5 text-[11px] font-bold bg-white hover:bg-amber-100 text-slate-700 rounded-md border border-slate-200 transition-colors cursor-pointer"
+                  >
+                    +2 Horas
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateMaintenanceField('returnAt', 'Hoje às 18:00')}
+                    className="px-2 py-0.5 text-[11px] font-bold bg-white hover:bg-amber-100 text-slate-700 rounded-md border border-slate-200 transition-colors cursor-pointer"
+                  >
+                    Hoje às 18:00
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateMaintenanceField('returnAt', 'Hoje às 20:00')}
+                    className="px-2 py-0.5 text-[11px] font-bold bg-white hover:bg-amber-100 text-slate-700 rounded-md border border-slate-200 transition-colors cursor-pointer"
+                  >
+                    Hoje às 20:00
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateMaintenanceField('returnAt', 'Amanhã às 08:00')}
+                    className="px-2 py-0.5 text-[11px] font-bold bg-white hover:bg-amber-100 text-slate-700 rounded-md border border-slate-200 transition-colors cursor-pointer"
+                  >
+                    Amanhã às 08:00
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateMaintenanceField('returnAt', 'Voltaremos em breve')}
+                    className="px-2 py-0.5 text-[11px] font-bold bg-white hover:bg-amber-100 text-slate-700 rounded-md border border-slate-200 transition-colors cursor-pointer"
+                  >
+                    Voltaremos em breve
+                  </button>
+                </div>
+              </div>
+
+              {/* Text Fields */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Título Principal
+                  </label>
+                  <input
+                    type="text"
+                    value={currentMaint.title || ''}
+                    onChange={(e) => handleUpdateMaintenanceField('title', e.target.value)}
+                    placeholder="Sistema em Manutenção"
+                    className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:border-slate-900"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">Exibido na aba do navegador e no cabeçalho do aviso.</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Frase de Destaque (Headline)
+                  </label>
+                  <input
+                    type="text"
+                    value={currentMaint.headline || ''}
+                    onChange={(e) => handleUpdateMaintenanceField('headline', e.target.value)}
+                    placeholder="Estamos realizando algumas melhorias no sistema."
+                    className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:border-slate-900"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">Frase principal em negrito abaixo do título.</p>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Mensagem Explicativa Detalhada
+                </label>
+                <textarea
+                  rows={3}
+                  value={currentMaint.message || ''}
+                  onChange={(e) => handleUpdateMaintenanceField('message', e.target.value)}
+                  placeholder="Nosso sistema está temporariamente indisponível para manutenção e atualização. Em breve estaremos de volta."
+                  className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:border-slate-900"
+                />
+              </div>
+
+              {/* Theme & Icon Selection */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+                {/* Theme Style */}
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-slate-700">Tema Visual da Tela</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateMaintenanceField('themeStyle', 'brand_gradient')}
+                      className={`p-3 rounded-xl border text-center cursor-pointer transition-all ${
+                        currentMaint.themeStyle === 'brand_gradient' || !currentMaint.themeStyle
+                          ? 'border-[#E6007E] bg-pink-50/50 ring-2 ring-[#E6007E]/30'
+                          : 'border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="h-6 w-full rounded-md bg-gradient-to-r from-slate-950 via-[#0d1527] to-slate-950 mb-1.5 flex items-center justify-center">
+                        <span className="w-2 h-2 rounded-full bg-[#E6007E]" />
+                      </div>
+                      <span className="text-[11px] font-bold text-slate-800 block">Gradiente Neon</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateMaintenanceField('themeStyle', 'modern_dark')}
+                      className={`p-3 rounded-xl border text-center cursor-pointer transition-all ${
+                        currentMaint.themeStyle === 'modern_dark'
+                          ? 'border-slate-900 bg-slate-50 ring-2 ring-slate-900/30'
+                          : 'border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="h-6 w-full rounded-md bg-slate-950 mb-1.5 flex items-center justify-center">
+                        <span className="w-2 h-2 rounded-full bg-slate-400" />
+                      </div>
+                      <span className="text-[11px] font-bold text-slate-800 block">Dark Moderno</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateMaintenanceField('themeStyle', 'clean_light')}
+                      className={`p-3 rounded-xl border text-center cursor-pointer transition-all ${
+                        currentMaint.themeStyle === 'clean_light'
+                          ? 'border-blue-500 bg-blue-50/50 ring-2 ring-blue-500/30'
+                          : 'border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="h-6 w-full rounded-md bg-slate-100 border border-slate-200 mb-1.5 flex items-center justify-center">
+                        <span className="w-2 h-2 rounded-full bg-slate-800" />
+                      </div>
+                      <span className="text-[11px] font-bold text-slate-800 block">Clean Light</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Central Icon */}
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-slate-700">Ícone Central Ilustrativo</label>
+                  <div className="grid grid-cols-5 gap-2">
+                    {[
+                      { id: 'tools', label: 'Ferramenta', icon: Wrench },
+                      { id: 'cog', label: 'Engrenagem', icon: Cog },
+                      { id: 'server', label: 'Servidor', icon: Server },
+                      { id: 'sparkles', label: 'Melhorias', icon: Sparkles },
+                      { id: 'rocket', label: 'Foguete', icon: Rocket },
+                    ].map((item) => {
+                      const IconComp = item.icon;
+                      const isSelected = (currentMaint.iconType || 'tools') === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => handleUpdateMaintenanceField('iconType', item.id as any)}
+                          className={`p-2.5 rounded-xl border flex flex-col items-center justify-center gap-1 cursor-pointer transition-all ${
+                            isSelected
+                              ? 'border-[#E6007E] bg-pink-50 ring-2 ring-[#E6007E]/30 text-[#E6007E]'
+                              : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          <IconComp className="w-5 h-5" />
+                          <span className="text-[10px] font-bold truncate max-w-full">{item.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Toggles */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
+                <label className="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={currentMaint.showCompanyLogo !== false}
+                    onChange={(e) => handleUpdateMaintenanceField('showCompanyLogo', e.target.checked)}
+                    className="w-4 h-4 rounded text-[#E6007E] focus:ring-[#E6007E]"
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-slate-800 block">Exibir Logotipo da Empresa</span>
+                    <span className="text-[11px] text-slate-500">Exibe a marca oficial configurada na aba Logotipo.</span>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={currentMaint.showContacts !== false}
+                    onChange={(e) => handleUpdateMaintenanceField('showContacts', e.target.checked)}
+                    className="w-4 h-4 rounded text-[#E6007E] focus:ring-[#E6007E]"
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-slate-800 block">Exibir Canais de Atendimento</span>
+                    <span className="text-[11px] text-slate-500">Exibe botão de WhatsApp de plantão e e-mail de contato.</span>
+                  </div>
+                </label>
+              </div>
+
+              {/* Save Specific Maintenance Config Button */}
+              <div className="flex items-center justify-between pt-2">
+                <span className="text-xs text-slate-500">
+                  Salve para aplicar as customizações na página de manutenção.
+                </span>
+                <button
+                  type="button"
+                  onClick={handleSaveMaintenanceConfig}
+                  className="px-5 py-2.5 rounded-xl text-xs font-extrabold bg-[#E6007E] hover:bg-[#c9006e] text-white shadow-xs transition-all flex items-center gap-2 cursor-pointer"
+                >
+                  <Save className="w-4 h-4 text-[#FFDD00]" />
+                  <span>Salvar Personalização da Manutenção</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Audit Log Card */}
+            <div className="bg-white p-6 sm:p-8 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <History className="w-5 h-5 text-slate-600" />
+                  <h4 className="text-sm font-extrabold uppercase text-slate-900">
+                    Histórico de Auditoria do Modo de Manutenção
+                  </h4>
+                </div>
+                <span className="text-[11px] text-slate-500">
+                  Registros protegidos contra alteração
+                </span>
+              </div>
+
+              {currentMaint.auditLog && currentMaint.auditLog.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-400 font-bold uppercase text-[10px]">
+                        <th className="py-2.5 px-3">Ação</th>
+                        <th className="py-2.5 px-3">Data e Hora</th>
+                        <th className="py-2.5 px-3">Administrador</th>
+                        <th className="py-2.5 px-3">Detalhes</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {currentMaint.auditLog.map((entry) => (
+                        <tr key={entry.id} className="hover:bg-slate-50">
+                          <td className="py-2.5 px-3 font-bold whitespace-nowrap">
+                            {entry.action === 'activated' && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800">
+                                <AlertTriangle className="w-3 h-3" />
+                                ATIVAÇÃO
+                              </span>
+                            )}
+                            {entry.action === 'deactivated' && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800">
+                                <CheckCircle2 className="w-3 h-3" />
+                                DESATIVAÇÃO
+                              </span>
+                            )}
+                            {entry.action === 'config_updated' && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-blue-800">
+                                <Sliders className="w-3 h-3" />
+                                CONFIGURAÇÃO
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-slate-600 whitespace-nowrap">
+                            {new Date(entry.timestamp).toLocaleString('pt-BR')}
+                          </td>
+                          <td className="py-2.5 px-3 whitespace-nowrap">
+                            <span className="font-bold text-slate-800 block">{entry.performedBy.name}</span>
+                            <span className="text-[10px] text-slate-400">{entry.performedBy.email}</span>
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-600">
+                            {entry.details || '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="p-6 rounded-xl bg-slate-50 border border-dashed border-slate-200 text-center text-xs text-slate-500">
+                  Nenhum registro de ativação/desativação registrado até o momento.
+                </div>
+              )}
             </div>
           </div>
         )}

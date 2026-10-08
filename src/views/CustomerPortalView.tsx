@@ -134,7 +134,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8" id="customer-portal-page">
+    <div className="w-full min-w-0 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8" id="customer-portal-page">
       <SEOHead
         title="Área do Cliente & Meus Pedidos"
         description="Portal de autoatendimento para acompanhamento de pedidos, aprovação de orçamentos e layouts virtuais de personalização."

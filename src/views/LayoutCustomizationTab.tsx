@@ -32,6 +32,11 @@ import {
   Clock,
   Sliders,
   X,
+  Flame,
+  Tag,
+  Percent,
+  Search,
+  Calendar,
 } from 'lucide-react';
 import {
   SystemLayoutSettings,
@@ -39,12 +44,18 @@ import {
   LayoutColorSettings,
   LayoutSectionType,
   HeroTitlePart,
+  OffersBannerSettings,
+  OffersBannerProductConfig,
+  OffersBannerTransition,
+  Product,
 } from '../types';
 import { StorageService } from '../services/storage';
 import { compressImageFile } from '../utils/imageOptimizer';
+import { OffersBanner } from '../components/OffersBanner';
 
 interface LayoutCustomizationTabProps {
   onRefreshData?: () => void;
+  initialTab?: 'blocks' | 'colors' | 'hero' | 'offers_banner' | 'sections' | 'header_footer' | 'preview';
 }
 
 type DeviceMode = 'desktop' | 'tablet' | 'mobile';
@@ -138,7 +149,10 @@ const TITLE_COLOR_PRESETS = [
   { name: 'Verde', hex: '#10B981' },
 ];
 
-export const LayoutCustomizationTab: React.FC<LayoutCustomizationTabProps> = ({ onRefreshData }) => {
+export const LayoutCustomizationTab: React.FC<LayoutCustomizationTabProps> = ({
+  onRefreshData,
+  initialTab,
+}) => {
   const [settings, setSettings] = useState<SystemLayoutSettings>(() => {
     // Check if there is an existing draft first
     const draft = StorageService.getLayoutDraft();
@@ -147,9 +161,12 @@ export const LayoutCustomizationTab: React.FC<LayoutCustomizationTabProps> = ({ 
   });
 
   const [activeTab, setActiveTab] = useState<
-    'blocks' | 'colors' | 'hero' | 'sections' | 'header_footer' | 'preview'
-  >('blocks');
+    'blocks' | 'colors' | 'hero' | 'offers_banner' | 'sections' | 'header_footer' | 'preview'
+  >(initialTab || 'blocks');
   const [deviceMode, setDeviceMode] = useState<DeviceMode>('desktop');
+  const [availableProducts, setAvailableProducts] = useState<Product[]>(() => StorageService.getProducts());
+  const [isAddingProductToBanner, setIsAddingProductToBanner] = useState<boolean>(false);
+  const [bannerProductSearch, setBannerProductSearch] = useState<string>('');
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState<boolean>(() => {
     return StorageService.getLayoutDraft() !== null;
   });
@@ -386,6 +403,130 @@ export const LayoutCustomizationTab: React.FC<LayoutCustomizationTabProps> = ({ 
     showNotification('success', 'Novo bloco de banner adicionado.');
   };
 
+  // Offers Banner Management Handlers
+  const handleAddProductToOffersBanner = (prod: Product) => {
+    const existing = (settings.offersBanner?.items || []).find((i) => i.productId === prod.id);
+    if (existing) {
+      showNotification('info', `O produto "${prod.name}" já está vinculado ao banner de ofertas.`);
+      return;
+    }
+
+    const defaultPromo = prod.promo_price || Math.round(prod.base_price * 0.85 * 100) / 100;
+    const newItem: OffersBannerProductConfig = {
+      productId: prod.id,
+      order: (settings.offersBanner?.items?.length || 0) + 1,
+      active: true,
+      customTitle: prod.name,
+      customDescription: prod.description,
+      promoPrice: defaultPromo,
+      badge: prod.offersBannerBadge || 'OFERTA ESPECIAL',
+    };
+
+    const updatedItems = [...(settings.offersBanner?.items || []), newItem];
+    updateSettings((prev) => ({
+      ...prev,
+      offersBanner: {
+        ...prev.offersBanner,
+        items: updatedItems,
+      },
+    }));
+
+    StorageService.toggleProductInOffersBanner(prod.id, true, defaultPromo, newItem.badge, newItem.order);
+    setAvailableProducts(StorageService.getProducts());
+    showNotification('success', `Produto "${prod.name}" adicionado ao banner de ofertas.`);
+  };
+
+  const handleRemoveProductFromOffersBanner = (productId: string) => {
+    const updatedItems = (settings.offersBanner?.items || []).filter((i) => i.productId !== productId);
+    updateSettings((prev) => ({
+      ...prev,
+      offersBanner: {
+        ...prev.offersBanner,
+        items: updatedItems,
+      },
+    }));
+
+    StorageService.toggleProductInOffersBanner(productId, false);
+    setAvailableProducts(StorageService.getProducts());
+    showNotification('info', 'Produto desvinculado do banner de ofertas.');
+  };
+
+  const handleUpdateOfferItem = (index: number, updates: Partial<OffersBannerProductConfig>) => {
+    const updatedItems = [...(settings.offersBanner?.items || [])];
+    if (!updatedItems[index]) return;
+    updatedItems[index] = { ...updatedItems[index], ...updates };
+
+    updateSettings((prev) => ({
+      ...prev,
+      offersBanner: {
+        ...prev.offersBanner,
+        items: updatedItems,
+      },
+    }));
+  };
+
+  const handleMoveOfferItem = (index: number, direction: 'up' | 'down') => {
+    const items = [...(settings.offersBanner?.items || [])];
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= items.length) return;
+
+    const temp = items[index];
+    items[index] = items[targetIndex];
+    items[targetIndex] = temp;
+
+    const reordered = items.map((item, idx) => ({ ...item, order: idx + 1 }));
+    updateSettings((prev) => ({
+      ...prev,
+      offersBanner: {
+        ...prev.offersBanner,
+        items: reordered,
+      },
+    }));
+  };
+
+  const handleOfferItemImageUpload = async (index: number, file: File) => {
+    try {
+      const res = await compressImageFile(file, 1200, 1200, 0.85);
+      handleUpdateOfferItem(index, { customImage: res.dataUrl });
+      showNotification('success', 'Imagem personalizada do banner carregada com sucesso.');
+    } catch {
+      showNotification('error', 'Falha ao processar a imagem do banner.');
+    }
+  };
+
+  const handleSecondaryImageUpload = async (index: number, file: File) => {
+    try {
+      const res = await compressImageFile(file, 1200, 1200, 0.85);
+      handleUpdateOfferItem(index, { secondaryImage: res.dataUrl });
+      showNotification('success', 'Imagem do produto complementar carregada.');
+    } catch {
+      showNotification('error', 'Falha ao processar a imagem complementar.');
+    }
+  };
+
+  const handleDuplicateOfferItem = (index: number) => {
+    const items = [...(settings.offersBanner?.items || [])];
+    const target = items[index];
+    if (!target) return;
+
+    const copy: OffersBannerProductConfig = {
+      ...target,
+      id: `slide-copy-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      order: items.length + 1,
+      customTitle: `${target.customTitle || 'Campanha'} (Cópia)`,
+    };
+
+    const updated = [...items, copy];
+    updateSettings((prev) => ({
+      ...prev,
+      offersBanner: {
+        ...prev.offersBanner,
+        items: updated,
+      },
+    }));
+    showNotification('success', 'Slide do banner duplicado com sucesso.');
+  };
+
   // Drag & drop handlers
   const handleDragStart = (index: number) => {
     setDraggedIndex(index);
@@ -563,6 +704,22 @@ export const LayoutCustomizationTab: React.FC<LayoutCustomizationTabProps> = ({ 
         >
           <Sparkles className="w-4 h-4" />
           <span>Hero & CTAs</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('offers_banner')}
+          className={`px-4 py-3 text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 shrink-0 border-b-2 cursor-pointer ${
+            activeTab === 'offers_banner'
+              ? 'border-[#E6007E] text-[#E6007E]'
+              : 'border-transparent text-slate-500 hover:text-slate-900'
+          }`}
+        >
+          <Flame className="w-4 h-4 text-[#FFDD00]" />
+          <span>Banner de Ofertas</span>
+          {settings.offersBanner?.enabled && (
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+          )}
         </button>
 
         <button
@@ -1551,8 +1708,1085 @@ export const LayoutCustomizationTab: React.FC<LayoutCustomizationTabProps> = ({ 
       )}
 
       {/* ========================================================
-          TAB 4: SEÇÕES & BANNERS
+          TAB: BANNER DE OFERTAS & CARROSSEL DE PRODUTOS
       ======================================================== */}
+      {activeTab === 'offers_banner' && (
+        <div className="space-y-6">
+          {/* Status & Master Switch Header */}
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="p-3 rounded-2xl bg-gradient-to-br from-[#E6007E] to-rose-600 text-white shadow-md">
+                <Flame className="w-6 h-6 text-[#FFDD00]" />
+              </span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-extrabold uppercase text-slate-900 tracking-tight">
+                    Banner de Ofertas de Produtos
+                  </h3>
+                  <span
+                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                      settings.offersBanner?.enabled
+                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                        : 'bg-slate-100 text-slate-500'
+                    }`}
+                  >
+                    {settings.offersBanner?.enabled ? 'Ativo na Loja' : 'Pausado'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Carrossel dinâmico na página principal com transições modernas, fotos de produtos reais e preços promocionais.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 self-start sm:self-auto">
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-800 cursor-pointer bg-slate-50 hover:bg-slate-100 px-3.5 py-2 rounded-xl border border-slate-200 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={settings.offersBanner?.enabled ?? true}
+                  onChange={(e) =>
+                    updateSettings((prev) => ({
+                      ...prev,
+                      offersBanner: {
+                        ...prev.offersBanner,
+                        enabled: e.target.checked,
+                      },
+                    }))
+                  }
+                  className="w-4 h-4 rounded text-[#E6007E] focus:ring-[#E6007E]"
+                />
+                <span>Exibir Banner na Home</span>
+              </label>
+
+              <button
+                type="button"
+                onClick={() => setIsAddingProductToBanner(true)}
+                className="px-4 py-2.5 bg-slate-900 hover:bg-[#E6007E] text-white text-xs font-black uppercase tracking-wider rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer shrink-0"
+              >
+                <Plus className="w-4 h-4 text-[#FFDD00]" />
+                <span>Vincular Produto</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 1. CONFIGURAÇÕES GERAIS DO BANNER */}
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-6">
+            <div>
+              <h4 className="text-sm font-extrabold uppercase text-slate-900 tracking-wider flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-[#E6007E]" />
+                <span>1. Configurações Gerais do Banner</span>
+              </h4>
+              <p className="text-xs text-slate-500 mt-1">
+                Personalize textos, dimensões, intervalos de tempo e controles de navegação do carrossel.
+              </p>
+            </div>
+
+            {/* Titulo, Subtitulo, Selo */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Título Principal da Seção
+                </label>
+                <input
+                  type="text"
+                  value={settings.offersBanner?.title || ''}
+                  onChange={(e) =>
+                    updateSettings((prev) => ({
+                      ...prev,
+                      offersBanner: { ...prev.offersBanner, title: e.target.value },
+                    }))
+                  }
+                  placeholder="Ex: Super Ofertas & Destaques da Semana"
+                  className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:border-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Subtítulo Explicativo
+                </label>
+                <input
+                  type="text"
+                  value={settings.offersBanner?.subtitle || ''}
+                  onChange={(e) =>
+                    updateSettings((prev) => ({
+                      ...prev,
+                      offersBanner: { ...prev.offersBanner, subtitle: e.target.value },
+                    }))
+                  }
+                  placeholder="Ex: Preços promocionais por tempo limitado nos produtos mais desejados"
+                  className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:border-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Tag / Selo Superior
+                </label>
+                <input
+                  type="text"
+                  value={settings.offersBanner?.badgeText || ''}
+                  onChange={(e) =>
+                    updateSettings((prev) => ({
+                      ...prev,
+                      offersBanner: { ...prev.offersBanner, badgeText: e.target.value },
+                    }))
+                  }
+                  placeholder="Ex: OFERTA ESPECIAL"
+                  className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl uppercase font-bold focus:bg-white focus:outline-none focus:border-slate-900"
+                />
+              </div>
+            </div>
+
+            {/* Dimensoes e Layout: Altura e Largura */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Altura do Banner
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { id: 'panoramic', label: 'Panorâmico (4:1)', desc: '~280px (Ideal)' },
+                    { id: 'compact', label: 'Compacto', desc: '~220px' },
+                    { id: 'normal', label: 'Médio / Padrão', desc: '~320px' },
+                    { id: 'tall', label: 'Grande', desc: '~400px' },
+                  ].map((h) => {
+                    const isSelected = (settings.offersBanner?.height || 'panoramic') === h.id;
+                    return (
+                      <button
+                        key={h.id}
+                        type="button"
+                        onClick={() =>
+                          updateSettings((prev) => ({
+                            ...prev,
+                            offersBanner: {
+                              ...prev.offersBanner,
+                              height: h.id as 'panoramic' | 'compact' | 'normal' | 'tall',
+                            },
+                          }))
+                        }
+                        className={`p-3 rounded-xl border text-center transition-all cursor-pointer ${
+                          isSelected
+                            ? 'border-[#E6007E] bg-pink-50/60 text-[#E6007E] font-bold shadow-2xs'
+                            : 'border-slate-200 hover:border-slate-300 text-slate-700'
+                        }`}
+                      >
+                        <div className="text-xs">{h.label}</div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">{h.desc}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Largura & Comportamento na Página
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateSettings((prev) => ({
+                        ...prev,
+                        offersBanner: { ...prev.offersBanner, fullWidth: false },
+                      }))
+                    }
+                    className={`p-3 rounded-xl border text-center transition-all cursor-pointer ${
+                      !settings.offersBanner?.fullWidth
+                        ? 'border-[#E6007E] bg-pink-50/60 text-[#E6007E] font-bold shadow-2xs'
+                        : 'border-slate-200 hover:border-slate-300 text-slate-700'
+                    }`}
+                  >
+                    <div className="text-xs">Centralizado (Padrão)</div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">Com margens seguras (max-w-7xl)</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateSettings((prev) => ({
+                        ...prev,
+                        offersBanner: { ...prev.offersBanner, fullWidth: true },
+                      }))
+                    }
+                    className={`p-3 rounded-xl border text-center transition-all cursor-pointer ${
+                      settings.offersBanner?.fullWidth
+                        ? 'border-[#E6007E] bg-pink-50/60 text-[#E6007E] font-bold shadow-2xs'
+                        : 'border-slate-200 hover:border-slate-300 text-slate-700'
+                    }`}
+                  >
+                    <div className="text-xs">Largura Total</div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">Ocupa 100% da viewport</div>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Transicoes e Velocidades */}
+            <div className="pt-2 border-t border-slate-100 space-y-4">
+              <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider">
+                Tipos de Transição & Animação
+              </label>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  {
+                    id: 'fade',
+                    label: 'Fade Suave',
+                    desc: 'Desvanecimento sutil e elegante',
+                  },
+                  {
+                    id: 'slide_horizontal',
+                    label: 'Slide Horizontal',
+                    desc: 'Deslizamento lateral dinâmico (Padrão)',
+                  },
+                  {
+                    id: 'slide_vertical',
+                    label: 'Slide Vertical',
+                    desc: 'Deslizamento para cima / baixo',
+                  },
+                  {
+                    id: 'zoom',
+                    label: 'Zoom Suave',
+                    desc: 'Aproximação suave com fade',
+                  },
+                ].map((trans) => {
+                  const isSelected =
+                    (settings.offersBanner?.transitionType || 'slide_horizontal') === trans.id;
+                  return (
+                    <button
+                      key={trans.id}
+                      type="button"
+                      onClick={() =>
+                        updateSettings((prev) => ({
+                          ...prev,
+                          offersBanner: {
+                            ...prev.offersBanner,
+                            transitionType: trans.id as OffersBannerTransition,
+                          },
+                        }))
+                      }
+                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                        isSelected
+                          ? 'border-[#E6007E] bg-pink-50/60 shadow-2xs'
+                          : 'border-slate-200 hover:border-slate-300 bg-white'
+                      }`}
+                    >
+                      <div
+                        className={`text-xs font-bold ${
+                          isSelected ? 'text-[#E6007E]' : 'text-slate-800'
+                        }`}
+                      >
+                        {trans.label}
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-1 leading-snug">{trans.desc}</div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Controles de Tempo: Intervalo e Velocidade */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-2">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Tempo por Slide (Autoplay)
+                  </label>
+                  <select
+                    value={settings.offersBanner?.intervalMs || 5000}
+                    onChange={(e) =>
+                      updateSettings((prev) => ({
+                        ...prev,
+                        offersBanner: {
+                          ...prev.offersBanner,
+                          intervalMs: parseInt(e.target.value) || 5000,
+                        },
+                      }))
+                    }
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
+                  >
+                    <option value={3000}>3 segundos (Rápido)</option>
+                    <option value={5000}>5 segundos (Recomendado)</option>
+                    <option value={7000}>7 segundos (Mais leitura)</option>
+                    <option value={10000}>10 segundos (Tranquilo)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Velocidade da Transição
+                  </label>
+                  <select
+                    value={settings.offersBanner?.transitionSpeedMs || 500}
+                    onChange={(e) =>
+                      updateSettings((prev) => ({
+                        ...prev,
+                        offersBanner: {
+                          ...prev.offersBanner,
+                          transitionSpeedMs: parseInt(e.target.value) || 500,
+                        },
+                      }))
+                    }
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
+                  >
+                    <option value={300}>300ms (Transição Ágil)</option>
+                    <option value={500}>500ms (Padrão Suave)</option>
+                    <option value={800}>800ms (Transição Lenta/Elegante)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Critério de Ordenação
+                  </label>
+                  <select
+                    value={settings.offersBanner?.autoOrderCriteria || 'custom'}
+                    onChange={(e) =>
+                      updateSettings((prev) => ({
+                        ...prev,
+                        offersBanner: {
+                          ...prev.offersBanner,
+                          autoOrderCriteria: e.target.value as any,
+                        },
+                      }))
+                    }
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
+                  >
+                    <option value="custom">Manual (Ordem dos Produtos)</option>
+                    <option value="discount_desc">Maior Desconto (% OFF)</option>
+                    <option value="featured">Produtos em Destaque</option>
+                    <option value="newest">Mais Recentes (Lançamentos)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Limite Máximo de Slides
+                  </label>
+                  <select
+                    value={settings.offersBanner?.maxSlides || 0}
+                    onChange={(e) =>
+                      updateSettings((prev) => ({
+                        ...prev,
+                        offersBanner: {
+                          ...prev.offersBanner,
+                          maxSlides: parseInt(e.target.value) || undefined,
+                        },
+                      }))
+                    }
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
+                  >
+                    <option value={0}>Todos os produtos vinculados</option>
+                    <option value={3}>Máximo de 3 slides</option>
+                    <option value={5}>Máximo de 5 slides</option>
+                    <option value={8}>Máximo de 8 slides</option>
+                    <option value={10}>Máximo de 10 slides</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Toggles de Controles de Interface */}
+              <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-6">
+                <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.offersBanner?.autoplay ?? true}
+                    onChange={(e) =>
+                      updateSettings((prev) => ({
+                        ...prev,
+                        offersBanner: { ...prev.offersBanner, autoplay: e.target.checked },
+                      }))
+                    }
+                    className="w-4 h-4 rounded text-[#E6007E]"
+                  />
+                  <span>Reprodução Automática</span>
+                </label>
+
+                <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.offersBanner?.showArrows ?? true}
+                    onChange={(e) =>
+                      updateSettings((prev) => ({
+                        ...prev,
+                        offersBanner: { ...prev.offersBanner, showArrows: e.target.checked },
+                      }))
+                    }
+                    className="w-4 h-4 rounded text-[#E6007E]"
+                  />
+                  <span>Exibir Setas Laterais</span>
+                </label>
+
+                <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.offersBanner?.showDots ?? true}
+                    onChange={(e) =>
+                      updateSettings((prev) => ({
+                        ...prev,
+                        offersBanner: { ...prev.offersBanner, showDots: e.target.checked },
+                      }))
+                    }
+                    className="w-4 h-4 rounded text-[#E6007E]"
+                  />
+                  <span>Exibir Indicadores (Bolinhas)</span>
+                </label>
+
+                <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.offersBanner?.showProgressBar ?? true}
+                    onChange={(e) =>
+                      updateSettings((prev) => ({
+                        ...prev,
+                        offersBanner: { ...prev.offersBanner, showProgressBar: e.target.checked },
+                      }))
+                    }
+                    className="w-4 h-4 rounded text-[#E6007E]"
+                  />
+                  <span>Barra de Progresso</span>
+                </label>
+
+                <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.offersBanner?.showCtaButton ?? true}
+                    onChange={(e) =>
+                      updateSettings((prev) => ({
+                        ...prev,
+                        offersBanner: { ...prev.offersBanner, showCtaButton: e.target.checked },
+                      }))
+                    }
+                    className="w-4 h-4 rounded text-[#E6007E]"
+                  />
+                  <span>Exibir Botão de Ação</span>
+                </label>
+
+                {settings.offersBanner?.showCtaButton && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-bold text-slate-500">Texto do Botão:</span>
+                    <input
+                      type="text"
+                      value={settings.offersBanner?.ctaButtonText || 'COMPRAR AGORA'}
+                      onChange={(e) =>
+                        updateSettings((prev) => ({
+                          ...prev,
+                          offersBanner: { ...prev.offersBanner, ctaButtonText: e.target.value },
+                        }))
+                      }
+                      className="px-2.5 py-1 text-xs bg-white border border-slate-200 rounded-lg font-bold uppercase text-slate-800 w-36"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* 2. GERENCIAMENTO DOS PRODUTOS DO BANNER */}
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-extrabold uppercase text-slate-900 tracking-wider">
+                    2. Produtos Vinculados ao Banner ({settings.offersBanner?.items?.length || 0})
+                  </h4>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                    Catálogo Oficial da Loja
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Gerencie quais produtos cadastrados aparecem no carrossel, reordene sua prioridade e defina preços promocionais.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsAddingProductToBanner(true)}
+                className="px-4 py-2 bg-[#E6007E] hover:bg-[#c9006e] text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer self-start sm:self-auto"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Adicionar Produto ao Banner</span>
+              </button>
+            </div>
+
+            {/* List of Products currently in the banner */}
+            {(!settings.offersBanner?.items || settings.offersBanner.items.length === 0) ? (
+              <div className="p-10 rounded-2xl border-2 border-dashed border-slate-200 text-center space-y-3 bg-slate-50/50">
+                <Tag className="w-10 h-10 text-slate-300 mx-auto" />
+                <h5 className="font-bold text-sm text-slate-700">Nenhum produto vinculado ao banner</h5>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  Clique no botão abaixo para escolher produtos já cadastrados no catálogo e transformá-los em destaques no carrossel de ofertas.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setIsAddingProductToBanner(true)}
+                  className="px-4 py-2 bg-slate-900 hover:bg-[#E6007E] text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                >
+                  Selecionar Produtos do Catálogo
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3 pt-2">
+                {settings.offersBanner.items.map((item, index) => {
+                  const product = availableProducts.find((p) => p.id === item.productId);
+                  const isFirst = index === 0;
+                  const isLast = index === (settings.offersBanner?.items?.length || 1) - 1;
+                  const basePrice = product?.base_price || 0;
+                  const promoPrice = item.promoPrice ?? product?.promo_price ?? basePrice;
+                  const hasDiscount = promoPrice > 0 && promoPrice < basePrice;
+                  const discountPct = hasDiscount
+                    ? Math.round(((basePrice - promoPrice) / basePrice) * 100)
+                    : 0;
+
+                  // Status of dates
+                  const now = new Date();
+                  let dateStatus: 'active' | 'scheduled' | 'expired' = 'active';
+                  if (item.startDate) {
+                    const start = new Date(item.startDate);
+                    if (now < start) dateStatus = 'scheduled';
+                  }
+                  if (item.endDate) {
+                    const end = new Date(item.endDate);
+                    if (item.endDate.length <= 10) end.setHours(23, 59, 59, 999);
+                    if (now > end) dateStatus = 'expired';
+                  }
+
+                  const effectiveImage =
+                    item.customImage ||
+                    (product?.images && product.images.length > 0 ? product.images[0] : '') ||
+                    '';
+
+                  return (
+                    <div
+                      key={`banner-item-${item.productId}-${index}`}
+                      className={`p-4 rounded-2xl border transition-all space-y-3 ${
+                        item.active
+                          ? 'border-slate-200 bg-white hover:border-slate-300 shadow-2xs'
+                          : 'border-slate-200 bg-slate-50/70 opacity-60'
+                      }`}
+                    >
+                      {/* Top Bar of item: Thumbnail, Order, Title, Status & Actions */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                        <div className="flex items-center gap-3 min-w-0">
+                          {/* Image preview */}
+                          <div className="relative w-12 h-12 rounded-xl bg-slate-100 border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center">
+                            {effectiveImage ? (
+                              <img
+                                src={effectiveImage}
+                                alt={item.customTitle || product?.name || 'Produto'}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <ImageIcon className="w-5 h-5 text-slate-400" />
+                            )}
+                            {item.customImage && (
+                              <span
+                                className="absolute bottom-0 right-0 w-3 h-3 bg-[#E6007E] rounded-tl-sm"
+                                title="Imagem específica configurada para o banner"
+                              />
+                            )}
+                          </div>
+
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono text-[10px] font-bold bg-slate-900 text-white px-1.5 py-0.5 rounded">
+                                #{index + 1}
+                              </span>
+                              <h5 className="font-bold text-xs text-slate-900 truncate max-w-xs sm:max-w-md">
+                                {item.customTitle || product?.name || 'Produto Desconhecido'}
+                              </h5>
+                              {product?.code && (
+                                <span className="font-mono text-[10px] text-slate-400">
+                                  SKU: {product.code}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-500">
+                              <span>Preço Catálogo: R$ {basePrice.toFixed(2)}</span>
+                              <span>•</span>
+                              <span className="font-bold text-[#E6007E]">
+                                Oferta: R$ {promoPrice.toFixed(2)}
+                              </span>
+                              {hasDiscount && (
+                                <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                                  {discountPct}% OFF
+                                </span>
+                              )}
+                              <span>•</span>
+                              <span
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                  dateStatus === 'active'
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : dateStatus === 'scheduled'
+                                    ? 'bg-blue-100 text-blue-800'
+                                    : 'bg-amber-100 text-amber-800'
+                                }`}
+                              >
+                                {dateStatus === 'active'
+                                  ? 'Oferta Ativa'
+                                  : dateStatus === 'scheduled'
+                                  ? 'Programada'
+                                  : 'Expirada'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Top Actions: Move Up, Move Down, Duplicate, Toggle Active, Delete */}
+                        <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleMoveOfferItem(index, 'up')}
+                            disabled={isFirst}
+                            className={`p-1.5 rounded-lg border border-slate-200 text-slate-500 transition-colors ${
+                              isFirst
+                                ? 'opacity-30 cursor-not-allowed'
+                                : 'hover:bg-slate-100 hover:text-slate-900 cursor-pointer'
+                            }`}
+                            title="Mover para cima"
+                          >
+                            <ArrowUp className="w-3.5 h-3.5" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleMoveOfferItem(index, 'down')}
+                            disabled={isLast}
+                            className={`p-1.5 rounded-lg border border-slate-200 text-slate-500 transition-colors ${
+                              isLast
+                                ? 'opacity-30 cursor-not-allowed'
+                                : 'hover:bg-slate-100 hover:text-slate-900 cursor-pointer'
+                            }`}
+                            title="Mover para baixo"
+                          >
+                            <ArrowDown className="w-3.5 h-3.5" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDuplicateOfferItem(index)}
+                            className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                            title="Duplicar este banner / slide"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateOfferItem(index, { active: !item.active })}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                              item.active
+                                ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                                : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+                            }`}
+                          >
+                            {item.active ? 'Ativo' : 'Pausado'}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveProductFromOffersBanner(item.productId)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                            title="Remover produto do banner"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Theme Presets Selector (Matching reference video campaign styles) */}
+                      <div className="bg-slate-50/80 p-3 rounded-xl border border-slate-200/70 space-y-1.5">
+                        <label className="block text-[10px] font-extrabold uppercase text-slate-600 tracking-wider">
+                          Estilo Visual & Fundo da Campanha (Referência Vídeo)
+                        </label>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+                          {[
+                            { id: 'industrial_light', label: 'Studio Claro', desc: 'Campeões de Vendas', color: 'bg-slate-200 text-slate-900 border-slate-300' },
+                            { id: 'holiday_festive', label: 'Festivo Fim de Ano', desc: 'Verde & Dourado', color: 'bg-[#183125] text-emerald-200 border-emerald-600' },
+                            { id: 'dark_tech', label: 'Grafite Dark Tech', desc: 'Upgrade na Marca', color: 'bg-[#22252B] text-amber-300 border-slate-600' },
+                            { id: 'modern_lavender', label: 'Lavanda Tech', desc: 'Tech no seu Bolso', color: 'bg-[#E6E8F7] text-indigo-950 border-indigo-200' },
+                            { id: 'vibrant_green', label: 'Verde E-commerce', desc: 'Frete Grátis', color: 'bg-[#00A650] text-white border-green-600' },
+                            { id: 'corporate_pink', label: 'Rosa Corporativo', desc: 'Identidade MB', color: 'bg-[#2A0C38] text-pink-300 border-pink-700' },
+                            { id: 'custom', label: 'Personalizado', desc: 'Cor livre', color: 'bg-white text-slate-800 border-slate-300' },
+                          ].map((theme) => {
+                            const isSelected = (item.backgroundTheme || 'industrial_light') === theme.id;
+                            return (
+                              <button
+                                key={theme.id}
+                                type="button"
+                                onClick={() => handleUpdateOfferItem(index, { backgroundTheme: theme.id as any })}
+                                className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
+                                  isSelected
+                                    ? 'ring-2 ring-[#E6007E] font-bold shadow-xs ' + theme.color
+                                    : 'hover:border-slate-300 ' + theme.color
+                                }`}
+                              >
+                                <div className="text-[11px] leading-tight truncate">{theme.label}</div>
+                                <div className="text-[9px] opacity-75 truncate">{theme.desc}</div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Detail inputs for this offer slide */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                        <div className="lg:col-span-2">
+                          <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">
+                            Título Principal de Impacto
+                          </label>
+                          <input
+                            type="text"
+                            value={item.customTitle || ''}
+                            onChange={(e) =>
+                              handleUpdateOfferItem(index, { customTitle: e.target.value })
+                            }
+                            placeholder={product?.name || 'Ex: CAMPEÕES DE VENDAS'}
+                            className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-900 focus:bg-white"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">
+                            Selo de Desconto (% OFF)
+                          </label>
+                          <input
+                            type="text"
+                            value={item.badge || ''}
+                            onChange={(e) =>
+                              handleUpdateOfferItem(index, { badge: e.target.value })
+                            }
+                            placeholder="Ex: ATÉ 50% OFF"
+                            className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-800 uppercase focus:bg-white"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">
+                            Selo de Benefício (Envio Rápido)
+                          </label>
+                          <input
+                            type="text"
+                            value={item.benefitBadge || ''}
+                            onChange={(e) =>
+                              handleUpdateOfferItem(index, { benefitBadge: e.target.value })
+                            }
+                            placeholder="Ex: ⚡ FULL ENVIOS RÁPIDOS"
+                            className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-800 uppercase focus:bg-white"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Row 2: Subtitle, Second Benefit, Validity, and CTA */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">
+                            Subtítulo / Descrição Curta
+                          </label>
+                          <input
+                            type="text"
+                            value={item.customSubtitle || ''}
+                            onChange={(e) =>
+                              handleUpdateOfferItem(index, { customSubtitle: e.target.value })
+                            }
+                            placeholder="Ex: Os brindes mais desejados para o seu negócio"
+                            className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">
+                            Texto de Validade / Disclaimer
+                          </label>
+                          <input
+                            type="text"
+                            value={item.validityText || ''}
+                            onChange={(e) =>
+                              handleUpdateOfferItem(index, { validityText: e.target.value })
+                            }
+                            placeholder="Ex: Válido até 30/09/2026. Ver mais em..."
+                            className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">
+                            Botão CTA (Chamada de Ação)
+                          </label>
+                          <input
+                            type="text"
+                            value={item.ctaText || ''}
+                            onChange={(e) =>
+                              handleUpdateOfferItem(index, { ctaText: e.target.value })
+                            }
+                            placeholder="Ex: COMPRE AGORA ou VER OFERTA"
+                            className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg font-bold uppercase focus:bg-white"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">
+                            Link de Destino / Rota
+                          </label>
+                          <input
+                            type="text"
+                            value={item.targetLink || ''}
+                            onChange={(e) =>
+                              handleUpdateOfferItem(index, { targetLink: e.target.value })
+                            }
+                            placeholder="Ex: /produtos/copo-termico ou /catalogo"
+                            className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg font-mono text-slate-600 focus:bg-white"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Row 3: Preço Promocional e Período */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">
+                            Preço Promocional (R$)
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={item.promoPrice ?? ''}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                handleUpdateOfferItem(index, {
+                                  promoPrice: !isNaN(val) && val > 0 ? val : undefined,
+                                });
+                              }}
+                              placeholder={basePrice.toFixed(2)}
+                              className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg font-bold text-pink-600 focus:bg-white"
+                            />
+                            {hasDiscount && (
+                              <span className="text-[10px] font-bold text-emerald-600 whitespace-nowrap">
+                                -{discountPct}%
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">
+                            Selo de Benefício 2 (Opcional)
+                          </label>
+                          <input
+                            type="text"
+                            value={item.benefitBadge2 || ''}
+                            onChange={(e) =>
+                              handleUpdateOfferItem(index, { benefitBadge2: e.target.value })
+                            }
+                            placeholder="Ex: ENVIO MAIS RÁPIDO DO BRASIL"
+                            className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-800 uppercase focus:bg-white"
+                          />
+                        </div>
+
+                        <div className="lg:col-span-2">
+                          <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">
+                            Período de Publicação (Início e Término)
+                          </label>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <input
+                              type="date"
+                              value={item.startDate || ''}
+                              onChange={(e) =>
+                                handleUpdateOfferItem(index, { startDate: e.target.value })
+                              }
+                              className="px-2 py-1.5 text-[11px] bg-slate-50 border border-slate-200 rounded-lg"
+                              title="Data de Início da Oferta"
+                            />
+                            <input
+                              type="date"
+                              value={item.endDate || ''}
+                              onChange={(e) =>
+                                handleUpdateOfferItem(index, { endDate: e.target.value })
+                              }
+                              className="px-2 py-1.5 text-[11px] bg-slate-50 border border-slate-200 rounded-lg"
+                              title="Data de Término da Oferta"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Row 4: Primary Product Image + Secondary Combo Product Image */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1 border-t border-slate-100">
+                        {/* Imagem Principal */}
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1 flex items-center justify-between">
+                            <span>Imagem Principal do Produto (Recorte)</span>
+                            {item.customImage && (
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateOfferItem(index, { customImage: undefined })}
+                                className="text-[10px] text-rose-500 hover:text-rose-700 font-bold"
+                              >
+                                Usar Foto Original
+                              </button>
+                            )}
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              value={item.customImage || ''}
+                              onChange={(e) =>
+                                handleUpdateOfferItem(index, { customImage: e.target.value })
+                              }
+                              placeholder="URL ou envie arquivo"
+                              className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg font-mono text-slate-600 focus:bg-white"
+                            />
+                            <label className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-600 cursor-pointer shrink-0" title="Carregar foto principal">
+                              <Upload className="w-3.5 h-3.5" />
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) handleOfferItemImageUpload(index, file);
+                                }}
+                              />
+                            </label>
+                          </div>
+                        </div>
+
+                        {/* Imagem Secundária (Combo) */}
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1 flex items-center justify-between">
+                            <span>Imagem do Produto Complementar (Combo de 2 Itens)</span>
+                            {item.secondaryImage && (
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateOfferItem(index, { secondaryImage: undefined })}
+                                className="text-[10px] text-rose-500 hover:text-rose-700 font-bold"
+                              >
+                                Remover Combo
+                              </button>
+                            )}
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              value={item.secondaryImage || ''}
+                              onChange={(e) =>
+                                handleUpdateOfferItem(index, { secondaryImage: e.target.value })
+                              }
+                              placeholder="URL de foto complementar (ex: furadeira + lavadora)"
+                              className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg font-mono text-slate-600 focus:bg-white"
+                            />
+                            <label className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-600 cursor-pointer shrink-0" title="Carregar produto complementar">
+                              <Upload className="w-3.5 h-3.5" />
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) handleSecondaryImageUpload(index, file);
+                                }}
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Row 5: Posicionamento e Proteção contra Distorção das Imagens */}
+                      <div className="bg-slate-50/70 p-3 rounded-xl border border-slate-200/60 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">
+                            Alinhamento Horizontal
+                          </label>
+                          <select
+                            value={item.imagePositionHorizontal || 'center'}
+                            onChange={(e) =>
+                              handleUpdateOfferItem(index, {
+                                imagePositionHorizontal: e.target.value as 'left' | 'center' | 'right',
+                              })
+                            }
+                            className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 font-semibold"
+                          >
+                            <option value="center">Centro (Recomendado)</option>
+                            <option value="left">Esquerda</option>
+                            <option value="right">Direita</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">
+                            Alinhamento Vertical
+                          </label>
+                          <select
+                            value={item.imagePositionVertical || 'center'}
+                            onChange={(e) =>
+                              handleUpdateOfferItem(index, {
+                                imagePositionVertical: e.target.value as 'top' | 'center' | 'bottom',
+                              })
+                            }
+                            className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 font-semibold"
+                          >
+                            <option value="center">Centro Vertical</option>
+                            <option value="bottom">Baixo / Chão (Padrão E-commerce)</option>
+                            <option value="top">Topo</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">
+                            Proteção de Proporção
+                          </label>
+                          <select
+                            value={item.imageFit || 'contain'}
+                            onChange={(e) =>
+                              handleUpdateOfferItem(index, {
+                                imageFit: e.target.value as 'contain' | 'cover',
+                              })
+                            }
+                            className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 font-semibold"
+                          >
+                            <option value="contain">Sem Distorção (Contém 100% Proporcional)</option>
+                            <option value="cover">Preencher Área (Cover)</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* 3. PRÉ-VISUALIZAÇÃO AO VIVO INTEGRADA */}
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-extrabold uppercase text-slate-900 tracking-wider flex items-center gap-2">
+                  <Eye className="w-4 h-4 text-[#FFDD00]" />
+                  <span>3. Pré-Visualização Interativa do Banner</span>
+                </h4>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Teste a transição automática, passe o mouse para pausar e veja a renderização idêntica à página da loja.
+                </p>
+              </div>
+
+              <span className="text-[11px] font-mono text-slate-400 bg-slate-100 px-2 py-1 rounded-lg">
+                Modo: {settings.offersBanner?.transitionType || 'slide_horizontal'} • {settings.offersBanner?.intervalMs || 5000}ms
+              </span>
+            </div>
+
+            <div className="p-4 sm:p-6 rounded-2xl bg-slate-100/80 border border-slate-200/80">
+              <OffersBanner
+                products={availableProducts}
+                settings={settings.offersBanner}
+                onNavigate={() => {}}
+                isLivePreview={true}
+              />
+            </div>
+          </div>
+        </div>
+      )}
       {activeTab === 'sections' && (
         <div className="space-y-6">
           {/* Categories Section Settings */}
@@ -2386,6 +3620,145 @@ export const LayoutCustomizationTab: React.FC<LayoutCustomizationTabProps> = ({ 
                   <p className="text-[11px] opacity-75">{settings.footer.copyrightText}</p>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: SELECIONAR PRODUTOS DO CATÁLOGO PARA O BANNER DE OFERTAS */}
+      {isAddingProductToBanner && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl border border-slate-200 max-w-3xl w-full p-6 sm:p-8 space-y-6 shadow-2xl my-8">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <span className="p-2.5 rounded-xl bg-pink-100 text-[#E6007E]">
+                  <Flame className="w-5 h-5 text-[#E6007E]" />
+                </span>
+                <div>
+                  <h3 className="font-extrabold uppercase text-base text-slate-900 tracking-tight">
+                    Vincular Produto ao Banner de Ofertas
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Selecione um produto existente no catálogo da loja para criar um slide promocional
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddingProductToBanner(false);
+                  setBannerProductSearch('');
+                }}
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Search Box */}
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={bannerProductSearch}
+                onChange={(e) => setBannerProductSearch(e.target.value)}
+                placeholder="Buscar por nome do produto ou código SKU..."
+                className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:border-slate-900"
+                autoFocus
+              />
+            </div>
+
+            {/* List of Products */}
+            <div className="max-h-[380px] overflow-y-auto divide-y divide-slate-100 pr-1">
+              {availableProducts
+                .filter((p) => {
+                  if (!p.is_active) return false;
+                  if (!bannerProductSearch) return true;
+                  const term = bannerProductSearch.toLowerCase();
+                  return (
+                    p.name.toLowerCase().includes(term) ||
+                    (p.code && p.code.toLowerCase().includes(term))
+                  );
+                })
+                .map((product) => {
+                  const alreadyInBanner = (settings.offersBanner?.items || []).some(
+                    (i) => i.productId === product.id
+                  );
+                  const suggestedPromo =
+                    product.promo_price || Math.round(product.base_price * 0.85 * 100) / 100;
+
+                  return (
+                    <div
+                      key={`modal-prod-${product.id}`}
+                      className="py-3 flex items-center justify-between gap-4 hover:bg-slate-50/80 px-2 rounded-xl transition-colors"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <img
+                          src={product.images && product.images[0] ? product.images[0] : ''}
+                          alt={product.name}
+                          className="w-12 h-12 rounded-xl object-cover border border-slate-200 shrink-0 bg-slate-100"
+                        />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-xs text-slate-900 truncate max-w-sm">
+                              {product.name}
+                            </span>
+                            {product.code && (
+                              <span className="font-mono text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
+                                {product.code}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-1">
+                            <span>Preço Base: R$ {product.base_price.toFixed(2)}</span>
+                            <span>•</span>
+                            <span className="text-emerald-600 font-semibold">
+                              Sugestão com 15% OFF: R$ {suggestedPromo.toFixed(2)}
+                            </span>
+                            <span>•</span>
+                            <span>Estoque: {product.stock_qty} un</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="shrink-0">
+                        {alreadyInBanner ? (
+                          <span className="px-3 py-1.5 rounded-xl bg-pink-100 text-[#E6007E] font-bold text-xs inline-flex items-center gap-1 border border-pink-200">
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Já Vinculado</span>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              handleAddProductToOffersBanner(product);
+                              setIsAddingProductToBanner(false);
+                              setBannerProductSearch('');
+                            }}
+                            className="px-3.5 py-1.5 bg-slate-900 hover:bg-[#E6007E] text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>Adicionar ao Banner</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+
+            <div className="flex justify-end pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddingProductToBanner(false);
+                  setBannerProductSearch('');
+                }}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+              >
+                Fechar
+              </button>
             </div>
           </div>
         </div>

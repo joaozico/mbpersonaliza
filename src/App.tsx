@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Product, Category, Subcategory, CartItem, UserProfile, ProductVariant, CompanySettings } from './types';
+import { Product, Category, Subcategory, CartItem, UserProfile, ProductVariant, CompanySettings, BackupHistoryEntry } from './types';
 import { StorageService } from './services/storage';
-import { RoleSwitcher } from './components/RoleSwitcher';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { CartDrawer } from './components/CartDrawer';
@@ -20,6 +19,10 @@ import { CustomerPortalView } from './views/CustomerPortalView';
 import { AdminPanel } from './views/AdminPanel';
 import { AdminLoginView } from './views/AdminLoginView';
 import { SiteMetricsView } from './views/SiteMetricsView';
+import { PDVView } from './views/PDVView';
+import { MaintenanceView } from './views/MaintenanceView';
+import { FinancialModuleView } from './views/FinancialModuleView';
+import { AdminMaintenanceBanner } from './components/AdminMaintenanceBanner';
 import { AnalyticsService } from './services/analytics';
 
 export default function App() {
@@ -59,8 +62,37 @@ export default function App() {
     setCompanySettings(StorageService.getCompanySettings());
   };
 
+  // Maintenance Mode Status & Admin Privileges
+  const isMaintenanceActive = Boolean(companySettings.maintenance?.enabled);
+  const isAuthorizedAdmin =
+    currentUser &&
+    (currentUser.role === 'admin' ||
+      currentUser.role === 'gerente' ||
+      Boolean(currentUser.customPermissions?.canManageCompanySettings));
+
+  // Sync maintenance status from backend API on initial load
+  useEffect(() => {
+    fetch('/api/system/maintenance', { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.maintenance) {
+          const localSettings = StorageService.getMaintenanceSettings();
+          if (Boolean(localSettings.enabled) !== Boolean(data.maintenance.enabled)) {
+            StorageService.saveMaintenanceSettings(data.maintenance);
+            setCompanySettings(StorageService.getCompanySettings());
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('Backend maintenance status sync notice:', err);
+      });
+  }, []);
+
   useEffect(() => {
     const handleSettingsUpdate = () => {
+      setCompanySettings(StorageService.getCompanySettings());
+    };
+    const handleMaintenanceUpdate = () => {
       setCompanySettings(StorageService.getCompanySettings());
     };
     const handleOpenWhatsApp = () => {
@@ -71,12 +103,14 @@ export default function App() {
     window.addEventListener('mb_products_updated', refreshData);
     window.addEventListener('mb_stricker_products_updated', refreshData);
     window.addEventListener('mb_company_settings_updated', handleSettingsUpdate);
+    window.addEventListener('mb_maintenance_updated', handleMaintenanceUpdate);
     window.addEventListener('mb_open_whatsapp_modal', handleOpenWhatsApp);
     return () => {
       window.removeEventListener('mb_storage_updated', refreshData);
       window.removeEventListener('mb_products_updated', refreshData);
       window.removeEventListener('mb_stricker_products_updated', refreshData);
       window.removeEventListener('mb_company_settings_updated', handleSettingsUpdate);
+      window.removeEventListener('mb_maintenance_updated', handleMaintenanceUpdate);
       window.removeEventListener('mb_open_whatsapp_modal', handleOpenWhatsApp);
     };
   }, []);
@@ -90,6 +124,9 @@ export default function App() {
     if (currentView === 'home') {
       title = 'Início | MB Personaliza';
       path = '/';
+    } else if (currentView === 'maintenance') {
+      title = `${companySettings.maintenance?.title || 'Sistema em Manutenção'} | MB Personaliza`;
+      path = '/manutencao';
     } else if (currentView === 'catalog') {
       title = 'Catálogo de Produtos | MB Personaliza';
       path = '/catalogo';
@@ -109,13 +146,99 @@ export default function App() {
     } else if (currentView === 'metrics') {
       title = 'Métricas do Site & Insights | MB Personaliza';
       path = '/admin/metricas';
+    } else if (currentView === 'pdv') {
+      title = 'PDV - Frente de Caixa (Loja Física) | MB Personaliza';
+      path = '/pdv';
+    } else if (currentView === 'financial' || currentView === 'financeiro') {
+      title = 'Módulo Financeiro | MB Personaliza';
+      path = '/financeiro';
     }
 
     AnalyticsService.trackPageView(path, title);
-  }, [currentView, viewParam]);
+  }, [currentView, viewParam, companySettings.maintenance]);
+
+  // Rotina em segundo plano para verificação de exportação agendada de recuperação de desastres
+  useEffect(() => {
+    const checkScheduledBackup = async () => {
+      try {
+        const cfg = StorageService.getBackupScheduleConfig();
+        if (!cfg.enabled || !cfg.nextRunAt) return;
+
+        const now = new Date().getTime();
+        const nextRun = new Date(cfg.nextRunAt).getTime();
+
+        if (now >= nextRun) {
+          const backup = StorageService.generateSecureBackupJson({ trigger: 'scheduled' });
+          const newEntry: BackupHistoryEntry = {
+            id: `bkp-sch-${Date.now()}`,
+            filename: backup.filename,
+            timestamp: new Date().toISOString(),
+            sizeBytes: backup.sizeBytes,
+            sizeFormatted: backup.sizeFormatted,
+            checksum: backup.checksum,
+            trigger: 'scheduled',
+            status: 'success',
+            counts: {
+              products: backup.payload.metadata.counts.products,
+              quotes: backup.payload.metadata.counts.quotes,
+              orders: backup.payload.metadata.counts.orders,
+            },
+            storedOnServer: true,
+          };
+          StorageService.addBackupHistoryEntry(newEntry);
+          cfg.lastRunAt = new Date().toISOString();
+          cfg.lastRunStatus = 'success';
+          cfg.lastRunMessage = 'Backup agendado executado automaticamente.';
+          cfg.nextRunAt = StorageService.calculateNextBackupRun(cfg);
+          StorageService.saveBackupScheduleConfig(cfg);
+
+          if (cfg.autoDownloadBrowser) {
+            const blob = new Blob([backup.jsonString], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = backup.filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          }
+
+          try {
+            await fetch('/api/backup/export', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ trigger: 'scheduled', clientPayload: backup.payload }),
+            });
+          } catch {
+            // Ignora erro de rede
+          }
+        }
+      } catch (err) {
+        console.warn('Verificação de backup agendado:', err);
+      }
+    };
+
+    checkScheduledBackup();
+    const intervalTimer = setInterval(checkScheduledBackup, 60000);
+    return () => clearInterval(intervalTimer);
+  }, []);
 
   // Navigation Handler
   const handleNavigate = (view: string, param?: string) => {
+    // If maintenance is active and user is NOT an authorized admin:
+    // Only allow admin-login so an administrator can authenticate
+    if (isMaintenanceActive && !isAuthorizedAdmin) {
+      if (view === 'admin-login') {
+        setCurrentView('admin-login');
+        setViewParam(undefined);
+      } else {
+        setCurrentView('maintenance');
+        setViewParam(undefined);
+      }
+      return;
+    }
+
     setCurrentView(view);
     setViewParam(param);
   };
@@ -147,38 +270,82 @@ export default function App() {
     setCurrentView('quote');
   };
 
-  return (
-    <div className="min-h-screen flex flex-col bg-[#FAF9F6] text-slate-900 font-sans selection:bg-[#E6007E] selection:text-white">
-      {/* Role Switcher Toolbar (Top Bar for RBAC Testing) */}
-      <RoleSwitcher
-        currentUser={currentUser}
-        onRoleChange={(newRole) => {
-          const updatedUser: UserProfile = {
-            ...currentUser,
-            role: newRole,
-          };
-          StorageService.setCurrentUser(updatedUser);
-          setCurrentUser(updatedUser);
-        }}
-      />
+  // Maintenance Mode Interception:
+  // If maintenance is active and user is NOT an authorized admin, restrict entire system
+  if (isMaintenanceActive && !isAuthorizedAdmin) {
+    if (currentView === 'admin-login') {
+      return (
+        <div className="min-h-screen flex flex-col bg-slate-900 text-slate-100 font-sans">
+          <AdminLoginView
+            onLoginSuccess={(user) => {
+              setCurrentUser(user);
+              refreshData();
+              setCurrentView('admin');
+            }}
+            onNavigate={(view) => {
+              if (view === 'home' || view === 'maintenance') {
+                setCurrentView('maintenance');
+              } else {
+                handleNavigate(view);
+              }
+            }}
+          />
+        </div>
+      );
+    }
 
-      {/* Main Header / Navigation */}
-      <Navbar
+    return (
+      <MaintenanceView
+        companySettings={companySettings}
         currentUser={currentUser}
-        onUserChange={(user) => {
-          setCurrentUser(user);
-          refreshData();
-        }}
-        cartCount={(cart || []).reduce((a, b) => a + (b?.quantity || 0), 0)}
-        currentView={currentView}
         onNavigate={handleNavigate}
-        onOpenCart={() => setIsCartOpen(true)}
-        products={products}
-        categories={categories}
       />
+    );
+  }
+
+  return (
+    <div
+      className={`flex flex-col bg-[#FAF9F6] text-slate-900 font-sans selection:bg-[#E6007E] selection:text-white w-full max-w-full overflow-x-clip ${
+        currentView === 'pdv'
+          ? 'h-screen max-h-screen h-[100dvh] max-h-[100dvh] overflow-hidden'
+          : 'min-h-screen'
+      }`}
+    >
+      {/* Admin Maintenance Alert Banner (Always visible to admin when maintenance mode is active) */}
+      {isMaintenanceActive && isAuthorizedAdmin && (
+        <AdminMaintenanceBanner
+          companySettings={companySettings}
+          currentUser={currentUser}
+          onNavigate={handleNavigate}
+          onRefreshSettings={refreshData}
+        />
+      )}
+
+      {/* Main Header / Navigation (Hidden in PDV fullscreen mode or preview maintenance) */}
+      {currentView !== 'pdv' && currentView !== 'maintenance' && (
+        <Navbar
+          currentUser={currentUser}
+          onUserChange={(user) => {
+            setCurrentUser(user);
+            refreshData();
+          }}
+          cartCount={(cart || []).reduce((a, b) => a + (b?.quantity || 0), 0)}
+          currentView={currentView}
+          onNavigate={handleNavigate}
+          onOpenCart={() => setIsCartOpen(true)}
+          products={products}
+          categories={categories}
+        />
+      )}
 
       {/* Main View Renderer */}
-      <main className="flex-1">
+      <main
+        className={`flex-1 w-full max-w-full min-w-0 ${
+          currentView === 'pdv'
+            ? 'h-full max-h-full overflow-hidden flex flex-col min-h-0'
+            : 'overflow-x-clip'
+        }`}
+      >
         {currentView === 'home' && (
           <HomeView
             products={products}
@@ -194,6 +361,7 @@ export default function App() {
             subcategories={subcategories}
             selectedCategoryId={viewParam}
             onNavigate={handleNavigate}
+            onOpenQuoteModal={handleOpenQuoteModal}
           />
         )}
 
@@ -210,6 +378,7 @@ export default function App() {
         {currentView === 'quote' && (
           <QuoteView
             products={products}
+            categories={categories}
             currentUser={currentUser}
             initialItem={quoteInitialItem}
             onNavigate={handleNavigate}
@@ -281,10 +450,57 @@ export default function App() {
             onNavigate={handleNavigate}
           />
         )}
+
+        {currentView === 'pdv' && (
+          currentUser.role === 'cliente' || currentUser.role === 'visitante' ? (
+            <AdminLoginView
+              onLoginSuccess={(user) => {
+                setCurrentUser(user);
+                refreshData();
+                setCurrentView('pdv');
+              }}
+              onNavigate={handleNavigate}
+            />
+          ) : (
+            <PDVView
+              currentUser={currentUser}
+              products={products}
+              categories={categories}
+              onNavigate={handleNavigate}
+            />
+          )
+        )}
+
+        {(currentView === 'financial' || currentView === 'financeiro') && (
+          <FinancialModuleView
+            currentUser={currentUser}
+            onNavigate={handleNavigate}
+            onUserChange={(user) => {
+              setCurrentUser(user);
+              refreshData();
+            }}
+          />
+        )}
+
+        {/* Maintenance View (Direct route or Admin preview) */}
+        {currentView === 'maintenance' && (
+          <MaintenanceView
+            companySettings={companySettings}
+            currentUser={currentUser}
+            onNavigate={handleNavigate}
+            onDeactivateMaintenance={() => {
+              StorageService.toggleMaintenanceMode(false, currentUser);
+              refreshData();
+              handleNavigate('admin');
+            }}
+          />
+        )}
       </main>
 
-      {/* Footer */}
-      <Footer onNavigate={handleNavigate} />
+      {/* Footer (Hidden in PDV fullscreen mode or Maintenance mode) */}
+      {currentView !== 'pdv' && currentView !== 'maintenance' && (
+        <Footer onNavigate={handleNavigate} />
+      )}
 
       {/* Shopping Cart Drawer */}
       <CartDrawer
@@ -317,7 +533,7 @@ export default function App() {
       />
 
       {/* Floating WhatsApp Quick Action Widget */}
-      {currentView !== 'admin' && (
+      {currentView !== 'admin' && currentView !== 'pdv' && currentView !== 'maintenance' && (
         <WhatsAppFloatingWidget
           companySettings={companySettings}
           onOpenFullModal={() => setIsGlobalWhatsAppModalOpen(true)}

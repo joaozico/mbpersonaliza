@@ -117,7 +117,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-12" id="product-detail-page">
+    <div className="w-full min-w-0 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-12" id="product-detail-page">
       <SEOHead
         title={`${product.name} Personalizado`}
         description={`${product.name}: ${product.short_description || product.description.substring(0, 155)}... Opções de personalização via ${product.details.customTechniques.join(', ')}. Quantidade mínima: ${product.min_order_qty} un.`}

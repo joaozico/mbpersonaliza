@@ -3,6 +3,11 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { strickerRouter } from "./src/server/strickerRouter";
 import { strickerSyncWorker } from "./src/server/strickerSyncWorker";
+import { paymentRouter } from "./src/server/paymentRouter";
+import { systemRouter, maintenanceApiMiddleware } from "./src/server/systemRouter";
+import { financialRouter } from "./src/server/financialRouter";
+import { backupRouter } from "./src/server/backupRouter";
+import { backupSchedulerWorker } from "./src/server/backupSchedulerWorker";
 
 async function startServer() {
   const app = express();
@@ -13,10 +18,28 @@ async function startServer() {
   // Inicia worker de sincronização periódica Stricker em segundo plano
   strickerSyncWorker.start();
 
+  // Inicia worker de exportação agendada e recuperação de desastres
+  backupSchedulerWorker.start();
+
   // API Health
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", app: "MB Personaliza", version: "1.0.0" });
   });
+
+  // Modo de Manutenção & Configurações do Sistema
+  app.use("/api/system", systemRouter);
+
+  // Middleware de proteção de APIs em modo de manutenção
+  app.use(maintenanceApiMiddleware);
+
+  // Payment Gateways & Webhooks (Mercado Pago & PagBank)
+  app.use("/api/payments", paymentRouter);
+
+  // Módulo Financeiro — Controle de Acesso e APIs Seguras
+  app.use("/api/financial", financialRouter);
+
+  // Backup & Recuperação de Desastres (JSON Seguro e Agendado)
+  app.use("/api/backup", backupRouter);
 
   // Stricker / SPOT Webservice API Proxy Routes
   app.use("/api/stricker", strickerRouter);
