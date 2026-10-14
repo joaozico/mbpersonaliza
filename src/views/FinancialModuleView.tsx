@@ -14,6 +14,7 @@ import {
   Subcategory,
 } from '../types';
 import { StorageService } from '../services/storage';
+import { BoletoBillingManagementTab } from './BoletoBillingManagementTab';
 import {
   DollarSign,
   TrendingUp,
@@ -213,6 +214,7 @@ export const FinancialModuleView: React.FC<FinancialModuleViewProps> = ({
   type FinancialSubTab =
     | 'dashboard'
     | 'receivables'
+    | 'boletos'
     | 'payables'
     | 'cash_flow'
     | 'reports'
@@ -1365,6 +1367,21 @@ export const FinancialModuleView: React.FC<FinancialModuleViewProps> = ({
           </button>
         )}
 
+        {canViewReceivables && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('boletos')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-2 cursor-pointer ${
+              activeTab === 'boletos'
+                ? 'bg-indigo-700 text-white shadow-xs'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <FileText className="w-4 h-4 text-indigo-300" />
+            <span>Boletos & Faturamento</span>
+          </button>
+        )}
+
         {canViewPayables && (
           <button
             type="button"
@@ -1889,6 +1906,13 @@ export const FinancialModuleView: React.FC<FinancialModuleViewProps> = ({
             </table>
           </div>
         </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* ABA BOLETOS BANCÁRIOS & FATURAMENTO A PRAZO                          */}
+      {/* ==================================================================== */}
+      {activeTab === 'boletos' && (
+        <BoletoBillingManagementTab currentUser={currentUser} />
       )}
 
       {/* ==================================================================== */}

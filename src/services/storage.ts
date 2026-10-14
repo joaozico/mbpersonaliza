@@ -35,6 +35,10 @@ import {
   SecureBackupPayload,
   BackupMetadata,
   BackupVerificationResult,
+  DeliveryAndShippingSettings,
+  BoletoTitulo,
+  BoletoBillingSettings,
+  QuoteBillingTerms,
 } from '../types';
 import {
   INITIAL_PRODUCTS,
@@ -45,6 +49,7 @@ import {
   INITIAL_STOCK_MOVEMENTS,
   INITIAL_USERS,
   INITIAL_COMPANY_SETTINGS,
+  INITIAL_DELIVERY_SETTINGS,
   INITIAL_PERMISSIONS_MATRIX,
   INITIAL_LAYOUT_SETTINGS,
   INITIAL_PAYMENT_GATEWAYS,
@@ -62,8 +67,11 @@ import {
   INITIAL_FINANCIAL_AUDIT,
   INITIAL_BACKUP_SCHEDULE_CONFIG,
   INITIAL_BACKUP_HISTORY,
+  INITIAL_BOLETO_SETTINGS,
+  INITIAL_BOLETOS,
 } from '../data/initialData';
 import { calculateSha256Sync, formatBytes, generateBackupFilename } from '../utils/cryptoUtils';
+import { criarBoletoTitulo, calcularDataVencimento } from '../utils/boletoGenerator';
 
 const STORAGE_KEYS = {
   PRODUCTS: 'mb_personaliza_products_v1',
@@ -95,6 +103,9 @@ const STORAGE_KEYS = {
   FINANCIAL_AUDIT: 'mb_personaliza_financial_audit_v1',
   BACKUP_SCHEDULE: 'mb_personaliza_backup_schedule_v1',
   BACKUP_HISTORY: 'mb_personaliza_backup_history_v1',
+  DELIVERY_SETTINGS: 'mb_personaliza_delivery_settings_v1',
+  BOLETOS: 'mb_personaliza_boletos_v1',
+  BOLETO_SETTINGS: 'mb_personaliza_boleto_settings_v1',
 };
 
 function getStored<T>(key: string, fallback: T): T {
@@ -278,28 +289,139 @@ export const StorageService = {
 
     return order;
   },
+  updateOrder(order: Order): void {
+    const orders = this.getOrders();
+    const index = orders.findIndex((o) => o.id === order.id);
+    if (index >= 0) {
+      orders[index] = { ...order, updatedAt: new Date().toISOString() };
+      this.saveOrders(orders);
+    }
+  },
+
   updateOrderStatus(
     orderId: string,
     status: Order['orderStatus'],
     trackingCode?: string,
     notes?: string
-  ): void {
+  ): { success: boolean; error?: string } {
     const orders = this.getOrders();
     const index = orders.findIndex((o) => o.id === orderId);
-    if (index >= 0) {
-      orders[index].orderStatus = status;
-      if (trackingCode !== undefined) orders[index].trackingCode = trackingCode;
-      if (notes !== undefined) orders[index].notes = notes;
-      orders[index].updatedAt = new Date().toISOString();
-      this.saveOrders(orders);
+    if (index < 0) return { success: false, error: 'Pedido não encontrado.' };
+
+    const order = orders[index];
+
+    // Validação de Integridade: Não permitir alterar para pronto/entregue se frete aguarda definição
+    if (
+      (status === 'pronto' || status === 'entregue') &&
+      order.shippingInfo?.methodType === 'transportadora' &&
+      order.shippingInfo?.freightStatus === 'aguardando_cotacao'
+    ) {
+      return {
+        success: false,
+        error: 'Não é possível avançar o pedido para pronto/entregue enquanto o frete da transportadora estiver aguardando definição/cotação.',
+      };
     }
+
+    orders[index].orderStatus = status;
+    if (trackingCode !== undefined) orders[index].trackingCode = trackingCode;
+    if (notes !== undefined) orders[index].notes = notes;
+    orders[index].updatedAt = new Date().toISOString();
+    this.saveOrders(orders);
+    return { success: true };
+  },
+
+  updateOrderShipping(
+    orderId: string,
+    update: {
+      freightStatus?: 'aguardando_cotacao' | 'proposta_enviada' | 'aprovado' | 'recusado' | 'definido';
+      negotiatedCost?: number;
+      negotiatedCarrier?: string;
+      negotiatedDeadlineDays?: number;
+      proposalNotes?: string;
+      customerResponseNotes?: string;
+      trackingCode?: string;
+      actorName?: string;
+      actionDescription?: string;
+    }
+  ): { success: boolean; error?: string } {
+    const orders = this.getOrders();
+    const index = orders.findIndex((o) => o.id === orderId);
+    if (index < 0) return { success: false, error: 'Pedido não encontrado.' };
+
+    const order = orders[index];
+    const shippingInfo = order.shippingInfo || {
+      methodId: 'sm-transportadora',
+      methodName: 'Transportadora — Frete a Combinar',
+      methodType: 'transportadora',
+      cost: 0,
+      freightStatus: 'aguardando_cotacao',
+    };
+
+    const history = [...(shippingInfo.history || [])];
+
+    if (update.actionDescription) {
+      history.push({
+        id: `sh-hist-${Date.now()}`,
+        date: new Date().toISOString(),
+        action: update.freightStatus || 'atualizacao',
+        actor: update.actorName || 'Administrador MB',
+        details: update.actionDescription,
+      });
+    }
+
+    // Se frete aprovado ou definido, atualiza custo de frete no pedido e recalcula total
+    let newShippingCost = order.shippingCost;
+    if (update.negotiatedCost !== undefined && (update.freightStatus === 'aprovado' || update.freightStatus === 'definido')) {
+      newShippingCost = Number(update.negotiatedCost);
+    }
+
+    const updatedShippingInfo = {
+      ...shippingInfo,
+      history,
+      ...(update.freightStatus !== undefined ? { freightStatus: update.freightStatus } : {}),
+      ...(update.negotiatedCost !== undefined ? { negotiatedCost: update.negotiatedCost, cost: newShippingCost } : {}),
+      ...(update.negotiatedCarrier !== undefined ? { negotiatedCarrier: update.negotiatedCarrier, carrierName: update.negotiatedCarrier } : {}),
+      ...(update.negotiatedDeadlineDays !== undefined ? { negotiatedDeadlineDays: update.negotiatedDeadlineDays, estimatedDeliveryDays: update.negotiatedDeadlineDays } : {}),
+      ...(update.proposalNotes !== undefined ? { proposalNotes: update.proposalNotes } : {}),
+      ...(update.customerResponseNotes !== undefined ? { customerResponseNotes: update.customerResponseNotes } : {}),
+      ...(update.freightStatus === 'proposta_enviada' ? { proposalSentAt: new Date().toISOString() } : {}),
+      ...(update.freightStatus === 'aprovado' || update.freightStatus === 'recusado' ? { customerRespondedAt: new Date().toISOString() } : {}),
+    };
+
+    orders[index].shippingInfo = updatedShippingInfo;
+    orders[index].shippingCost = newShippingCost;
+    orders[index].total = Number((orders[index].subtotal - orders[index].discount + newShippingCost).toFixed(2));
+    if (update.trackingCode !== undefined) {
+      orders[index].trackingCode = update.trackingCode;
+    }
+    orders[index].updatedAt = new Date().toISOString();
+
+    this.saveOrders(orders);
+    return { success: true };
   },
 
   // Convert Quote to Order
-  convertQuoteToOrder(quoteId: string, paymentMethod: Order['paymentMethod'] = 'faturado_pj'): Order | null {
+  convertQuoteToOrder(quoteId: string, requestedPaymentMethod?: Order['paymentMethod']): Order | null {
     const quotes = this.getQuotes();
     const quote = quotes.find((q) => q.id === quoteId);
     if (!quote) return null;
+
+    // Bloqueia conversão se a proposta estiver cancelada ou recusada
+    if (quote.status === 'recusado' || quote.status === 'cancelado') {
+      console.warn(`Tentativa de conversão de proposta cancelada/recusada bloqueada: ${quote.code}`);
+      return null;
+    }
+
+    // Verifica se a proposta possui faturamento a prazo expressamente autorizado
+    const isDeferredAuthorized = Boolean(
+      quote.billingTerms?.isDeferredAuthorized && quote.billingTerms?.type === 'faturado_prazo'
+    );
+    // Se não for autorizado, impede faturamento a prazo mesmo que solicitado
+    const effectivePaymentMethod: Order['paymentMethod'] = isDeferredAuthorized
+      ? 'boleto_faturado'
+      : (requestedPaymentMethod === 'boleto_faturado' || requestedPaymentMethod === 'faturado_pj')
+      ? 'boleto'
+      : (requestedPaymentMethod || 'boleto');
 
     const orderNumber = Math.floor(1000 + Math.random() * 9000);
     const newOrder: Order = {
@@ -335,11 +457,17 @@ export const StorageService = {
       discount: 0,
       shippingCost: 0,
       total: quote.totalEstimated || 0,
-      paymentMethod,
-      paymentStatus: 'aprovado',
+      paymentMethod: effectivePaymentMethod,
+      // Boleto inicia como pendente até confirmação bancária/baixa válida
+      paymentStatus: 'pendente',
       orderStatus: 'novo',
       sourceQuoteId: quote.id,
-      notes: `Convertido a partir do Orçamento ${quote.code}. ${quote.adminNotes || ''}`,
+      billingTerms: quote.billingTerms,
+      notes: `Convertido a partir do Orçamento ${quote.code}. ${
+        isDeferredAuthorized
+          ? `Condição de Faturamento a Prazo Aprovada: ${quote.billingTerms?.conditionName || 'Faturado'}.`
+          : 'Pagamento por Boleto à Vista.'
+      } ${quote.adminNotes || ''}`,
       createdAt: new Date().toISOString(),
     };
 
@@ -348,7 +476,24 @@ export const StorageService = {
     this.updateQuote(quote);
 
     // Save order & trigger stock movement
-    return this.addOrder(newOrder);
+    const savedOrder = this.addOrder(newOrder);
+
+    // Gera automaticamente os boletos e integra com Contas a Receber
+    if (effectivePaymentMethod === 'boleto_faturado') {
+      this.generateBoletosForOrder({
+        order: savedOrder,
+        quote,
+        tipoCobranca: 'faturado_prazo',
+      });
+    } else if (effectivePaymentMethod === 'boleto') {
+      this.generateBoletosForOrder({
+        order: savedOrder,
+        quote,
+        tipoCobranca: 'a_vista',
+      });
+    }
+
+    return savedOrder;
   },
 
   // Stock movements
@@ -624,6 +769,591 @@ export const StorageService = {
       }, 0);
     }
     return { success: true };
+  },
+
+  // ==========================================
+  // CONFIGURAÇÕES DE ATENDIMENTO E ENTREGA (SHIPPING & DELIVERY)
+  // ==========================================
+
+  getDeliverySettings(): DeliveryAndShippingSettings {
+    const stored = getStored<DeliveryAndShippingSettings | null>(STORAGE_KEYS.DELIVERY_SETTINGS, null);
+    if (!stored) {
+      return { ...INITIAL_DELIVERY_SETTINGS };
+    }
+    return {
+      ...INITIAL_DELIVERY_SETTINGS,
+      ...stored,
+      serviceRegion: {
+        ...INITIAL_DELIVERY_SETTINGS.serviceRegion,
+        ...(stored.serviceRegion || {}),
+        municipalConfig: {
+          ...INITIAL_DELIVERY_SETTINGS.serviceRegion.municipalConfig,
+          ...(stored.serviceRegion?.municipalConfig || {}),
+          exceptions: stored.serviceRegion?.municipalConfig?.exceptions || INITIAL_DELIVERY_SETTINGS.serviceRegion.municipalConfig.exceptions,
+        },
+        stateConfig: {
+          ...INITIAL_DELIVERY_SETTINGS.serviceRegion.stateConfig,
+          ...(stored.serviceRegion?.stateConfig || {}),
+          exceptions: stored.serviceRegion?.stateConfig?.exceptions || INITIAL_DELIVERY_SETTINGS.serviceRegion.stateConfig.exceptions,
+        },
+      },
+      correiosConfig: {
+        ...INITIAL_DELIVERY_SETTINGS.correiosConfig,
+        ...(stored.correiosConfig || {}),
+      },
+      methods: Array.isArray(stored.methods) && stored.methods.length > 0 ? stored.methods : INITIAL_DELIVERY_SETTINGS.methods,
+      carriersList: Array.isArray(stored.carriersList) && stored.carriersList.length > 0 ? stored.carriersList : INITIAL_DELIVERY_SETTINGS.carriersList,
+    };
+  },
+
+  saveDeliverySettings(settings: DeliveryAndShippingSettings): { success: boolean; error?: string } {
+    try {
+      settings.updatedAt = new Date().toISOString();
+      const saved = setStored(STORAGE_KEYS.DELIVERY_SETTINGS, settings);
+      if (!saved) {
+        return { success: false, error: 'Falha ao salvar configurações de entrega no armazenamento.' };
+      }
+      if (typeof window !== 'undefined') {
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('mb_delivery_settings_updated', { detail: settings }));
+          window.dispatchEvent(new Event('mb_storage_updated'));
+        }, 0);
+      }
+      return { success: true };
+    } catch (err: any) {
+      console.error('Error saving delivery settings:', err);
+      return { success: false, error: err?.message || 'Erro inesperado ao salvar configurações de entrega.' };
+    }
+  },
+
+  resetDeliverySettings(): { success: boolean } {
+    setStored(STORAGE_KEYS.DELIVERY_SETTINGS, INITIAL_DELIVERY_SETTINGS);
+    if (typeof window !== 'undefined') {
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('mb_delivery_settings_updated', { detail: INITIAL_DELIVERY_SETTINGS }));
+        window.dispatchEvent(new Event('mb_storage_updated'));
+      }, 0);
+    }
+    return { success: true };
+  },
+
+  // ==========================================
+  // REGRAS DE BOLETO BANCÁRIO & FATURAMENTO A PRAZO
+  // ==========================================
+
+  getBoletoSettings(): BoletoBillingSettings {
+    const stored = getStored<BoletoBillingSettings | null>(STORAGE_KEYS.BOLETO_SETTINGS, null);
+    if (!stored) {
+      return { ...INITIAL_BOLETO_SETTINGS };
+    }
+    return {
+      ...INITIAL_BOLETO_SETTINGS,
+      ...stored,
+      standardPaymentTerms: Array.isArray(stored.standardPaymentTerms)
+        ? stored.standardPaymentTerms
+        : INITIAL_BOLETO_SETTINGS.standardPaymentTerms,
+    };
+  },
+
+  saveBoletoSettings(
+    settings: BoletoBillingSettings,
+    operatorName: string = 'Administrador'
+  ): { success: boolean; error?: string } {
+    try {
+      // Regra fundamental inviolável: Compras comuns da loja virtual são SEMPRE à vista por boleto
+      settings.commonPurchaseNoticeText =
+        'O pagamento por boleto a prazo está disponível exclusivamente para propostas comerciais ou orçamentos personalizados aprovados e autorizados. Para compras comuns, o boleto é somente à vista.';
+      settings.updatedAt = new Date().toISOString();
+      settings.updatedBy = operatorName;
+
+      const saved = setStored(STORAGE_KEYS.BOLETO_SETTINGS, settings);
+      if (!saved) {
+        return { success: false, error: 'Falha ao salvar configurações de boleto no armazenamento.' };
+      }
+
+      this.addFinancialAuditEntry({
+        userId: 'admin_sys',
+        userName: operatorName,
+        userEmail: 'financeiro@mbpersonaliza.com.br',
+        userRole: 'admin',
+        operation: 'ATUALIZAR_CONFIGURACOES_BOLETO',
+        affectedRecordType: 'configuracao_boleto',
+        result: 'sucesso',
+        details: `Configurações de faturamento por boleto atualizadas por ${operatorName}. Prazo max: ${settings.maxDeferredDays}d, Parcelas max: ${settings.maxInstallments}x, Alçada financeira: R$ ${settings.requireFinancialApprovalOverAmount}.`,
+        origin: 'web_painel',
+      });
+
+      if (typeof window !== 'undefined') {
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('mb_boleto_settings_updated', { detail: settings }));
+          window.dispatchEvent(new Event('mb_storage_updated'));
+        }, 0);
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      console.error('Error saving boleto settings:', err);
+      return { success: false, error: err?.message || 'Erro inesperado ao salvar configurações de boleto.' };
+    }
+  },
+
+  getBoletos(): BoletoTitulo[] {
+    const raw = getStored<BoletoTitulo[]>(STORAGE_KEYS.BOLETOS, INITIAL_BOLETOS);
+    return Array.isArray(raw) ? raw : INITIAL_BOLETOS;
+  },
+
+  saveBoletos(boletos: BoletoTitulo[]): void {
+    setStored(STORAGE_KEYS.BOLETOS, boletos);
+    if (typeof window !== 'undefined') {
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('mb_boletos_updated', { detail: boletos }));
+        window.dispatchEvent(new Event('mb_storage_updated'));
+      }, 0);
+    }
+  },
+
+  getBoletoById(id: string): BoletoTitulo | undefined {
+    return this.getBoletos().find((b) => b.id === id);
+  },
+
+  getBoletosByOrderId(orderId: string): BoletoTitulo[] {
+    return this.getBoletos().filter((b) => b.orderId === orderId);
+  },
+
+  getBoletosByQuoteId(quoteId: string): BoletoTitulo[] {
+    return this.getBoletos().filter((b) => b.quoteId === quoteId);
+  },
+
+  // Validação estrita das regras de negócio de faturamento a prazo por boleto
+  validateBoletoEligibility(params: {
+    isCommonStorePurchase: boolean;
+    customerCpfCnpj?: string;
+    quoteId?: string;
+    requestedDeferred: boolean;
+  }): { allowed: boolean; error?: string; reason?: string } {
+    const { isCommonStorePurchase, quoteId, requestedDeferred } = params;
+
+    if (!requestedDeferred) {
+      // Boleto à vista é sempre permitido para PF e PJ em qualquer modalidade
+      return { allowed: true };
+    }
+
+    // REGRA 1: Compra comum na loja virtual NUNCA permite boleto a prazo (nem PF nem PJ)
+    if (isCommonStorePurchase) {
+      return {
+        allowed: false,
+        error:
+          'O pagamento por boleto a prazo está disponível exclusivamente para propostas comerciais ou orçamentos personalizados aprovados e autorizados. Para compras comuns, o boleto é somente à vista.',
+        reason: 'COMPRA_COMUM_BLOQUEADA_A_PRAZO',
+      };
+    }
+
+    // REGRA 2: Faturamento a prazo exige proposta comercial ou orçamento aprovado
+    if (!quoteId) {
+      return {
+        allowed: false,
+        error:
+          'Faturamento a prazo bloqueado: Esta operação não possui vínculo com proposta comercial ou orçamento aprovado.',
+        reason: 'SEM_DOCUMENTO_COMERCIAL',
+      };
+    }
+
+    const quotes = this.getQuotes();
+    const quote = quotes.find((q) => q.id === quoteId);
+    if (!quote) {
+      return {
+        allowed: false,
+        error: 'Proposta comercial ou orçamento de origem não localizado no sistema.',
+        reason: 'PROPOSTA_NAO_ENCONTRADA',
+      };
+    }
+
+    // REGRA 3: Não permitir propostas canceladas ou recusadas
+    if (quote.status === 'recusado' || (quote as any).status === 'cancelado') {
+      return {
+        allowed: false,
+        error:
+          'Operação bloqueada: A proposta comercial vinculada encontra-se recusada ou cancelada.',
+        reason: 'DOCUMENTO_CANCELADO_OU_RECUSADO',
+      };
+    }
+
+    // REGRA 4: Proposta/Orçamento deve conter autorização expressa de faturamento a prazo
+    const isAuthorized = quote.billingTerms?.isDeferredAuthorized;
+    if (!isAuthorized) {
+      return {
+        allowed: false,
+        error:
+          'Operação bloqueada: A proposta comercial selecionada não possui autorização expressa da gerência para faturamento a prazo por boleto.',
+        reason: 'PRAZO_NAO_AUTORIZADO',
+      };
+    }
+
+    return { allowed: true };
+  },
+
+  // Geração de títulos de boleto e integração imediata com o módulo Financeiro / Contas a Receber
+  generateBoletosForOrder(params: {
+    order: Order;
+    quote?: Quote;
+    tipoCobranca: 'a_vista' | 'faturado_prazo';
+    installmentsCount?: number;
+    customDueDate?: string;
+    customCondition?: string;
+    operatorName?: string;
+  }): { success: boolean; boletos: BoletoTitulo[]; error?: string } {
+    const { order, quote, tipoCobranca, operatorName = 'Sistema Comercial' } = params;
+    const settings = this.getBoletoSettings();
+
+    // Validação de segurança
+    const isCommonPurchase = !order.sourceQuoteId && !quote;
+    const validation = this.validateBoletoEligibility({
+      isCommonStorePurchase: isCommonPurchase,
+      customerCpfCnpj: order.clientEmail,
+      quoteId: order.sourceQuoteId || quote?.id,
+      requestedDeferred: tipoCobranca === 'faturado_prazo',
+    });
+
+    if (!validation.allowed) {
+      return { success: false, boletos: [], error: validation.error };
+    }
+
+    const boletosGerados: BoletoTitulo[] = [];
+    const existingBoletos = this.getBoletos();
+
+    if (tipoCobranca === 'a_vista') {
+      // Boleto à Vista (1 parcela)
+      const dueDate = params.customDueDate || calcularDataVencimento(settings.cashBoletoDueDays);
+      const bol = criarBoletoTitulo({
+        orderId: order.id,
+        orderCode: order.code,
+        quoteId: quote?.id || order.sourceQuoteId,
+        quoteCode: quote?.code,
+        customerName: order.clientName,
+        customerCpfCnpj: quote?.clientCpfCnpj || (order as any).clientCpfCnpj || '000.000.000-00',
+        customerEmail: order.clientEmail,
+        customerAddress: `${order.shippingAddress.street}, ${order.shippingAddress.number} - ${order.shippingAddress.neighborhood}, ${order.shippingAddress.city}/${order.shippingAddress.state}`,
+        amount: order.total,
+        dueDate,
+        installmentNumber: 1,
+        totalInstallments: 1,
+        conditionName: 'Boleto à Vista',
+        tipoCobranca: 'a_vista',
+        settings,
+      });
+
+      // Integração com Contas a Receber
+      const newRec = this.createFinancialAccount(
+        {
+          type: 'receber',
+          description: `Boleto à Vista - Pedido #${order.code}`,
+          entityName: bol.sacadoNome,
+          entityDocument: bol.sacadoCpfCnpj,
+          amount: bol.valorOriginal,
+          dueDate: bol.dataVencimento,
+          issueDate: bol.dataEmissao,
+          status: 'pendente',
+          categoryId: 'cat-rec-1',
+          categoryName: 'Vendas Loja Online & E-commerce',
+          costCenterId: 'cc-1',
+          costCenterName: 'Comercial & Vendas',
+          paymentMethod: 'Boleto Bancário à Vista',
+          orderCode: order.code,
+          quoteCode: bol.quoteCode,
+          notes: `Linha Digitável: ${bol.linhaDigitavel} | Nosso Número: ${bol.nossoNumero} | Vencimento: ${bol.dataVencimento}`,
+          createdBy: 'system_auto',
+          createdByName: operatorName,
+        },
+        this.getCurrentUser()
+      );
+
+      if (newRec.account) {
+        bol.financialAccountId = newRec.account.id;
+      }
+
+      boletosGerados.push(bol);
+    } else {
+      // Boleto Faturado a Prazo (1 ou mais parcelas autorizadas)
+      const terms = quote?.billingTerms || order.billingTerms;
+      const count = Math.max(
+        1,
+        params.installmentsCount || terms?.installmentsCount || terms?.daysInterval?.length || 1
+      );
+      const conditionName =
+        params.customCondition || terms?.conditionName || `${count}x Faturado Boleto`;
+
+      if (terms?.customInstallments && terms.customInstallments.length > 0) {
+        // Usa as parcelas customizadas aprovadas na proposta
+        terms.customInstallments.forEach((inst) => {
+          const bol = criarBoletoTitulo({
+            orderId: order.id,
+            orderCode: order.code,
+            quoteId: quote?.id || order.sourceQuoteId,
+            quoteCode: quote?.code,
+            customerName: order.clientName,
+            customerCpfCnpj: quote?.clientCpfCnpj || (order as any).clientCpfCnpj || '000.000.000-00',
+            customerEmail: order.clientEmail,
+            customerAddress: `${order.shippingAddress.street}, ${order.shippingAddress.number} - ${order.shippingAddress.neighborhood}, ${order.shippingAddress.city}/${order.shippingAddress.state}`,
+            amount: inst.amount,
+            dueDate: inst.dueDate,
+            installmentNumber: inst.installmentNumber,
+            totalInstallments: terms.customInstallments!.length,
+            conditionName,
+            tipoCobranca: 'faturado_prazo',
+            settings,
+          });
+
+          // Integração com Contas a Receber
+          const newRec = this.createFinancialAccount(
+            {
+              type: 'receber',
+              description: `Boleto Faturado ${bol.parcelaNumero}/${bol.totalParcelas} - Pedido #${order.code}${bol.quoteCode ? ` (Orç. ${bol.quoteCode})` : ''}`,
+              entityName: bol.sacadoNome,
+              entityDocument: bol.sacadoCpfCnpj,
+              amount: bol.valorOriginal,
+              dueDate: bol.dataVencimento,
+              issueDate: bol.dataEmissao,
+              status: 'pendente',
+              categoryId: 'cat-rec-1',
+              categoryName: 'Vendas Corporativas B2B',
+              costCenterId: 'cc-1',
+              costCenterName: 'Comercial & Vendas B2B',
+              paymentMethod: `Boleto Faturado (${bol.condicaoPagamento} - Parc. ${bol.parcelaNumero}/${bol.totalParcelas})`,
+              orderCode: order.code,
+              quoteCode: bol.quoteCode,
+              notes: `Linha Digitável: ${bol.linhaDigitavel} | Nosso Número: ${bol.nossoNumero} | Parcela ${bol.parcelaNumero}/${bol.totalParcelas}`,
+              createdBy: 'system_auto',
+              createdByName: operatorName,
+            },
+            this.getCurrentUser()
+          );
+
+          if (newRec.account) {
+            bol.financialAccountId = newRec.account.id;
+          }
+
+          boletosGerados.push(bol);
+        });
+      } else {
+        // Cálculo proporcional padrão
+        const installmentValue = Number((order.total / count).toFixed(2));
+        const intervals =
+          terms?.daysInterval && terms.daysInterval.length === count
+            ? terms.daysInterval
+            : Array.from({ length: count }, (_, i) => (i + 1) * 28);
+
+        for (let i = 0; i < count; i++) {
+          const installmentNum = i + 1;
+          const days = intervals[i] || installmentNum * 28;
+          const dueDate = calcularDataVencimento(days);
+          // Ajusta centavos na última parcela se houver diferença de arredondamento
+          const amount =
+            installmentNum === count
+              ? Number((order.total - installmentValue * (count - 1)).toFixed(2))
+              : installmentValue;
+
+          const bol = criarBoletoTitulo({
+            orderId: order.id,
+            orderCode: order.code,
+            quoteId: quote?.id || order.sourceQuoteId,
+            quoteCode: quote?.code,
+            customerName: order.clientName,
+            customerCpfCnpj: quote?.clientCpfCnpj || (order as any).clientCpfCnpj || '000.000.000-00',
+            customerEmail: order.clientEmail,
+            customerAddress: `${order.shippingAddress.street}, ${order.shippingAddress.number} - ${order.shippingAddress.neighborhood}, ${order.shippingAddress.city}/${order.shippingAddress.state}`,
+            amount,
+            dueDate,
+            installmentNumber: installmentNum,
+            totalInstallments: count,
+            conditionName,
+            tipoCobranca: 'faturado_prazo',
+            settings,
+          });
+
+          // Integração com Contas a Receber
+          const newRec = this.createFinancialAccount(
+            {
+              type: 'receber',
+              description: `Boleto Faturado ${bol.parcelaNumero}/${bol.totalParcelas} - Pedido #${order.code}${bol.quoteCode ? ` (Orç. ${bol.quoteCode})` : ''}`,
+              entityName: bol.sacadoNome,
+              entityDocument: bol.sacadoCpfCnpj,
+              amount: bol.valorOriginal,
+              dueDate: bol.dataVencimento,
+              issueDate: bol.dataEmissao,
+              status: 'pendente',
+              categoryId: 'cat-rec-1',
+              categoryName: 'Vendas Corporativas B2B',
+              costCenterId: 'cc-1',
+              costCenterName: 'Comercial & Vendas B2B',
+              paymentMethod: `Boleto Faturado (${bol.condicaoPagamento} - Parc. ${bol.parcelaNumero}/${bol.totalParcelas})`,
+              orderCode: order.code,
+              quoteCode: bol.quoteCode,
+              notes: `Linha Digitável: ${bol.linhaDigitavel} | Nosso Número: ${bol.nossoNumero}`,
+              createdBy: 'system_auto',
+              createdByName: operatorName,
+            },
+            this.getCurrentUser()
+          );
+
+          if (newRec.account) {
+            bol.financialAccountId = newRec.account.id;
+          }
+
+          boletosGerados.push(bol);
+        }
+      }
+    }
+
+    // Salva boletos atualizados
+    this.saveBoletos([...boletosGerados, ...existingBoletos]);
+
+    // Anexa boletos ao pedido
+    order.boletos = boletosGerados;
+    this.updateOrder(order);
+
+    return { success: true, boletos: boletosGerados };
+  },
+
+  // Baixa Financeira / Liquidação de Boleto com Conciliação Automática no Contas a Receber
+  settleBoleto(
+    boletoId: string,
+    paidAmount?: number,
+    operatorName: string = 'Retorno Bancário Integrado'
+  ): { success: boolean; message: string; boleto?: BoletoTitulo; error?: string } {
+    const boletos = this.getBoletos();
+    const index = boletos.findIndex((b) => b.id === boletoId);
+    if (index < 0) {
+      return { success: false, message: 'Boleto não encontrado no sistema.', error: 'BOLETO_NAO_ENCONTRADO' };
+    }
+
+    const boleto = boletos[index];
+
+    // Prevenção de duplicidade
+    if (boleto.status === 'pago') {
+      return {
+        success: false,
+        message: `O boleto ${boleto.nossoNumero} já foi baixado e quitado em ${new Date(boleto.dataLiquidacao || '').toLocaleDateString('pt-BR')}.`,
+        error: 'BOLETO_JA_LIQUIDADO',
+      };
+    }
+
+    if (boleto.status === 'cancelado') {
+      return {
+        success: false,
+        message: 'Boletos cancelados não podem ser baixados.',
+        error: 'BOLETO_CANCELADO',
+      };
+    }
+
+    const liquidadoEm = new Date().toISOString();
+    const valorEfetivo = paidAmount !== undefined ? paidAmount : boleto.valorOriginal;
+
+    boleto.status = 'pago';
+    boleto.valorPago = valorEfetivo;
+    boleto.saldoAberto = 0;
+    boleto.dataLiquidacao = liquidadoEm;
+    boleto.updatedAt = liquidadoEm;
+
+    boletos[index] = boleto;
+    this.saveBoletos(boletos);
+
+    // Baixa automática no Contas a Receber (se houver lançamento vinculado)
+    if (boleto.financialAccountId) {
+      const allFinAccounts = getStored<FinancialAccount[]>(STORAGE_KEYS.FINANCIAL_ACCOUNTS, INITIAL_FINANCIAL_ACCOUNTS);
+      const finIdx = allFinAccounts.findIndex((a) => a.id === boleto.financialAccountId);
+      if (finIdx >= 0) {
+        allFinAccounts[finIdx] = {
+          ...allFinAccounts[finIdx],
+          status: 'pago',
+          paidAmount: valorEfetivo,
+          paymentDate: liquidadoEm,
+          updatedAt: liquidadoEm,
+        };
+        setStored(STORAGE_KEYS.FINANCIAL_ACCOUNTS, allFinAccounts);
+        if (typeof window !== 'undefined') {
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('mb_financial_accounts_updated', { detail: allFinAccounts }));
+            window.dispatchEvent(new Event('mb_storage_updated'));
+          }, 0);
+        }
+      }
+    }
+
+    // Verifica se todos os boletos do Pedido foram pagos para atualizar status geral do pedido
+    const orderBoletos = boletos.filter((b) => b.orderId === boleto.orderId);
+    const allPaid = orderBoletos.length > 0 && orderBoletos.every((b) => b.status === 'pago');
+    if (allPaid) {
+      const orders = this.getOrders();
+      const orderIdx = orders.findIndex((o) => o.id === boleto.orderId);
+      if (orderIdx >= 0) {
+        orders[orderIdx].paymentStatus = 'pago';
+        orders[orderIdx].updatedAt = liquidadoEm;
+        this.saveOrders(orders);
+      }
+    }
+
+    // Auditoria de segurança e conciliação financeira
+    this.addFinancialAuditEntry({
+      userId: 'bank_webhook',
+      userName: operatorName,
+      userEmail: 'financeiro@mbpersonaliza.com.br',
+      userRole: 'admin',
+      operation: 'BAIXA_BOLETO_BANCARIO',
+      affectedRecordId: boleto.id,
+      affectedRecordType: 'boleto_titulo',
+      result: 'sucesso',
+      details: `Baixa e liquidação do boleto ${boleto.nossoNumero} (Pedido #${boleto.orderCode}, Valor: R$ ${valorEfetivo.toFixed(2)}). Status financeiro sincronizado sem duplicidade.`,
+      origin: 'web_painel',
+    });
+
+    return {
+      success: true,
+      message: `Boleto ${boleto.nossoNumero} baixado com sucesso! Saldo quitado e Contas a Receber atualizado.`,
+      boleto,
+    };
+  },
+
+  // Cancelamento de Boleto
+  cancelBoleto(
+    boletoId: string,
+    reason: string,
+    operatorName: string = 'Administrador'
+  ): { success: boolean; message: string; error?: string } {
+    const boletos = this.getBoletos();
+    const index = boletos.findIndex((b) => b.id === boletoId);
+    if (index < 0) {
+      return { success: false, message: 'Boleto não encontrado.', error: 'NOT_FOUND' };
+    }
+
+    const boleto = boletos[index];
+    if (boleto.status === 'pago') {
+      return { success: false, message: 'Não é possível cancelar um boleto já quitado.', error: 'ALREADY_PAID' };
+    }
+
+    boleto.status = 'cancelado';
+    boleto.updatedAt = new Date().toISOString();
+    boletos[index] = boleto;
+    this.saveBoletos(boletos);
+
+    // Cancela no Contas a Receber se vinculado
+    if (boleto.financialAccountId) {
+      this.cancelFinancialAccount(boleto.financialAccountId, reason, this.getCurrentUser());
+    }
+
+    this.addFinancialAuditEntry({
+      userId: 'admin_sys',
+      userName: operatorName,
+      userEmail: 'financeiro@mbpersonaliza.com.br',
+      userRole: 'admin',
+      operation: 'CANCELAR_BOLETO_BANCARIO',
+      affectedRecordId: boleto.id,
+      affectedRecordType: 'boleto_titulo',
+      result: 'sucesso',
+      details: `Boleto ${boleto.nossoNumero} cancelado por ${operatorName}. Motivo: ${reason}`,
+      origin: 'web_painel',
+    });
+
+    return { success: true, message: `Boleto ${boleto.nossoNumero} cancelado com sucesso.` };
   },
 
   // ==========================================

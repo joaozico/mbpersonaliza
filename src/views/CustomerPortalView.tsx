@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { UserProfile, Order, Quote } from '../types';
+import { UserProfile, Order, Quote, BoletoTitulo } from '../types';
 import { StorageService } from '../services/storage';
 import { SEOHead } from '../components/SEOHead';
+import { BoletoModal } from '../components/BoletoModal';
 import {
   User,
   Package,
@@ -20,6 +21,7 @@ import {
   Building,
   MapPin,
   Sparkles,
+  FileText,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -37,6 +39,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
   const [activeTab, setActiveTab] = useState<'orders' | 'quotes' | 'profile'>('orders');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [selectedQuote, setSelectedQuote] = useState<Quote | null>(null);
+  const [activeBoletosModal, setActiveBoletosModal] = useState<BoletoTitulo[] | null>(null);
 
   // Profile form state
   const [name, setName] = useState(currentUser.name);
@@ -53,12 +56,24 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
   const [zip, setZip] = useState(currentUser.address?.zip || '');
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  const orders = StorageService.getOrders().filter(
-    (o) => o.clientId === currentUser.id || o.clientEmail === currentUser.email
+  const [orders, setOrders] = useState<Order[]>(() =>
+    StorageService.getOrders().filter(
+      (o) => o.clientId === currentUser.id || o.clientEmail === currentUser.email
+    )
   );
-  const quotes = StorageService.getQuotes().filter(
-    (q) => q.clientId === currentUser.id || q.clientEmail === currentUser.email
+  const [quotes, setQuotes] = useState<Quote[]>(() =>
+    StorageService.getQuotes().filter(
+      (q) => q.clientId === currentUser.id || q.clientEmail === currentUser.email
+    )
   );
+
+  const refreshOrders = () => {
+    setOrders(
+      StorageService.getOrders().filter(
+        (o) => o.clientId === currentUser.id || o.clientEmail === currentUser.email
+      )
+    );
+  };
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
@@ -286,6 +301,103 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
                     ))}
                   </div>
 
+                  {/* Shipping Info & Freight Proposal Response Banner */}
+                  {order.shippingInfo && (
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                          <Truck className="w-4 h-4 text-[#00AEEF]" />
+                          <span>Entrega: {order.shippingInfo.methodName}</span>
+                          {order.shippingInfo.carrierName && (
+                            <span className="text-[11px] font-normal text-slate-500">
+                              ({order.shippingInfo.carrierName})
+                            </span>
+                          )}
+                        </div>
+
+                        <div>
+                          {order.shippingInfo.freightStatus === 'aguardando_cotacao' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-blue-100 text-blue-800">
+                              Aguardando Cotação de Frete
+                            </span>
+                          )}
+                          {order.shippingInfo.freightStatus === 'proposta_enviada' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-100 text-amber-800">
+                              Proposta de Frete Disponível para Aprovação
+                            </span>
+                          )}
+                          {order.shippingInfo.freightStatus === 'aprovado' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800">
+                              Frete Aprovado
+                            </span>
+                          )}
+                          {order.shippingInfo.freightStatus === 'recusado' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-rose-100 text-rose-800">
+                              Proposta Recusada
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {order.shippingInfo.freightStatus === 'proposta_enviada' && (
+                        <div className="p-3 bg-white rounded-lg border border-amber-200 space-y-2 mt-2">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <div>
+                              <p className="font-bold text-slate-900 text-xs">
+                                Proposta de Transporte: R$ {(order.shippingInfo.negotiatedCost || 0).toFixed(2)}
+                              </p>
+                              <p className="text-[11px] text-slate-500">
+                                Transportadora: {order.shippingInfo.negotiatedCarrier || 'Parceira'} • Prazo estimado: {order.shippingInfo.negotiatedDeadlineDays || 3} dias úteis
+                              </p>
+                              {order.shippingInfo.proposalNotes && (
+                                <p className="text-[11px] text-slate-600 mt-1 italic">
+                                  "{order.shippingInfo.proposalNotes}"
+                                </p>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  StorageService.updateOrderShipping(order.id, {
+                                    freightStatus: 'aprovado',
+                                    actorName: currentUser.name,
+                                    actionDescription: 'Cliente aprovou a proposta de frete diretamente na área do cliente.',
+                                  });
+                                  setOrders(StorageService.getOrders().filter((o) => o.clientId === currentUser.id));
+                                  alert('Frete aprovado com sucesso! A expedição foi comunicada.');
+                                }}
+                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                              >
+                                Aprovar Frete
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const reason = prompt('Informe o motivo da recusa da cotação:');
+                                  if (reason) {
+                                    StorageService.updateOrderShipping(order.id, {
+                                      freightStatus: 'recusado',
+                                      customerResponseNotes: reason,
+                                      actorName: currentUser.name,
+                                      actionDescription: `Cliente recusou o frete: ${reason}`,
+                                    });
+                                    setOrders(StorageService.getOrders().filter((o) => o.clientId === currentUser.id));
+                                    alert('Recusa registrada. Nossa equipe entrará em contato para negociar nova alternativa.');
+                                  }
+                                }}
+                                className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                              >
+                                Recusar
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Footer with totals & Tracking code */}
                   <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                     <div className="flex items-center gap-4 text-slate-600">
@@ -301,12 +413,55 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
                     </div>
 
                     <div className="text-right">
+                      {order.shippingCost > 0 && (
+                        <div className="text-[11px] text-slate-500">
+                          Frete: R$ {order.shippingCost.toFixed(2)}
+                        </div>
+                      )}
                       <span className="text-slate-500 mr-2">Valor Total:</span>
                       <span className="text-base font-extrabold text-slate-900 font-heading">
                         R$ {order.total.toFixed(2)}
                       </span>
                     </div>
                   </div>
+
+                  {(order.paymentMethod === 'boleto' || order.paymentMethod === 'boleto_faturado') && (
+                    <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-indigo-50/50 -mx-5 -mb-5 p-4 rounded-b-2xl border-t">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-indigo-700" />
+                        <div>
+                          <span className="font-bold text-xs text-indigo-950 block">
+                            {order.paymentMethod === 'boleto_faturado'
+                              ? `Boleto Faturado a Prazo (${order.billingTerms?.conditionName || 'Faturado'})`
+                              : 'Boleto Bancário à Vista'}
+                          </span>
+                          <span className="text-[11px] text-indigo-700">
+                            {order.paymentStatus === 'pago'
+                              ? 'Título quitado com confirmação bancária.'
+                              : 'Aguardando pagamento / conciliação bancária.'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const orderBoletos = StorageService.getBoletosByOrderId(order.id);
+                          if (orderBoletos.length > 0) {
+                            setActiveBoletosModal(orderBoletos);
+                          } else if (order.boletos && order.boletos.length > 0) {
+                            setActiveBoletosModal(order.boletos);
+                          } else {
+                            alert('Boleto bancário em processamento no sistema financeiro.');
+                          }
+                        }}
+                        className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer w-fit"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>Visualizar Boleto(s)</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -393,6 +548,30 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
                         <p className="text-[11px] text-sky-800 font-medium pt-1">
                           ⏱️ Prazo estimado de produção: <strong>{quote.productionDaysEstimate} dias úteis</strong> • Validade da proposta: <strong>{quote.validityDate || '15 dias'}</strong>
                         </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Condições de Pagamento Negociadas */}
+                  {quote.billingTerms && (
+                    <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-indigo-700 shrink-0" />
+                        <div>
+                          <span className="font-bold text-indigo-950 block">
+                            Condição Comercial: {quote.billingTerms.conditionName}
+                          </span>
+                          <span className="text-[11px] text-indigo-700">
+                            {quote.billingTerms.type === 'faturado_prazo' && quote.billingTerms.isDeferredAuthorized
+                              ? `Faturamento a Prazo Autorizado (${quote.billingTerms.installmentsCount}x parcela(s))`
+                              : 'Boleto Bancário à Vista (Vencimento padrão em 2 dias úteis)'}
+                          </span>
+                        </div>
+                      </div>
+                      {quote.billingTerms.isDeferredAuthorized && (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-purple-100 text-purple-800 border border-purple-200 w-fit">
+                          Prazo Autorizado
+                        </span>
                       )}
                     </div>
                   )}
@@ -601,6 +780,22 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
             </button>
           </div>
         </form>
+      )}
+
+      {/* Modal Visual do Boleto Bancário */}
+      {activeBoletosModal && (
+        <BoletoModal
+          boletos={activeBoletosModal}
+          onClose={() => setActiveBoletosModal(null)}
+          onBoletoSettled={(updated) => {
+            setActiveBoletosModal([updated]);
+            setOrders(
+              StorageService.getOrders().filter(
+                (o) => o.clientId === currentUser.id || o.clientEmail === currentUser.email
+              )
+            );
+          }}
+        />
       )}
     </div>
   );

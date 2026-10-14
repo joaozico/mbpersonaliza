@@ -50,6 +50,11 @@ export interface RolePermissions {
   canManageRecurringTransactions: boolean;
   canManageFinancialSettings: boolean;
   canViewFinancialAudit: boolean;
+  // Configurações de Atendimento e Entrega
+  canManageDeliverySettings?: boolean;
+  // Regras de Faturamento e Boletos
+  canConfigureBoletoRules?: boolean;
+  canAuthorizeDeferredBoleto?: boolean;
 }
 
 export type PermissionKey = keyof RolePermissions;
@@ -63,6 +68,127 @@ export interface WhatsAppContact {
   customMessage?: string; // ex: 'Olá! Gostaria de falar sobre orçamentos de brindes.'
   isDefault?: boolean; // Número principal
   active?: boolean;
+}
+
+// ==========================================
+// CONFIGURAÇÕES DE ATENDIMENTO E FORMAS DE ENTREGA
+// ==========================================
+export type ServiceCoverageType = 'municipal' | 'estadual' | 'nacional';
+
+export interface CoverageExceptionItem {
+  id: string;
+  type: 'allow_city' | 'allow_zip_range' | 'block_city';
+  name: string;
+  state: string;
+  city?: string;
+  startZip?: string;
+  endZip?: string;
+}
+
+export interface MunicipalCoverageConfig {
+  state: string; // ex: 'SP'
+  city: string; // ex: 'São Paulo'
+  exceptions: CoverageExceptionItem[];
+}
+
+export interface StateCoverageConfig {
+  state: string; // ex: 'SP'
+  exceptions: CoverageExceptionItem[];
+}
+
+export interface ServiceRegionSettings {
+  coverageType: ServiceCoverageType;
+  municipalConfig: MunicipalCoverageConfig;
+  stateConfig: StateCoverageConfig;
+  allowPickupOutOfCoverage: boolean; // Permitir que cliente fora da área escolha 'Retirada no estabelecimento'
+  blockedMessageCustom?: string;
+  updatedAt: string;
+}
+
+export type ShippingMethodType = 'correios' | 'transportadora' | 'retirada' | 'personalizado';
+
+export interface ShippingMethodItem {
+  id: string;
+  name: string; // ex: 'Correios SEDEX', 'Transportadora — Frete a Combinar', 'Retirada no Estabelecimento'
+  description: string;
+  type: ShippingMethodType;
+  enabled: boolean;
+  order: number; // Ordem de exibição na finalização da compra
+  coverageScope: 'inherit' | 'municipal' | 'estadual' | 'nacional' | 'custom_states';
+  allowedStates?: string[]; // Quando coverageScope === 'custom_states'
+  fixedPrice?: number;
+  estimatedDays?: number;
+  freeShippingAbove?: number;
+  correiosServiceCode?: '04014' | '04510' | '04782' | '04790' | '38202' | string;
+  correiosAdditionalDays?: number;
+  carrierOptions?: string[]; // e.g. ['Braspress', 'Jadlog', 'Total Express', 'Rodonaves']
+  pickupAddress?: string;
+  pickupInstructions?: string;
+  pickupHours?: string;
+  pickupReadyCondition?: string;
+  rulesNotes?: string;
+}
+
+export interface CorreiosIntegrationConfig {
+  enabled: boolean;
+  originZip: string; // CEP de origem da MB Personaliza (ex: '05303-000')
+  useContract: boolean;
+  user?: string; // Usuário CWS / Meu Correios
+  passwordOrToken?: string; // Token CWS / Chave de Acesso
+  contractNumber?: string;
+  postageCard?: string;
+  serviceSedexCode?: string; // 04014 ou código contratual
+  servicePacCode?: string; // 04510 ou código contratual
+  additionalHandlingDays?: number;
+  insuranceDeclaredValue?: boolean;
+  statusNotes?: string;
+}
+
+export interface DeliveryAndShippingSettings {
+  serviceRegion: ServiceRegionSettings;
+  correiosConfig: CorreiosIntegrationConfig;
+  methods: ShippingMethodItem[];
+  carriersList: string[]; // Lista de transportadoras parceiras cadastradas
+  updatedAt: string;
+}
+
+export interface ProductShippingDimensions {
+  weightKg: number; // Peso líquido com embalagem em kg (mínimo 0.05kg)
+  heightCm: number; // Altura em cm (mínimo 2cm)
+  widthCm: number; // Largura em cm (mínimo 11cm)
+  lengthCm: number; // Comprimento em cm (mínimo 16cm)
+  unitsPerPackage?: number;
+  specialPackaging?: boolean;
+  shippingRestrictions?: 'none' | 'only_local' | 'no_correios';
+}
+
+export interface OrderShippingHistoryEntry {
+  id: string;
+  date: string;
+  action: string;
+  actor: string;
+  details: string;
+}
+
+export interface OrderShippingInfo {
+  methodId: string;
+  methodName: string;
+  methodType: ShippingMethodType;
+  carrierName?: string;
+  originZip?: string;
+  destinationZip?: string;
+  cost: number;
+  estimatedDeliveryDays?: number;
+  estimatedDeliveryDate?: string;
+  freightStatus?: 'aguardando_cotacao' | 'proposta_enviada' | 'aprovado' | 'recusado' | 'definido';
+  negotiatedCost?: number;
+  negotiatedCarrier?: string;
+  negotiatedDeadlineDays?: number;
+  proposalNotes?: string;
+  customerResponseNotes?: string;
+  proposalSentAt?: string;
+  customerRespondedAt?: string;
+  history?: OrderShippingHistoryEntry[];
 }
 
 export interface CompanySettings {
@@ -116,6 +242,7 @@ export interface CompanySettings {
   pixDiscountPercent?: number;
   tradeName?: string;
   shippingNotes?: string;
+  deliverySettings?: DeliveryAndShippingSettings;
   maintenance?: MaintenanceSettings;
   updatedAt: string;
 }
@@ -261,6 +388,7 @@ export interface Product {
   offersBannerBadge?: string;
   offerStartDate?: string;
   offerEndDate?: string;
+  shippingDimensions?: ProductShippingDimensions;
 }
 
 export interface StockMovement {
@@ -314,6 +442,7 @@ export interface Quote {
   productionDaysEstimate?: number;
   validityDate?: string;
   paymentTerms?: string;
+  billingTerms?: QuoteBillingTerms;
   createdAt: string;
   updatedAt?: string;
 }
@@ -353,13 +482,16 @@ export interface Order {
   subtotal: number;
   discount: number;
   shippingCost: number;
+  shippingInfo?: OrderShippingInfo;
   total: number;
-  paymentMethod: 'pix' | 'credit_card' | 'boleto' | 'faturado_pj';
+  paymentMethod: 'pix' | 'credit_card' | 'boleto' | 'boleto_faturado' | 'faturado_pj';
   paymentStatus: 'pago' | 'pendente' | 'aprovado' | 'cancelado';
   orderStatus: 'novo' | 'em_producao' | 'pronto' | 'entregue' | 'cancelado';
   sourceQuoteId?: string;
   trackingCode?: string;
   notes?: string;
+  billingTerms?: QuoteBillingTerms;
+  boletos?: BoletoTitulo[];
   createdAt: string;
   updatedAt?: string;
 }
@@ -1241,6 +1373,111 @@ export interface BackupVerificationResult {
   errors: string[];
   warnings: string[];
 }
+
+// ==========================================
+// REGRAS DE BOLETO BANCÁRIO & FATURAMENTO A PRAZO
+// ==========================================
+
+export type BoletoStatus = 'pendente' | 'pago' | 'vencido' | 'cancelado';
+export type BoletoTipoCobranca = 'a_vista' | 'faturado_prazo';
+
+export interface BoletoTitulo {
+  id: string; // ex: bol-2026-0001
+  nossoNumero: string; // ex: 109/98234123-5
+  linhaDigitavel: string; // 34191.79001 01043.510047 91020.150008 8 98450000015000
+  codigoBarras: string; // 44 dígitos FEBRABAN
+  bancoEmissor: string; // "341 - Banco Itaú S.A."
+  bancoCodigo: string; // "341"
+  carteira: string; // "109"
+  especieDoc: string; // "DM" (Duplicata Mercantil)
+  aceite: string; // "N"
+  dataEmissao: string; // ISO
+  dataVencimento: string; // YYYY-MM-DD
+  dataProcessamento: string; // ISO
+  valorOriginal: number;
+  valorPago?: number;
+  saldoAberto: number;
+  dataLiquidacao?: string;
+  status: BoletoStatus;
+  tipoCobranca: BoletoTipoCobranca;
+  parcelaNumero: number;
+  totalParcelas: number;
+  condicaoPagamento: string; // "À Vista" | "28 DDL" | "30/60 DDL" | etc.
+  
+  // Vínculos com o ecossistema comercial e financeiro
+  orderId: string;
+  orderCode: string;
+  quoteId?: string;
+  quoteCode?: string;
+  financialAccountId?: string; // ID do título correspondente no Contas a Receber
+  
+  // Dados do Sacado (Cliente)
+  sacadoNome: string;
+  sacadoCpfCnpj: string;
+  sacadoTipo: 'PF' | 'PJ';
+  sacadoEndereco?: string;
+  sacadoEmail?: string;
+  
+  // Dados do Beneficiário (MB Personaliza)
+  beneficiarioNome: string;
+  beneficiarioCnpj: string;
+  beneficiarioEndereco: string;
+  
+  // Encargos & Instruções
+  multaPercentual: number;
+  jurosMensalPercentual: number;
+  instrucoes: string[];
+  
+  // Auditoria
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QuoteBillingInstallment {
+  installmentNumber: number;
+  amount: number;
+  dueDate: string; // YYYY-MM-DD
+  daysFromApproval?: number;
+  notes?: string;
+}
+
+export interface QuoteBillingTerms {
+  type: BoletoTipoCobranca;
+  isDeferredAuthorized: boolean; // Autorizado pelo gestor comercial/financeiro
+  conditionName: string; // ex: "28 DDL", "30/60 DDL", "À Vista"
+  daysInterval: number[]; // ex: [28] ou [30, 60] ou [30, 60, 90]
+  installmentsCount: number; // 1, 2, 3, etc.
+  customInstallments?: QuoteBillingInstallment[];
+  
+  // Alçada e Aprovações
+  commercialApprovalStatus: 'pendente' | 'aprovado' | 'rejeitado';
+  commercialApprovedBy?: string;
+  commercialApprovedAt?: string;
+  financialApprovalStatus: 'pendente' | 'aprovado' | 'rejeitado' | 'dispensado';
+  financialApprovedBy?: string;
+  financialApprovedAt?: string;
+  notes?: string;
+}
+
+export interface BoletoBillingSettings {
+  cashBoletoDueDays: number; // Dias padrão de vencimento para boleto à vista (ex: 2)
+  allowDeferredForCommercialProposals: boolean; // Habilitar prazo para propostas comerciais
+  allowDeferredForCustomQuotes: boolean; // Habilitar prazo para orçamentos personalizados
+  maxDeferredDays: number; // Prazo máximo de vencimento (ex: 90 dias)
+  maxInstallments: number; // Quantidade máxima de parcelas (ex: 6)
+  requireFinancialApprovalOverAmount: number; // Valor limite para aprovação financeira obrigatória (ex: 5000)
+  requireFinancialApprovalForDeferred: boolean; // Exigir aprovação financeira sempre que houver faturamento a prazo
+  standardPaymentTerms: string[]; // ["À Vista", "14 DDL", "28 DDL", "30/60 DDL", "30/60/90 DDL", "Personalizado"]
+  defaultBankName: string; // "341 - Banco Itaú Unibanco S.A."
+  defaultBankCode: string; // "341"
+  carteira: string; // "109"
+  finePercent: number; // 2.0%
+  monthlyInterestPercent: number; // 1.0%
+  commonPurchaseNoticeText: string;
+  updatedAt: string;
+  updatedBy?: string;
+}
+
 
 
 

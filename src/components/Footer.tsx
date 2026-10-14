@@ -292,7 +292,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
                   <QrCode className="w-3.5 h-3.5" /> PIX
                 </span>
                 <span className="flex items-center gap-1 px-2 py-1 rounded bg-slate-900 text-slate-300 border border-slate-800">
-                  <CreditCard className="w-3.5 h-3.5 text-sky-400" /> Cartão até 12x
+                  <CreditCard className="w-3.5 h-3.5 text-sky-400" /> Cartão
                 </span>
               </div>
             ) : <div />}

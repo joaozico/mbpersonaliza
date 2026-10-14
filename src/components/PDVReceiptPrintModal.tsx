@@ -41,7 +41,7 @@ export const PDVReceiptPrintModal: React.FC<PDVReceiptPrintModalProps> = ({
   const [paperFormat, setPaperFormat] = useState<'termica_80mm' | 'a4_documento'>('termica_80mm');
   const [copied, setCopied] = useState(false);
 
-  // Keyboard shortcut listener: Ctrl+P or Enter to print, Esc to close
+  // Keyboard shortcut listener: Enter or P to print, F2 to start new sale, Esc to close
   useEffect(() => {
     if (!isOpen) return;
 
@@ -49,7 +49,17 @@ export const PDVReceiptPrintModal: React.FC<PDVReceiptPrintModalProps> = ({
       if (e.key === 'Escape') {
         e.preventDefault();
         onClose();
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+      } else if (e.key === 'F2') {
+        e.preventDefault();
+        if (onNewSale) {
+          onNewSale();
+        }
+        onClose();
+      } else if (
+        ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') ||
+        (e.key.toLowerCase() === 'p' && (e.target as HTMLElement)?.tagName !== 'INPUT') ||
+        e.key === 'Enter'
+      ) {
         e.preventDefault();
         handleTriggerPrint();
       }
@@ -57,7 +67,7 @@ export const PDVReceiptPrintModal: React.FC<PDVReceiptPrintModalProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, sale, printType, paperFormat]);
+  }, [isOpen, sale, printType, paperFormat, onClose, onNewSale]);
 
   if (!isOpen || !sale) return null;
 
@@ -640,9 +650,10 @@ export const PDVReceiptPrintModal: React.FC<PDVReceiptPrintModalProps> = ({
                     onNewSale();
                   }}
                   className="px-4 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="Fechar e Iniciar Nova Venda (Atalho F2 ou Esc)"
                 >
                   <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Nova Venda</span>
+                  <span>Nova Venda (F2)</span>
                 </button>
               )}
 
@@ -650,10 +661,10 @@ export const PDVReceiptPrintModal: React.FC<PDVReceiptPrintModalProps> = ({
                 type="button"
                 onClick={handleTriggerPrint}
                 className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#00AEEF] to-[#E6007E] hover:opacity-95 text-white text-xs font-extrabold uppercase shadow-lg transition-all flex items-center gap-2 cursor-pointer"
-                title="Imprimir com a API nativa do navegador (Ctrl+P ou Enter)"
+                title="Imprimir com a impressora padrão (Enter ou P)"
               >
                 <Printer className="w-4 h-4 text-white" />
-                <span>Imprimir Cupom (Enter)</span>
+                <span>Imprimir Cupom (Enter / P)</span>
               </button>
             </div>
           </div>

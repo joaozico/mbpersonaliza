@@ -20,8 +20,12 @@ import { PaymentTransactionsTab } from './PaymentTransactionsTab';
 import { CashRegisterTab } from './CashRegisterTab';
 import { FinancialModuleView } from './FinancialModuleView';
 import { DisasterRecoveryBackupTab } from './DisasterRecoveryBackupTab';
+import { DeliverySettingsTab } from './DeliverySettingsTab';
+import { DeliveryOrdersTab } from './DeliveryOrdersTab';
+import { BoletoBillingManagementTab } from './BoletoBillingManagementTab';
 import { SEOHead } from '../components/SEOHead';
 import {
+  FileText,
   LayoutDashboard,
   Package,
   FileSpreadsheet,
@@ -85,9 +89,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     | 'products'
     | 'quotes'
     | 'orders'
+    | 'delivery_orders'
     | 'stock'
     | 'users'
     | 'company'
+    | 'delivery_settings'
     | 'layout'
     | 'offers_banner'
     | 'metrics'
@@ -96,6 +102,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     | 'transactions'
     | 'cash_register'
     | 'financial'
+    | 'boletos'
     | 'backup'
   >('dashboard');
 
@@ -120,6 +127,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const canViewSiteMetrics = StorageService.hasUserPermission(currentUser, 'canViewSiteMetrics');
   const canManageUsers = StorageService.hasUserPermission(currentUser, 'canManageUsers');
   const canManageCompany = StorageService.hasUserPermission(currentUser, 'canManageCompanySettings');
+  const canManageDelivery = StorageService.hasUserPermission(currentUser, 'canManageDeliverySettings') || StorageService.hasUserPermission(currentUser, 'canManageCompanySettings');
   const canCustomizeLayout = StorageService.hasUserPermission(currentUser, 'canCustomizeLayout');
   const canManageProducts = StorageService.hasUserPermission(currentUser, 'canManageProducts');
   const canManageQuotes = StorageService.hasUserPermission(currentUser, 'canManageQuotes');
@@ -138,6 +146,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [quoteAdminNotes, setQuoteAdminNotes] = useState('');
   const [quoteProductionDays, setQuoteProductionDays] = useState(10);
   const [quoteItemPrices, setQuoteItemPrices] = useState<{ [itemId: string]: number }>({});
+  // Quote Billing Configuration State
+  const [quoteBillingType, setQuoteBillingType] = useState<'a_vista' | 'faturado_prazo'>('a_vista');
+  const [quoteIsDeferredAuthorized, setQuoteIsDeferredAuthorized] = useState(false);
+  const [quoteConditionName, setQuoteConditionName] = useState('28 DDL');
+  const [quoteInstallmentsCount, setQuoteInstallmentsCount] = useState(1);
+  const [quoteDaysInterval, setQuoteDaysInterval] = useState<number[]>([28]);
+  const [quoteCreditApprovalNotes, setQuoteCreditApprovalNotes] = useState('');
 
   // Quick Stock Adjustment Modal State
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
@@ -302,6 +317,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       initialPrices[item.id] = item.unit_price_estimated || 25.0;
     });
     setQuoteItemPrices(initialPrices);
+
+    // Inicializa condições de pagamento / faturamento
+    const terms = quote.billingTerms;
+    if (terms) {
+      setQuoteBillingType(terms.type || 'a_vista');
+      setQuoteIsDeferredAuthorized(Boolean(terms.isDeferredAuthorized));
+      setQuoteConditionName(terms.conditionName || '28 DDL');
+      setQuoteInstallmentsCount(terms.installmentsCount || 1);
+      setQuoteDaysInterval(terms.daysInterval || [28]);
+      setQuoteCreditApprovalNotes(terms.notes || '');
+    } else {
+      setQuoteBillingType('a_vista');
+      setQuoteIsDeferredAuthorized(false);
+      setQuoteConditionName('À Vista (2 dias úteis)');
+      setQuoteInstallmentsCount(1);
+      setQuoteDaysInterval([2]);
+      setQuoteCreditApprovalNotes('');
+    }
   };
 
   const handleSaveQuoteResponse = (e: React.FormEvent) => {
@@ -318,6 +351,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       };
     });
 
+    const isDeferred = quoteBillingType === 'faturado_prazo';
+    const isAuthorized = isDeferred ? quoteIsDeferredAuthorized : false;
+
+    const billingTerms = {
+      type: quoteBillingType,
+      isDeferredAuthorized: isAuthorized,
+      conditionName: isDeferred ? quoteConditionName : 'À Vista (2 dias úteis)',
+      daysInterval: isDeferred ? quoteDaysInterval : [2],
+      installmentsCount: isDeferred ? quoteInstallmentsCount : 1,
+      commercialApprovalStatus: 'aprovado' as const,
+      commercialApprovedBy: currentUser.name,
+      commercialApprovedAt: new Date().toISOString(),
+      financialApprovalStatus: (isAuthorized ? 'aprovado' : 'dispensado') as 'aprovado' | 'dispensado',
+      financialApprovedBy: isAuthorized ? currentUser.name : undefined,
+      financialApprovedAt: isAuthorized ? new Date().toISOString() : undefined,
+      notes: quoteCreditApprovalNotes,
+    };
+
     const updatedQuote: Quote = {
       ...answeringQuote,
       items: updatedItems,
@@ -326,6 +377,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       productionDaysEstimate: quoteProductionDays,
       validityDate: '15 dias corridos',
       status: 'respondido',
+      billingTerms,
     };
 
     StorageService.updateQuote(updatedQuote);
@@ -335,11 +387,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   const handleConvertQuoteToOrder = (quoteId: string) => {
-    if (confirm('Deseja converter esta cotação em um Pedido ativo de produção?')) {
-      const order = StorageService.convertQuoteToOrder(quoteId, 'faturado_pj');
+    const q = quotes.find((item) => item.id === quoteId);
+    if (!q) return;
+
+    if (q.status === 'recusado' || q.status === 'cancelado') {
+      alert('Esta proposta está cancelada ou recusada e não pode ser convertida em pedido.');
+      return;
+    }
+
+    const isDeferred = Boolean(q.billingTerms?.isDeferredAuthorized && q.billingTerms?.type === 'faturado_prazo');
+
+    const msg = isDeferred
+      ? `Converter cotação ${q.code} em Pedido com Faturamento a Prazo Autorizado (${q.billingTerms?.conditionName})? Boletos e títulos no Contas a Receber serão gerados automaticamente.`
+      : `Converter cotação ${q.code} em Pedido com Boleto à Vista? O boleto será gerado e integrado ao Contas a Receber.`;
+
+    if (confirm(msg)) {
+      const order = StorageService.convertQuoteToOrder(quoteId, isDeferred ? 'boleto_faturado' : 'boleto');
       if (order) {
         refreshAll();
-        alert(`Pedido ${order.code} gerado com sucesso a partir da cotação!`);
+        alert(`Pedido ${order.code} gerado com sucesso com integração financeira concluída!`);
       }
     }
   };
@@ -564,6 +630,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               <option value="transactions">Transações & Pagamentos</option>
               <option value="gateways">Gateways de Pagamento (Mercado Pago / PagBank)</option>
               <option value="cash_register">Controle de Caixa</option>
+              <option value="boletos">Boletos & Faturamento a Prazo (FEBRABAN)</option>
             </optgroup>
             <optgroup label="Configurações & Integrações">
               <option value="stricker">Integração Stricker / SPOT</option>
@@ -640,6 +707,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 {inProductionOrders > 0 && (
                   <span className="w-5 h-5 rounded-full bg-[#00AEEF] text-white text-[10px] flex items-center justify-center font-bold">
                     {inProductionOrders}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setActiveTab('delivery_orders')}
+                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                  activeTab === 'delivery_orders'
+                    ? 'bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <Truck className="w-4 h-4 text-emerald-400" />
+                <span>Entregas & Fretes</span>
+                {orders.filter((o) => o.shippingInfo?.freightStatus === 'aguardando_cotacao').length > 0 && (
+                  <span className="w-5 h-5 rounded-full bg-blue-500 text-white text-[10px] flex items-center justify-center font-bold">
+                    {orders.filter((o) => o.shippingInfo?.freightStatus === 'aguardando_cotacao').length}
                   </span>
                 )}
               </button>
@@ -725,6 +809,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <Store className="w-4 h-4 text-amber-500" />
                 <span>Controle de Caixa</span>
               </button>
+
+              <button
+                onClick={() => setActiveTab('boletos')}
+                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                  activeTab === 'boletos'
+                    ? 'bg-gradient-to-r from-indigo-700 to-indigo-900 text-white shadow-sm ring-2 ring-indigo-400/40'
+                    : 'text-indigo-950 bg-indigo-50/70 hover:bg-indigo-100 border border-indigo-200/70'
+                }`}
+                title="Boletos Bancários & Faturamento a Prazo (Regras FEBRABAN)"
+              >
+                <FileText className={`w-4 h-4 ${activeTab === 'boletos' ? 'text-[#FFDD00]' : 'text-indigo-600'}`} />
+                <span>Boletos & Faturamento</span>
+                <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase bg-indigo-600 text-white tracking-wider">
+                  FEBRABAN
+                </span>
+              </button>
             </>
           )}
 
@@ -809,6 +909,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 >
                   <Building2 className="w-4 h-4 text-[#00AEEF]" />
                   <span>Dados da Empresa</span>
+                </button>
+              )}
+
+              {canManageDelivery && (
+                <button
+                  onClick={() => setActiveTab('delivery_settings')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'delivery_settings'
+                      ? 'bg-gradient-to-r from-sky-600 to-blue-700 text-white shadow-xs'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <Truck className="w-4 h-4 text-[#FFDD00]" />
+                  <span>Região & Fretes</span>
                 </button>
               )}
 
@@ -1937,6 +2051,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       )}
 
+      {/* TAB: GESTÃO DE ENTREGAS & FRETES */}
+      {activeTab === 'delivery_orders' && (
+        <DeliveryOrdersTab
+          orders={orders}
+          onRefreshData={refreshAll}
+        />
+      )}
+
       {/* TAB 6: USER MANAGEMENT & PERMISSIONS MATRIX */}
       {activeTab === 'users' && canManageUsers && (
         <UserManagementTab currentUser={currentUser} />
@@ -1945,6 +2067,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       {/* TAB 7: COMPANY SETTINGS & LOGO */}
       {activeTab === 'company' && canManageCompany && (
         <CompanySettingsTab currentUser={currentUser} onNavigate={onNavigate} />
+      )}
+
+      {/* TAB: CONFIGURAÇÕES DE ATENDIMENTO E ENTREGA */}
+      {activeTab === 'delivery_settings' && canManageDelivery && (
+        <DeliverySettingsTab />
       )}
 
       {/* TAB: SYSTEM LAYOUT CUSTOMIZATION */}
@@ -1988,6 +2115,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           currentUser={currentUser}
           onNavigate={onNavigate}
         />
+      )}
+
+      {/* TAB: BOLETOS BANCÁRIOS & FATURAMENTO A PRAZO (FEBRABAN) */}
+      {activeTab === 'boletos' && (
+        <BoletoBillingManagementTab currentUser={currentUser} />
       )}
 
       {/* TAB 14: BACKUP AGENDADO & RECUPERAÇÃO DE DESASTRES (JSON SEGURO) */}
@@ -2491,6 +2623,187 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 )}
               </div>
 
+              {/* DADOS LOGÍSTICOS E DIMENSÕES PARA CÁLCULO DE FRETE */}
+              <div className="p-4 sm:p-5 rounded-2xl border border-sky-200 bg-sky-50/50 space-y-4">
+                <div className="flex items-center gap-2.5">
+                  <span className="p-2 rounded-xl bg-[#00AEEF] text-white shadow-xs">
+                    <Truck className="w-4 h-4" />
+                  </span>
+                  <div>
+                    <h4 className="text-xs font-black uppercase text-slate-900 tracking-wider">
+                      Dimensões & Logística para Cálculo de Frete (Correios e Transportadoras)
+                    </h4>
+                    <p className="text-[11px] text-slate-500">
+                      Peso e medidas com embalagem necessários para cotação real por CEP e consolidação de frete
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Peso Embalado (kg) *
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      value={editingProduct.shippingDimensions?.weightKg ?? 0.35}
+                      onChange={(e) =>
+                        setEditingProduct({
+                          ...editingProduct,
+                          shippingDimensions: {
+                            ...(editingProduct.shippingDimensions || {
+                              heightCm: 10,
+                              widthCm: 15,
+                              lengthCm: 20,
+                            }),
+                            weightKg: parseFloat(e.target.value) || 0.05,
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl font-bold font-mono text-slate-900"
+                      placeholder="Ex: 0.35"
+                    />
+                    <span className="text-[10px] text-slate-400 mt-0.5 block">Ex: 0.35 = 350g</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Comprimento (cm) *
+                    </label>
+                    <input
+                      type="number"
+                      min="2"
+                      value={editingProduct.shippingDimensions?.lengthCm ?? 20}
+                      onChange={(e) =>
+                        setEditingProduct({
+                          ...editingProduct,
+                          shippingDimensions: {
+                            ...(editingProduct.shippingDimensions || {
+                              weightKg: 0.35,
+                              heightCm: 10,
+                              widthCm: 15,
+                            }),
+                            lengthCm: parseInt(e.target.value) || 16,
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl font-bold font-mono text-slate-900"
+                      placeholder="Ex: 20"
+                    />
+                    <span className="text-[10px] text-slate-400 mt-0.5 block">Mínimo 16 cm</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Largura (cm) *
+                    </label>
+                    <input
+                      type="number"
+                      min="2"
+                      value={editingProduct.shippingDimensions?.widthCm ?? 15}
+                      onChange={(e) =>
+                        setEditingProduct({
+                          ...editingProduct,
+                          shippingDimensions: {
+                            ...(editingProduct.shippingDimensions || {
+                              weightKg: 0.35,
+                              heightCm: 10,
+                              lengthCm: 20,
+                            }),
+                            widthCm: parseInt(e.target.value) || 11,
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl font-bold font-mono text-slate-900"
+                      placeholder="Ex: 15"
+                    />
+                    <span className="text-[10px] text-slate-400 mt-0.5 block">Mínimo 11 cm</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Altura (cm) *
+                    </label>
+                    <input
+                      type="number"
+                      min="2"
+                      value={editingProduct.shippingDimensions?.heightCm ?? 10}
+                      onChange={(e) =>
+                        setEditingProduct({
+                          ...editingProduct,
+                          shippingDimensions: {
+                            ...(editingProduct.shippingDimensions || {
+                              weightKg: 0.35,
+                              widthCm: 15,
+                              lengthCm: 20,
+                            }),
+                            heightCm: parseInt(e.target.value) || 2,
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl font-bold font-mono text-slate-900"
+                      placeholder="Ex: 10"
+                    />
+                    <span className="text-[10px] text-slate-400 mt-0.5 block">Mínimo 2 cm</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-sky-200/80">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-800">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(editingProduct.shippingDimensions?.specialPackaging)}
+                      onChange={(e) =>
+                        setEditingProduct({
+                          ...editingProduct,
+                          shippingDimensions: {
+                            ...(editingProduct.shippingDimensions || {
+                              weightKg: 0.35,
+                              lengthCm: 20,
+                              widthCm: 15,
+                              heightCm: 10,
+                            }),
+                            specialPackaging: e.target.checked,
+                          },
+                        })
+                      }
+                      className="w-4 h-4 rounded text-[#00AEEF]"
+                    />
+                    <span>Requer embalagem reforçada / especial (frágil)</span>
+                  </label>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Restrição de Envio Logístico
+                    </label>
+                    <select
+                      value={editingProduct.shippingDimensions?.shippingRestrictions || 'none'}
+                      onChange={(e) =>
+                        setEditingProduct({
+                          ...editingProduct,
+                          shippingDimensions: {
+                            ...(editingProduct.shippingDimensions || {
+                              weightKg: 0.35,
+                              lengthCm: 20,
+                              widthCm: 15,
+                              heightCm: 10,
+                            }),
+                            shippingRestrictions: e.target.value as any,
+                          },
+                        })
+                      }
+                      className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-xl"
+                    >
+                      <option value="none">Sem restrições (Correios e Transportadora)</option>
+                      <option value="only_local">Somente Retirada Local / Frota Própria</option>
+                      <option value="no_correios">Apenas Transportadora (Não enviar via Correios)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
               {/* Toggles */}
               <div className="flex items-center gap-6 pt-2">
                 <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
@@ -2628,6 +2941,155 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none"
                   />
                 </div>
+              </div>
+
+              {/* Condições de Pagamento e Faturamento por Boleto (Seção 3 do Regulamento) */}
+              <div className="p-4 bg-indigo-50/60 rounded-2xl border border-indigo-200/80 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-indigo-700" />
+                    <h4 className="font-bold text-xs text-indigo-950 uppercase">
+                      Condição de Pagamento & Faturamento por Boleto
+                    </h4>
+                  </div>
+                  <span className="text-[10px] font-bold text-indigo-700 px-2 py-0.5 rounded bg-white border border-indigo-200">
+                    Regras Comerciais
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuoteBillingType('a_vista');
+                      setQuoteIsDeferredAuthorized(false);
+                      setQuoteConditionName('À Vista (2 dias úteis)');
+                    }}
+                    className={`p-3 rounded-xl border text-left cursor-pointer transition-all ${
+                      quoteBillingType === 'a_vista'
+                        ? 'bg-white border-indigo-600 ring-2 ring-indigo-400'
+                        : 'bg-white/60 border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="font-bold text-xs text-slate-900">Boleto à Vista</div>
+                    <div className="text-[11px] text-slate-500">
+                      Vencimento padrão em 2 dias úteis (Sem parcelamento)
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuoteBillingType('faturado_prazo');
+                      setQuoteIsDeferredAuthorized(true);
+                      setQuoteConditionName('28 DDL');
+                    }}
+                    className={`p-3 rounded-xl border text-left cursor-pointer transition-all ${
+                      quoteBillingType === 'faturado_prazo'
+                        ? 'bg-white border-[#E6007E] ring-2 ring-[#E6007E]'
+                        : 'bg-white/60 border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-xs text-slate-900">Faturamento a Prazo</span>
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-800">
+                        EXCEÇÃO NEGOCIADA
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      Boleto faturado com prazo e parcelas autorizadas
+                    </div>
+                  </button>
+                </div>
+
+                {quoteBillingType === 'faturado_prazo' && (
+                  <div className="p-3 bg-white rounded-xl border border-indigo-200 space-y-3">
+                    <label className="flex items-start gap-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={quoteIsDeferredAuthorized}
+                        onChange={(e) => setQuoteIsDeferredAuthorized(e.target.checked)}
+                        className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div className="text-xs">
+                        <span className="font-bold text-slate-900 block">
+                          Autorizar Expressamente Faturamento a Prazo nesta Proposta
+                        </span>
+                        <span className="text-[11px] text-slate-500">
+                          O cliente poderá emitir boletos a prazo no aceite ou na conversão comercial.
+                        </span>
+                      </div>
+                    </label>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Condição de Pagamento Negociada
+                        </label>
+                        <select
+                          value={quoteConditionName}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setQuoteConditionName(val);
+                            if (val === '28 DDL') {
+                              setQuoteInstallmentsCount(1);
+                              setQuoteDaysInterval([28]);
+                            } else if (val === '30/60 DDL') {
+                              setQuoteInstallmentsCount(2);
+                              setQuoteDaysInterval([30, 60]);
+                            } else if (val === '30/60/90 DDL') {
+                              setQuoteInstallmentsCount(3);
+                              setQuoteDaysInterval([30, 60, 90]);
+                            } else if (val === '15/30/45/60 DDL') {
+                              setQuoteInstallmentsCount(4);
+                              setQuoteDaysInterval([15, 30, 45, 60]);
+                            }
+                          }}
+                          className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none"
+                        >
+                          <option value="28 DDL">28 DDL (1x em 28 dias)</option>
+                          <option value="30/60 DDL">30/60 DDL (2 parcelas)</option>
+                          <option value="30/60/90 DDL">30/60/90 DDL (3 parcelas)</option>
+                          <option value="15/30/45/60 DDL">15/30/45/60 DDL (4 parcelas)</option>
+                          <option value="Personalizado">Personalizado</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Quantidade de Parcelas
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="12"
+                          value={quoteInstallmentsCount}
+                          onChange={(e) => {
+                            const count = Math.max(1, parseInt(e.target.value) || 1);
+                            setQuoteInstallmentsCount(count);
+                            const intervals = [];
+                            for (let i = 1; i <= count; i++) intervals.push(i * 30);
+                            setQuoteDaysInterval(intervals);
+                          }}
+                          className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none font-bold"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Justificativa / Parecer de Alçada Comercial e Financeira
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Ex: Cliente com cadastro e limite de crédito aprovado na Serasa / análise PJ"
+                          value={quoteCreditApprovalNotes}
+                          onChange={(e) => setQuoteCreditApprovalNotes(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
