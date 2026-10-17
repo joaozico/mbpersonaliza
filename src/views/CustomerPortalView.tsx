@@ -55,6 +55,12 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
   const [state, setState] = useState(currentUser.address?.state || '');
   const [zip, setZip] = useState(currentUser.address?.zip || '');
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [portalNotification, setPortalNotification] = useState<{ type: 'success' | 'info' | 'error'; message: string } | null>(null);
+
+  const showPortalNotification = (type: 'success' | 'info' | 'error', message: string) => {
+    setPortalNotification({ type, message });
+    setTimeout(() => setPortalNotification(null), 4000);
+  };
 
   const [orders, setOrders] = useState<Order[]>(() =>
     StorageService.getOrders().filter(
@@ -112,7 +118,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
             colors: ['#E6007E', '#00AEEF', '#FFDD00'],
           });
         } catch {}
-        alert(`Orçamento aprovado com sucesso! Foi gerado o Pedido ${order.code}.`);
+        showPortalNotification('success', `Orçamento aprovado com sucesso! Foi gerado o Pedido ${order.code}.`);
         setActiveTab('orders');
       }
     }
@@ -190,6 +196,28 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Floating or Top Portal Notification Banner */}
+      {portalNotification && (
+        <div
+          className={`p-4 rounded-2xl text-xs font-bold flex items-center gap-2.5 animate-fadeIn shadow-md border ${
+            portalNotification.type === 'success'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : portalNotification.type === 'error'
+              ? 'bg-rose-50 border-rose-200 text-rose-800'
+              : 'bg-blue-50 border-blue-200 text-blue-800'
+          }`}
+        >
+          {portalNotification.type === 'success' ? (
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          ) : portalNotification.type === 'error' ? (
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+          ) : (
+            <Sparkles className="w-4 h-4 text-blue-600 shrink-0" />
+          )}
+          <span>{portalNotification.message}</span>
+        </div>
+      )}
 
       {/* Navigation Tabs */}
       <div className="flex items-center gap-3 border-b border-slate-200 pb-2">
@@ -366,7 +394,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
                                     actionDescription: 'Cliente aprovou a proposta de frete diretamente na área do cliente.',
                                   });
                                   setOrders(StorageService.getOrders().filter((o) => o.clientId === currentUser.id));
-                                  alert('Frete aprovado com sucesso! A expedição foi comunicada.');
+                                  showPortalNotification('success', 'Frete aprovado com sucesso! A expedição foi comunicada.');
                                 }}
                                 className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer"
                               >
@@ -384,7 +412,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
                                       actionDescription: `Cliente recusou o frete: ${reason}`,
                                     });
                                     setOrders(StorageService.getOrders().filter((o) => o.clientId === currentUser.id));
-                                    alert('Recusa registrada. Nossa equipe entrará em contato para negociar nova alternativa.');
+                                    showPortalNotification('info', 'Recusa registrada. Nossa equipe entrará em contato para negociar nova alternativa.');
                                   }
                                 }}
                                 className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-xs font-bold transition-colors cursor-pointer"
@@ -452,7 +480,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
                           } else if (order.boletos && order.boletos.length > 0) {
                             setActiveBoletosModal(order.boletos);
                           } else {
-                            alert('Boleto bancário em processamento no sistema financeiro.');
+                            showPortalNotification('info', 'Boleto bancário em processamento no sistema financeiro.');
                           }
                         }}
                         className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer w-fit"

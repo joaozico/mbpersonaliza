@@ -309,12 +309,12 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
     e.preventDefault();
 
     if (!clientName || !clientEmail || !clientPhone) {
-      alert('Por favor preencha nome, e-mail e telefone de contato.');
+      showToast('⚠️ Por favor preencha nome, e-mail e telefone de contato.');
       return;
     }
 
     if (items.length === 0) {
-      alert('Por favor adicione pelo menos um produto ao orçamento.');
+      showToast('⚠️ Por favor adicione pelo menos um produto ao orçamento.');
       return;
     }
 

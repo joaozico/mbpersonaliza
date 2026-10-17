@@ -42,6 +42,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   const [sortBy, setSortBy] = useState<'relevant' | 'price_asc' | 'price_desc' | 'name_asc'>('relevant');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [showMobileFilters, setShowMobileFilters] = useState<boolean>(false);
+  const [isCopiedToast, setIsCopiedToast] = useState<boolean>(false);
 
   // Filtered subcategories based on category
   const availableSubcategories = useMemo(() => {
@@ -135,13 +136,23 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
         url,
       }).catch(() => {});
     } else {
-      navigator.clipboard.writeText(url);
-      alert('Link do catálogo copiado para a área de transferência!');
+      try {
+        navigator.clipboard.writeText(url);
+      } catch {}
+      setIsCopiedToast(true);
+      setTimeout(() => setIsCopiedToast(false), 3500);
     }
   };
 
   return (
-    <div className="w-full min-w-0 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    <div className="w-full min-w-0 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 relative">
+      {/* Copied Link Toast */}
+      {isCopiedToast && (
+        <div className="fixed top-20 right-6 z-50 bg-slate-900 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-2xl border border-slate-700 flex items-center gap-2 animate-fadeIn">
+          <Check className="w-4 h-4 text-emerald-400" />
+          <span>Link do catálogo copiado para a área de transferência!</span>
+        </div>
+      )}
       <SEOHead
         title={seoTitle}
         description={seoDescription}

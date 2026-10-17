@@ -89,7 +89,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
       {/* 1. PRIMEIRA PARTE DA PÁGINA: BANNER DE OFERTAS (CARROSSEL DINÂMICO MB) */}
       {/* ========================================================================= */}
       {isBannerEnabled && (
-        <section className="w-full pt-2 pb-2 sm:pt-4 sm:pb-3 bg-gradient-to-b from-slate-900/5 via-transparent to-transparent">
+        <section
+          className="w-full max-w-full m-0 p-0 border-0 bg-transparent block"
+          style={{ margin: 0, padding: 0, border: 'none' }}
+        >
           <OffersBanner
             products={products}
             settings={layout.offersBanner}
@@ -99,8 +102,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </section>
       )}
 
-      {/* DEMAIS SEÇÕES DA HOME COM ESPAÇAMENTO RESPONSIVO E HARMONIOSO */}
-      <div className="space-y-12 sm:space-y-16">
+      {/* DEMAIS SEÇÕES DA HOME COM TRANSIÇÃO CONTÍNUA E SEM ESPAÇO SUPERIOR */}
+      <div className="space-y-12 sm:space-y-16 m-0 p-0">
         {contentBlocks.map((block) => {
         // ==========================================
         // 1. HERO SECTION
@@ -275,15 +278,15 @@ export const HomeView: React.FC<HomeViewProps> = ({
         // 2. OFFERS BANNER CAROUSEL
         // ==========================================
         if (block.type === 'offers_banner') {
-          const isFirst = visibleBlocks[0]?.id === block.id;
           return (
-            <OffersBanner
-              key={block.id}
-              products={products}
-              settings={layout.offersBanner}
-              onNavigate={onNavigate}
-              className={isFirst ? 'pt-4 sm:pt-6' : ''}
-            />
+            <div key={block.id} className="w-full max-w-full m-0 p-0 border-0" style={{ margin: 0, padding: 0, border: 'none' }}>
+              <OffersBanner
+                products={products}
+                settings={layout.offersBanner}
+                onNavigate={onNavigate}
+                className=""
+              />
+            </div>
           );
         }
 

@@ -154,7 +154,8 @@ export const BoletoBillingManagementTab: React.FC<BoletoBillingManagementTabProp
   const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
     if (!canConfigure) {
-      alert('Apenas administradores e gerentes podem alterar configurações financeiras.');
+      setActionErrorMsg('Apenas administradores e gerentes podem alterar configurações financeiras.');
+      setTimeout(() => setActionErrorMsg(null), 4000);
       return;
     }
 

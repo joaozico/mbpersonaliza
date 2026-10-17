@@ -69,6 +69,11 @@ export const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({
 }) => {
   const [settings, setSettings] = useState<CompanySettings>(() => StorageService.getCompanySettings());
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const showError = (msg: string) => {
+    setErrorMessage(msg);
+    setTimeout(() => setErrorMessage(null), 5000);
+  };
   const [activeSubSection, setActiveSubSection] = useState<
     'geral' | 'whatsapp' | 'logo' | 'fiscal' | 'pagamento' | 'manutencao'
   >(initialSubSection);
@@ -129,7 +134,7 @@ export const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({
   const handleSaveWhatsAppContact = (e: React.FormEvent) => {
     e.preventDefault();
     if (!whatsAppFormData.name?.trim() || !whatsAppFormData.number?.trim()) {
-      alert('Por favor preencha o Nome e o Número de WhatsApp.');
+      showError('Por favor preencha o Nome e o Número de WhatsApp.');
       return;
     }
 
@@ -205,7 +210,7 @@ export const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({
   const handleDeleteWhatsAppContact = (id: string) => {
     const current = settings.whatsappContacts || [];
     if (current.length <= 1) {
-      alert('A empresa precisa manter pelo menos 1 número de WhatsApp configurado.');
+      showError('A empresa precisa manter pelo menos 1 número de WhatsApp configurado.');
       return;
     }
 
@@ -310,7 +315,7 @@ export const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({
   // Helper to process and optimize device image file into lightweight base64 Data URL
   const processImageFile = async (file: File, target: 'main' | 'dark' | 'favicon') => {
     if (!file.type.startsWith('image/')) {
-      alert('Por favor, selecione um arquivo de imagem válido (PNG, JPG, SVG, WebP ou GIF).');
+      showError('Por favor, selecione um arquivo de imagem válido (PNG, JPG, SVG, WebP ou GIF).');
       return;
     }
 
@@ -346,7 +351,7 @@ export const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({
       setSaveSuccess(false);
     } catch (err: any) {
       console.error('Erro ao processar imagem:', err);
-      alert('Não foi possível processar a imagem do dispositivo. Tente outro arquivo.');
+      showError('Não foi possível processar a imagem do dispositivo. Tente outro arquivo.');
     } finally {
       setIsProcessingFile(false);
     }
@@ -444,8 +449,6 @@ export const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({
     setSaveSuccess(false);
   };
 
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
   const handleSave = (e?: React.FormEvent | React.MouseEvent) => {
     if (e && typeof e.preventDefault === 'function') {
       e.preventDefault();
@@ -535,7 +538,7 @@ export const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 4000);
     } else {
-      alert(res.error || 'Erro ao alterar o status do modo de manutenção.');
+      showError(res.error || 'Erro ao alterar o status do modo de manutenção.');
     }
   };
 
@@ -575,7 +578,7 @@ export const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 4000);
     } else {
-      alert(res.error || 'Erro ao salvar configurações de manutenção.');
+      showError(res.error || 'Erro ao salvar configurações de manutenção.');
     }
   };
 

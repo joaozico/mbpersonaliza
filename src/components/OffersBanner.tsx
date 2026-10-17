@@ -376,7 +376,7 @@ export const OffersBanner: React.FC<OffersBannerProps> = ({
   if (slides.length === 0) {
     if (isLivePreview) {
       return (
-        <div className="p-8 rounded-3xl bg-slate-900 border border-slate-800 text-center text-white space-y-2">
+        <div className="p-8 rounded-none !rounded-none bg-slate-900 border-0 text-center text-white space-y-2" style={{ borderRadius: 0 }}>
           <Sparkles className="w-8 h-8 text-[#FFDD00] mx-auto animate-pulse" />
           <h4 className="font-bold text-sm">Banner de Ofertas Ativo (Sem Produtos Selecionados)</h4>
           <p className="text-xs text-slate-400 max-w-md mx-auto">
@@ -504,9 +504,8 @@ export const OffersBanner: React.FC<OffersBannerProps> = ({
 
   return (
     <section
-      className={`relative w-full ${
-        fullWidth ? '' : 'max-w-7xl mx-auto px-3 sm:px-6 lg:px-8'
-      } ${className}`}
+      className={`relative w-full max-w-full m-0 p-0 border-0 ${className}`}
+      style={{ margin: 0, padding: 0, border: 'none', borderRadius: 0 }}
       aria-label="Carrossel de Campanhas Promocionais"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
@@ -517,42 +516,50 @@ export const OffersBanner: React.FC<OffersBannerProps> = ({
       tabIndex={0}
       id="offers-banner-section"
     >
-      {/* Main Panoramic Carousel Card Container */}
+      {/* Main Panoramic Carousel Card Container with completely square corners (90-degree angles) and zero gap */}
       <div
-        className={`relative overflow-hidden ${
-          fullWidth ? 'rounded-none sm:rounded-2xl' : 'rounded-2xl sm:rounded-3xl'
-        } ${heightClasses} select-none shadow-xl border border-slate-200/60 transition-all duration-500`}
-        style={
-          currentSlide.backgroundTheme === 'custom' && currentSlide.customBgColor
+        className={`relative w-full max-w-full overflow-hidden rounded-none !rounded-none m-0 p-0 border-0 shadow-none ${heightClasses} select-none transition-all duration-500`}
+        style={{
+          borderRadius: 0,
+          margin: 0,
+          border: 'none',
+          boxShadow: 'none',
+          ...(currentSlide.backgroundTheme === 'custom' && currentSlide.customBgColor
             ? { backgroundColor: currentSlide.customBgColor }
-            : {}
-        }
+            : {}),
+        }}
       >
         {/* Dynamic Background Texture & Studio Lighting Overlay */}
         <div
-          className={`absolute inset-0 transition-colors duration-700 pointer-events-none banner-elem-bg ${themeStyle.wrapper}`}
-          style={
-            currentSlide.customBgImage
+          className={`absolute inset-0 transition-colors duration-700 pointer-events-none banner-elem-bg rounded-none !rounded-none ${themeStyle.wrapper}`}
+          style={{
+            borderRadius: 0,
+            ...(currentSlide.customBgImage
               ? {
                   backgroundImage: `url(${optimizeImageUrl(currentSlide.customBgImage, { width: 1600, quality: 80, format: 'webp' })})`,
                   backgroundSize: 'cover',
                   backgroundPosition: 'center',
                 }
-              : {}
-          }
+              : {}),
+          }}
         >
           {/* Subtle Studio Floor / Depth Vignette */}
           <div
-            className={`absolute inset-0 bg-gradient-to-t from-black/10 via-transparent to-white/10 pointer-events-none`}
+            className="absolute inset-0 bg-gradient-to-t from-black/10 via-transparent to-white/10 pointer-events-none rounded-none !rounded-none"
+            style={{ borderRadius: 0 }}
           />
 
           {/* Atmospheric Ambient Glow */}
           <div
-            className={`absolute inset-0 bg-gradient-to-r ${themeStyle.ambientLight} pointer-events-none`}
+            className={`absolute inset-0 bg-gradient-to-r ${themeStyle.ambientLight} pointer-events-none rounded-none !rounded-none`}
+            style={{ borderRadius: 0 }}
           />
 
           {/* Decorative Modern Diagonal Line Accent */}
-          <div className="absolute right-0 top-0 bottom-0 w-1/2 opacity-20 pointer-events-none overflow-hidden">
+          <div
+            className="absolute right-0 top-0 bottom-0 w-1/2 opacity-20 pointer-events-none overflow-hidden rounded-none !rounded-none"
+            style={{ borderRadius: 0 }}
+          >
             <svg
               viewBox="0 0 400 300"
               className="w-full h-full object-cover text-current"
@@ -568,22 +575,25 @@ export const OffersBanner: React.FC<OffersBannerProps> = ({
         {/* Slide Content with Smooth Entrance Transition */}
         <div
           key={`slide-${currentSlide.id}-${currentIndex}`}
-          className="relative z-10 w-full h-full flex items-center"
+          className="relative z-10 w-full h-full flex items-center rounded-none !rounded-none"
+          style={{ borderRadius: 0 }}
         >
           {/* Full Custom Image Mode (If uploaded as an entire banner graphic) */}
           {currentSlide.isCustomBannerImage ? (
             <div
               onClick={() => handleSlideClick(currentSlide)}
-              className="relative w-full h-full cursor-pointer flex items-center justify-center overflow-hidden banner-elem-img"
+              className="relative w-full h-full cursor-pointer flex items-center justify-center overflow-hidden banner-elem-img rounded-none !rounded-none"
+              style={{ borderRadius: 0 }}
             >
               <img
                 src={optimizeImageUrl(currentSlide.image, { width: 1400, quality: 85, format: 'webp' })}
                 srcSet={generateSrcSet(currentSlide.image, [640, 960, 1400])}
                 sizes="100vw"
                 alt={currentSlide.title}
-                className={`w-full h-full ${
+                className={`w-full h-full rounded-none !rounded-none ${
                   currentSlide.imageFit === 'contain' ? 'object-contain' : 'object-cover'
                 } object-center`}
+                style={{ borderRadius: 0 }}
                 loading={currentIndex === 0 ? 'eager' : 'lazy'}
                 decoding="async"
               />
@@ -592,7 +602,8 @@ export const OffersBanner: React.FC<OffersBannerProps> = ({
             /* Standard E-Commerce Campaign Layout (Exact match to Reference Video) */
             <div
               onClick={() => handleSlideClick(currentSlide)}
-              className="w-full h-full px-4 sm:px-8 md:px-12 lg:px-14 flex items-center justify-between gap-3 sm:gap-6 cursor-pointer"
+              className="w-full h-full px-4 sm:px-8 md:px-12 lg:px-14 flex items-center justify-between gap-3 sm:gap-6 cursor-pointer rounded-none !rounded-none"
+              style={{ borderRadius: 0 }}
             >
               {/* ======================================================== */}
               {/* LEFT ZONE: Impactful Campaign Typography, Badges & CTA  */}

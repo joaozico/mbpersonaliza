@@ -224,7 +224,9 @@ export const DeliverySettingsTab: React.FC<DeliverySettingsTabProps> = ({ onNoti
     const name = newCarrierName.trim();
     if (!name) return;
     if (settings.carriersList.includes(name)) {
-      alert('Esta transportadora já está cadastrada.');
+      setErrorMessage('Esta transportadora já está cadastrada.');
+      if (onNotify) onNotify('Esta transportadora já está cadastrada.', 'error');
+      setTimeout(() => setErrorMessage(null), 4000);
       return;
     }
     const updated = {
@@ -264,12 +266,16 @@ export const DeliverySettingsTab: React.FC<DeliverySettingsTabProps> = ({ onNoti
 
     if (newExceptionType === 'allow_zip_range') {
       if (!newExceptionStartZip || !newExceptionEndZip) {
-        alert('Informe o CEP inicial e o CEP final para a faixa.');
+        setErrorMessage('Informe o CEP inicial e o CEP final para a faixa.');
+        if (onNotify) onNotify('Informe o CEP inicial e o CEP final para a faixa.', 'error');
+        setTimeout(() => setErrorMessage(null), 4000);
         return;
       }
     } else {
       if (!newExceptionCity.trim()) {
-        alert('Informe o nome do município.');
+        setErrorMessage('Informe o nome do município.');
+        if (onNotify) onNotify('Informe o nome do município.', 'error');
+        setTimeout(() => setErrorMessage(null), 4000);
         return;
       }
     }

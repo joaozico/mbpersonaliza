@@ -8,6 +8,7 @@ import { systemRouter, maintenanceApiMiddleware } from "./src/server/systemRoute
 import { financialRouter } from "./src/server/financialRouter";
 import { backupRouter } from "./src/server/backupRouter";
 import { backupSchedulerWorker } from "./src/server/backupSchedulerWorker";
+import { costPricingRouter } from "./src/server/costPricingRouter";
 
 async function startServer() {
   const app = express();
@@ -40,6 +41,9 @@ async function startServer() {
 
   // Backup & Recuperação de Desastres (JSON Seguro e Agendado)
   app.use("/api/backup", backupRouter);
+
+  // Módulo de Orçamento de Custos e Precificação de Produtos
+  app.use("/api/cost-pricing", costPricingRouter);
 
   // Stricker / SPOT Webservice API Proxy Routes
   app.use("/api/stricker", strickerRouter);

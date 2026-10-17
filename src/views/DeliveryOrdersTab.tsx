@@ -95,7 +95,7 @@ export const DeliveryOrdersTab: React.FC<DeliveryOrdersTabProps> = ({
       setManagingOrder(null);
       onRefreshData();
     } else {
-      alert(res.error || 'Erro ao registrar proposta.');
+      if (onNotify) onNotify(res.error || 'Erro ao registrar proposta.', 'error');
     }
   };
 
@@ -114,7 +114,7 @@ export const DeliveryOrdersTab: React.FC<DeliveryOrdersTabProps> = ({
       setManagingOrder(null);
       onRefreshData();
     } else {
-      alert(res.error || 'Erro ao atualizar resposta.');
+      if (onNotify) onNotify(res.error || 'Erro ao atualizar resposta.', 'error');
     }
   };
 

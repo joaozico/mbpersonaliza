@@ -23,8 +23,10 @@ import { DisasterRecoveryBackupTab } from './DisasterRecoveryBackupTab';
 import { DeliverySettingsTab } from './DeliverySettingsTab';
 import { DeliveryOrdersTab } from './DeliveryOrdersTab';
 import { BoletoBillingManagementTab } from './BoletoBillingManagementTab';
+import { CostPricingModuleView } from './CostPricingModuleView';
 import { SEOHead } from '../components/SEOHead';
 import {
+  Calculator,
   FileText,
   LayoutDashboard,
   Package,
@@ -65,6 +67,8 @@ import {
   ChevronLeft,
   ChevronRight,
   HardDriveDownload,
+  Info,
+  AlertCircle,
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -103,12 +107,31 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     | 'cash_register'
     | 'financial'
     | 'boletos'
+    | 'cost_pricing'
     | 'backup'
   >('dashboard');
 
   // Category filter and scroll ref for tabs
   const [tabCategoryFilter, setTabCategoryFilter] = useState<'all' | 'operacional' | 'vendas_caixa' | 'configuracoes'>('all');
   const tabsContainerRef = useRef<HTMLDivElement>(null);
+
+  // In-app Action Feedback Toast (replaces blocked iframe alerts)
+  const [actionToast, setActionToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const showActionToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setActionToast({ message, type });
+    setTimeout(() => setActionToast(null), 4000);
+  };
+
+  const handleSelectTab = (newTab: typeof activeTab) => {
+    setActiveTab(newTab);
+    if (['dashboard', 'products', 'quotes', 'orders', 'stock', 'deliveries', 'delivery_orders'].includes(newTab)) {
+      if (tabCategoryFilter !== 'all') setTabCategoryFilter('operacional');
+    } else if (['financial', 'transactions', 'gateways', 'cash_register', 'boletos', 'cost_pricing'].includes(newTab)) {
+      if (tabCategoryFilter !== 'all') setTabCategoryFilter('vendas_caixa');
+    } else if (['stricker', 'offers_banner', 'layout', 'metrics', 'users', 'company', 'delivery_settings', 'backup'].includes(newTab)) {
+      if (tabCategoryFilter !== 'all') setTabCategoryFilter('configuracoes');
+    }
+  };
 
   const scrollTabs = (direction: 'left' | 'right') => {
     if (tabsContainerRef.current) {
@@ -124,8 +147,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   // Permissions checks for current logged in employee
   const canViewFinancialModule = StorageService.hasUserPermission(currentUser, 'canViewFinancialModule');
+  const canViewCostPricingModule =
+    currentUser.role === 'admin' ||
+    StorageService.hasUserPermission(currentUser, 'canViewCostPricingModule');
   const canViewSiteMetrics = StorageService.hasUserPermission(currentUser, 'canViewSiteMetrics');
-  const canManageUsers = StorageService.hasUserPermission(currentUser, 'canManageUsers');
+  const canManageUsers =
+    currentUser.role === 'admin' ||
+    currentUser.role === 'gerente' ||
+    StorageService.hasUserPermission(currentUser, 'canManageUsers');
   const canManageCompany = StorageService.hasUserPermission(currentUser, 'canManageCompanySettings');
   const canManageDelivery = StorageService.hasUserPermission(currentUser, 'canManageDeliverySettings') || StorageService.hasUserPermission(currentUser, 'canManageCompanySettings');
   const canCustomizeLayout = StorageService.hasUserPermission(currentUser, 'canCustomizeLayout');
@@ -383,7 +412,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     StorageService.updateQuote(updatedQuote);
     setAnsweringQuote(null);
     refreshAll();
-    alert(`Proposta comercial do orçamento ${updatedQuote.code} gravada com sucesso!`);
+    showActionToast(`Proposta comercial do orçamento ${updatedQuote.code} gravada com sucesso!`, 'success');
   };
 
   const handleConvertQuoteToOrder = (quoteId: string) => {
@@ -391,22 +420,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     if (!q) return;
 
     if (q.status === 'recusado' || q.status === 'cancelado') {
-      alert('Esta proposta está cancelada ou recusada e não pode ser convertida em pedido.');
+      showActionToast('Esta proposta está cancelada ou recusada e não pode ser convertida em pedido.', 'error');
       return;
     }
 
     const isDeferred = Boolean(q.billingTerms?.isDeferredAuthorized && q.billingTerms?.type === 'faturado_prazo');
 
-    const msg = isDeferred
-      ? `Converter cotação ${q.code} em Pedido com Faturamento a Prazo Autorizado (${q.billingTerms?.conditionName})? Boletos e títulos no Contas a Receber serão gerados automaticamente.`
-      : `Converter cotação ${q.code} em Pedido com Boleto à Vista? O boleto será gerado e integrado ao Contas a Receber.`;
-
-    if (confirm(msg)) {
-      const order = StorageService.convertQuoteToOrder(quoteId, isDeferred ? 'boleto_faturado' : 'boleto');
-      if (order) {
-        refreshAll();
-        alert(`Pedido ${order.code} gerado com sucesso com integração financeira concluída!`);
-      }
+    const order = StorageService.convertQuoteToOrder(quoteId, isDeferred ? 'boleto_faturado' : 'boleto');
+    if (order) {
+      refreshAll();
+      showActionToast(`Pedido ${order.code} gerado com sucesso com integração financeira concluída!`, 'success');
     }
   };
 
@@ -414,6 +437,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleUpdateOrderStatus = (orderId: string, status: Order['orderStatus']) => {
     StorageService.updateOrderStatus(orderId, status);
     refreshAll();
+    showActionToast(`Status do pedido atualizado para "${status}".`, 'info');
   };
 
   const handleUpdateTracking = (orderId: string) => {
@@ -421,6 +445,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     if (code) {
       StorageService.updateOrderTracking(orderId, code);
       refreshAll();
+      showActionToast(`Código de rastreamento ${code} registrado.`, 'success');
     }
   };
 
@@ -436,7 +461,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     );
     setIsStockModalOpen(false);
     refreshAll();
-    alert('Movimentação de estoque lançada com sucesso!');
+    showActionToast('Movimentação de estoque lançada com sucesso!', 'success');
   };
 
   return (
@@ -447,6 +472,28 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         canonicalPath="/admin"
         noIndex={true}
       />
+
+      {/* Floating or Top Action Toast Banner */}
+      {actionToast && (
+        <div
+          className={`p-4 rounded-2xl text-xs font-bold flex items-center gap-2.5 animate-fadeIn shadow-md border ${
+            actionToast.type === 'success'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : actionToast.type === 'error'
+              ? 'bg-rose-50 border-rose-200 text-rose-800'
+              : 'bg-blue-50 border-blue-200 text-blue-800'
+          }`}
+        >
+          {actionToast.type === 'success' ? (
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          ) : actionToast.type === 'error' ? (
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+          ) : (
+            <Info className="w-4 h-4 text-blue-600 shrink-0" />
+          )}
+          <span>{actionToast.message}</span>
+        </div>
+      )}
       {/* Top Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-6">
         <div>
@@ -537,7 +584,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <button
               onClick={() => {
                 setTabCategoryFilter('operacional');
-                if (!['dashboard', 'products', 'quotes', 'orders', 'stock'].includes(activeTab)) {
+                if (!['dashboard', 'products', 'quotes', 'orders', 'stock', 'deliveries'].includes(activeTab)) {
                   setActiveTab('dashboard');
                 }
               }}
@@ -553,7 +600,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <button
               onClick={() => {
                 setTabCategoryFilter('vendas_caixa');
-                if (!['transactions', 'gateways', 'cash_register'].includes(activeTab)) {
+                if (!['financial', 'transactions', 'gateways', 'cash_register', 'boletos', 'cost_pricing'].includes(activeTab)) {
                   setActiveTab('transactions');
                 }
               }}
@@ -569,7 +616,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <button
               onClick={() => {
                 setTabCategoryFilter('configuracoes');
-                if (!['stricker', 'metrics', 'users', 'company', 'offers_banner', 'layout', 'backup'].includes(activeTab)) {
+                if (!['stricker', 'metrics', 'users', 'company', 'offers_banner', 'layout', 'delivery_settings', 'backup'].includes(activeTab)) {
                   setActiveTab('stricker');
                 }
               }}
@@ -613,7 +660,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </label>
           <select
             value={activeTab}
-            onChange={(e) => setActiveTab(e.target.value as any)}
+            onChange={(e) => {
+              const newTab = e.target.value as any;
+              setActiveTab(newTab);
+              if (['dashboard', 'products', 'quotes', 'orders', 'stock', 'deliveries'].includes(newTab)) {
+                setTabCategoryFilter('operacional');
+              } else if (['financial', 'transactions', 'gateways', 'cash_register', 'boletos', 'cost_pricing'].includes(newTab)) {
+                setTabCategoryFilter('vendas_caixa');
+              } else if (['stricker', 'offers_banner', 'layout', 'metrics', 'users', 'company', 'delivery_settings', 'backup'].includes(newTab)) {
+                setTabCategoryFilter('configuracoes');
+              }
+            }}
             className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#00AEEF]"
           >
             <optgroup label="Operacional & Estoque">
@@ -622,10 +679,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               <option value="quotes">Orçamentos ({quotes.length})</option>
               <option value="orders">Pedidos & Produção ({orders.length})</option>
               <option value="stock">Estoque & Inventário</option>
+              <option value="deliveries">Expedição & Entregas</option>
             </optgroup>
             <optgroup label="Vendas & Caixa">
               {canViewFinancialModule && (
                 <option value="financial">Módulo Financeiro (Restrito)</option>
+              )}
+              {canViewCostPricingModule && (
+                <option value="cost_pricing">Custos & Precificação (Novo)</option>
               )}
               <option value="transactions">Transações & Pagamentos</option>
               <option value="gateways">Gateways de Pagamento (Mercado Pago / PagBank)</option>
@@ -639,6 +700,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               <option value="metrics">Métricas do Site</option>
               <option value="users">Usuários & Permissões</option>
               <option value="company">Dados da Empresa</option>
+              <option value="delivery_settings">Região & Fretes</option>
               <option value="backup">Backup & Recuperação (DRP)</option>
             </optgroup>
           </select>
@@ -825,6 +887,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   FEBRABAN
                 </span>
               </button>
+
+              {canViewCostPricingModule && (
+                <button
+                  onClick={() => setActiveTab('cost_pricing')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'cost_pricing'
+                      ? 'bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white shadow-md ring-2 ring-pink-400/50'
+                      : 'text-slate-900 bg-pink-50/70 hover:bg-pink-100 border border-pink-200/80'
+                  }`}
+                  title="Módulo de Orçamento de Custos & Precificação (Engenharia de Custos)"
+                >
+                  <Calculator className={`w-4 h-4 ${activeTab === 'cost_pricing' ? 'text-[#FFDD00]' : 'text-[#E6007E]'}`} />
+                  <span>Custos & Precificação</span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase bg-[#E6007E] text-white tracking-wider">
+                    Novo
+                  </span>
+                </button>
+              )}
             </>
           )}
 
@@ -888,17 +968,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </button>
               )}
 
-              {canManageUsers && (
-                <button
-                  onClick={() => setActiveTab('users')}
-                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
-                    activeTab === 'users' ? 'bg-[#E6007E] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  <Users className="w-4 h-4 text-purple-400" />
-                  <span>Usuários & Permissões</span>
-                </button>
-              )}
+              <button
+                onClick={() => handleSelectTab('users')}
+                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                  activeTab === 'users' ? 'bg-[#E6007E] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <Users className="w-4 h-4 text-purple-400" />
+                <span>Usuários & Permissões</span>
+              </button>
 
               {canManageCompany && (
                 <button
@@ -2063,6 +2141,38 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       {activeTab === 'users' && canManageUsers && (
         <UserManagementTab currentUser={currentUser} />
       )}
+      {activeTab === 'users' && !canManageUsers && (
+        <div className="bg-white rounded-3xl border border-rose-200 p-8 sm:p-12 text-center max-w-2xl mx-auto my-8 shadow-xs space-y-4">
+          <div className="w-16 h-16 bg-rose-50 text-rose-600 rounded-2xl mx-auto flex items-center justify-center shadow-xs">
+            <Lock className="w-8 h-8" />
+          </div>
+          <div>
+            <h3 className="text-xl font-heading font-black uppercase text-slate-900">
+              Acesso Restrito: Usuários & Permissões
+            </h3>
+            <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+              O seu perfil atual (<strong className="capitalize text-slate-900">{currentUser.role}</strong>) não possui permissão de gestão de usuários (<code className="text-rose-600 font-mono font-bold">canManageUsers</code>).
+            </p>
+            <p className="text-xs text-slate-500 mt-2">
+              Para acessar esta área, solicite permissão a um Administrador ou alterne para a conta de Administrador no seletor de perfil (RoleSwitcher).
+            </p>
+            <div className="pt-3">
+              <button
+                type="button"
+                onClick={() => {
+                  StorageService.switchRole('admin');
+                  window.dispatchEvent(new CustomEvent('mb_storage_updated'));
+                  refreshAll();
+                }}
+                className="px-5 py-2.5 bg-slate-900 hover:bg-[#E6007E] text-white text-xs font-bold rounded-xl shadow-md transition-all cursor-pointer inline-flex items-center gap-2"
+              >
+                <Shield className="w-4 h-4 text-[#FFDD00]" />
+                <span>Alternar para Administrador Geral</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* TAB 7: COMPANY SETTINGS & LOGO */}
       {activeTab === 'company' && canManageCompany && (
@@ -2120,6 +2230,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       {/* TAB: BOLETOS BANCÁRIOS & FATURAMENTO A PRAZO (FEBRABAN) */}
       {activeTab === 'boletos' && (
         <BoletoBillingManagementTab currentUser={currentUser} />
+      )}
+
+      {/* TAB: MÓDULO DE ORÇAMENTO DE CUSTOS & PRECIFICAÇÃO (14 SUBMÓDULOS) */}
+      {activeTab === 'cost_pricing' && (
+        <CostPricingModuleView currentUser={currentUser} />
       )}
 
       {/* TAB 14: BACKUP AGENDADO & RECUPERAÇÃO DE DESASTRES (JSON SEGURO) */}

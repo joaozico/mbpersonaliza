@@ -17,6 +17,7 @@ export const AdminMaintenanceBanner: React.FC<AdminMaintenanceBannerProps> = ({
   onRefreshSettings,
 }) => {
   const [isDeactivating, setIsDeactivating] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const maintenance = companySettings.maintenance;
 
   if (!maintenance || !maintenance.enabled) {
@@ -24,11 +25,6 @@ export const AdminMaintenanceBanner: React.FC<AdminMaintenanceBannerProps> = ({
   }
 
   const handleDeactivate = () => {
-    const confirmed = window.confirm(
-      'Deseja desativar o modo de manutenção e liberar o acesso público ao sistema para todos os clientes?'
-    );
-    if (!confirmed) return;
-
     setIsDeactivating(true);
     const res = StorageService.toggleMaintenanceMode(false, currentUser);
     setIsDeactivating(false);
@@ -36,7 +32,8 @@ export const AdminMaintenanceBanner: React.FC<AdminMaintenanceBannerProps> = ({
     if (res.success) {
       if (onRefreshSettings) onRefreshSettings();
     } else {
-      alert(res.error || 'Erro ao desativar o modo de manutenção.');
+      setErrorMsg(res.error || 'Erro ao desativar o modo de manutenção.');
+      setTimeout(() => setErrorMsg(null), 5000);
     }
   };
 
@@ -97,6 +94,11 @@ export const AdminMaintenanceBanner: React.FC<AdminMaintenanceBannerProps> = ({
           </button>
         </div>
       </div>
+      {errorMsg && (
+        <div className="bg-rose-900/90 text-white text-[11px] font-bold px-4 py-1 text-center border-t border-rose-700 animate-fadeIn">
+          {errorMsg}
+        </div>
+      )}
     </aside>
   );
 };

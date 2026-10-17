@@ -1271,6 +1271,17 @@ export const PDVView: React.FC<PDVViewProps> = ({
             </button>
           )}
 
+          {currentUser.role !== 'cliente' && currentUser.role !== 'visitante' && (
+            <button
+              onClick={() => onNavigate('admin')}
+              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer border border-slate-700"
+              title="Voltar ao Painel Administrativo"
+            >
+              <ArrowLeft className="w-3.5 h-3.5 text-purple-400" />
+              <span className="hidden sm:inline">Painel Admin</span>
+            </button>
+          )}
+
           <button
             onClick={() => onNavigate('home')}
             className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"

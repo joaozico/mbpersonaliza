@@ -305,3 +305,18 @@
     gap: 16px !important;
   }
 }
+
+/* Zero-gap & sharp 90-degree square corners for system banner */
+#offers-banner-section,
+#offers-banner-section > div,
+#offers-banner-section .banner-elem-bg,
+#offers-banner-section .banner-elem-img,
+#offers-banner-section img {
+  border-radius: 0 !important;
+}
+
+#offers-banner-section {
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+}

@@ -3403,7 +3403,8 @@ export const LayoutCustomizationTab: React.FC<LayoutCustomizationTabProps> = ({
 
                   <button
                     type="button"
-                    className="px-3 py-1.5 text-xs font-extrabold text-white rounded-xl shadow-xs"
+                    onClick={() => showNotification('info', 'Pré-visualização da Loja: Botão "Fazer Cotação" abrirá o fluxo de orçamento dos clientes.')}
+                    className="px-3 py-1.5 text-xs font-extrabold text-white rounded-xl shadow-xs cursor-pointer hover:opacity-90 transition-opacity"
                     style={{ backgroundColor: settings.colors.buttonPrimaryBg }}
                   >
                     Fazer Cotação
@@ -3414,6 +3415,19 @@ export const LayoutCustomizationTab: React.FC<LayoutCustomizationTabProps> = ({
                 {settings.blocks
                   .filter((b) => b.isVisible)
                   .map((block) => {
+                    if (block.type === 'offers_banner') {
+                      return (
+                        <div key={block.id} className="w-full max-w-full m-0 p-0 border-0" style={{ margin: 0, padding: 0, border: 'none' }}>
+                          <OffersBanner
+                            products={availableProducts}
+                            settings={settings.offersBanner}
+                            onNavigate={() => {}}
+                            isLivePreview={true}
+                          />
+                        </div>
+                      );
+                    }
+
                     if (block.type === 'hero') {
                       return (
                         <div
@@ -3445,7 +3459,8 @@ export const LayoutCustomizationTab: React.FC<LayoutCustomizationTabProps> = ({
                               {settings.hero.primaryCtaVisible && (
                                 <button
                                   type="button"
-                                  className="px-5 py-2.5 text-xs font-black text-white rounded-xl shadow-md"
+                                  onClick={() => showNotification('info', `Pré-visualização: Botão "${settings.hero.primaryCtaText}" abrirá a ação principal configurada.`)}
+                                  className="px-5 py-2.5 text-xs font-black text-white rounded-xl shadow-md cursor-pointer hover:opacity-90 transition-opacity"
                                   style={{ backgroundColor: settings.colors.buttonPrimaryBg }}
                                 >
                                   {settings.hero.primaryCtaText}
@@ -3454,7 +3469,8 @@ export const LayoutCustomizationTab: React.FC<LayoutCustomizationTabProps> = ({
                               {settings.hero.secondaryCtaVisible && (
                                 <button
                                   type="button"
-                                  className="px-5 py-2.5 text-xs font-bold text-slate-800 bg-white border border-slate-300 rounded-xl"
+                                  onClick={() => showNotification('info', `Pré-visualização: Botão "${settings.hero.secondaryCtaText}" abrirá a ação secundária configurada.`)}
+                                  className="px-5 py-2.5 text-xs font-bold text-slate-800 bg-white border border-slate-300 rounded-xl cursor-pointer hover:bg-slate-50 transition-colors"
                                 >
                                   {settings.hero.secondaryCtaText}
                                 </button>
@@ -3547,7 +3563,8 @@ export const LayoutCustomizationTab: React.FC<LayoutCustomizationTabProps> = ({
                             <div className="pt-2">
                               <button
                                 type="button"
-                                className="px-5 py-2.5 text-xs font-black text-white rounded-xl shadow-md"
+                                onClick={() => showNotification('info', `Pré-visualização: Botão "${settings.b2bBanner.buttonText}" abrirá o canal de atendimento B2B.`)}
+                                className="px-5 py-2.5 text-xs font-black text-white rounded-xl shadow-md cursor-pointer hover:opacity-90 transition-opacity"
                                 style={{ backgroundColor: settings.colors.buttonPrimaryBg }}
                               >
                                 {settings.b2bBanner.buttonText}
@@ -3595,7 +3612,8 @@ export const LayoutCustomizationTab: React.FC<LayoutCustomizationTabProps> = ({
                           {block.customData.buttonText && (
                             <button
                               type="button"
-                              className="mt-2 px-4 py-2 text-xs font-extrabold text-white rounded-xl shadow-md"
+                              onClick={() => showNotification('info', `Pré-visualização: Botão "${block.customData?.buttonText}" configurado.`)}
+                              className="mt-2 px-4 py-2 text-xs font-extrabold text-white rounded-xl shadow-md cursor-pointer hover:opacity-90 transition-opacity"
                               style={{ backgroundColor: settings.colors.buttonPrimaryBg }}
                             >
                               {block.customData.buttonText}

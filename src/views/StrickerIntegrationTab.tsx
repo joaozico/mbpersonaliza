@@ -78,6 +78,7 @@ export const StrickerIntegrationTab: React.FC<StrickerIntegrationTabProps> = ({ 
   const [stockSearchTerm, setStockSearchTerm] = useState('');
   const [stockStatusFilter, setStockStatusFilter] = useState<'all' | 'in_stock' | 'next_quantities' | 'out_of_stock'>('all');
   const [showNextDeliveriesTable, setShowNextDeliveriesTable] = useState(false);
+  const [isExportDropdownOpen, setIsExportDropdownOpen] = useState(false);
 
   // Modals & Drawers
   const [selectedProduct, setSelectedProduct] = useState<StrickerProduct | null>(null);
@@ -526,28 +527,47 @@ export const StrickerIntegrationTab: React.FC<StrickerIntegrationTabProps> = ({ 
 
             <div className="relative group">
               <button
+                type="button"
                 id="btn-export-stricker-catalog"
+                onClick={() => setIsExportDropdownOpen((prev) => !prev)}
                 className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-sm font-medium border border-slate-700 flex items-center gap-2 transition cursor-pointer"
+                title="Exportar catálogo Stricker em formatos JSON, CSV ou XML"
               >
                 <Download className="w-4 h-4 text-emerald-400" />
                 Exportar
               </button>
-              <div className="absolute right-0 mt-2 w-48 bg-white text-slate-900 rounded-xl shadow-xl border border-slate-200 py-2 hidden group-hover:block z-40">
+              <div
+                className={`absolute right-0 mt-2 w-48 bg-white text-slate-900 rounded-xl shadow-xl border border-slate-200 py-2 z-40 ${
+                  isExportDropdownOpen ? 'block' : 'hidden group-hover:block'
+                }`}
+              >
                 <button
-                  onClick={() => StrickerService.exportDirectDownload('json')}
-                  className="w-full text-left px-4 py-2 text-sm hover:bg-indigo-50 text-slate-700 flex items-center gap-2"
+                  type="button"
+                  onClick={() => {
+                    StrickerService.exportDirectDownload('json');
+                    setIsExportDropdownOpen(false);
+                  }}
+                  className="w-full text-left px-4 py-2 text-sm hover:bg-indigo-50 text-slate-700 flex items-center gap-2 cursor-pointer"
                 >
                   <FileText className="w-4 h-4 text-indigo-600" /> JSON Format
                 </button>
                 <button
-                  onClick={() => StrickerService.exportDirectDownload('csv')}
-                  className="w-full text-left px-4 py-2 text-sm hover:bg-indigo-50 text-slate-700 flex items-center gap-2"
+                  type="button"
+                  onClick={() => {
+                    StrickerService.exportDirectDownload('csv');
+                    setIsExportDropdownOpen(false);
+                  }}
+                  className="w-full text-left px-4 py-2 text-sm hover:bg-indigo-50 text-slate-700 flex items-center gap-2 cursor-pointer"
                 >
                   <FileText className="w-4 h-4 text-emerald-600" /> Planilha CSV
                 </button>
                 <button
-                  onClick={() => StrickerService.exportDirectDownload('xml')}
-                  className="w-full text-left px-4 py-2 text-sm hover:bg-indigo-50 text-slate-700 flex items-center gap-2"
+                  type="button"
+                  onClick={() => {
+                    StrickerService.exportDirectDownload('xml');
+                    setIsExportDropdownOpen(false);
+                  }}
+                  className="w-full text-left px-4 py-2 text-sm hover:bg-indigo-50 text-slate-700 flex items-center gap-2 cursor-pointer"
                 >
                   <FileText className="w-4 h-4 text-amber-600" /> XML Stricker
                 </button>

@@ -16,6 +16,7 @@ import {
   ArrowLeft,
   KeyRound,
   Shield,
+  ShieldAlert,
   Sparkles,
   HelpCircle,
 } from 'lucide-react';
@@ -37,6 +38,7 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
 
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [showForgotNotice, setShowForgotNotice] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -198,12 +200,25 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
 
               <button
                 type="button"
-                onClick={() => alert('Para redefinir sua senha corporativa, entre em contato com o suporte de TI pelo e-mail contato@mbpersonaliza.com.br ou acesse o perfil de Administrador Geral.')}
-                className="text-xs text-[#00AEEF] hover:underline"
+                onClick={() => setShowForgotNotice((prev) => !prev)}
+                className="text-xs text-[#00AEEF] hover:underline cursor-pointer"
               >
                 Esqueceu a senha?
               </button>
             </div>
+
+            {showForgotNotice && (
+              <div className="p-3.5 bg-slate-800/90 border border-slate-700 rounded-xl text-xs text-slate-300 space-y-1 animate-fadeIn">
+                <p className="font-bold text-white flex items-center gap-1.5">
+                  <ShieldAlert className="w-4 h-4 text-[#FFDD00]" />
+                  Recuperação de Senha Corporativa
+                </p>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  Entre em contato com o suporte interno pelo e-mail{' '}
+                  <span className="text-[#00AEEF] font-mono font-bold">contato@mbpersonaliza.com.br</span> ou solicite a redefinição direta a um Administrador no módulo de Usuários & Permissões.
+                </p>
+              </div>
+            )}
 
             <button
               type="submit"

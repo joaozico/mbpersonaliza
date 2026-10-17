@@ -1640,7 +1640,7 @@ export const StorageService = {
     return Array.isArray(u) ? u : INITIAL_USERS;
   },
   getEmployees(): UserProfile[] {
-    return this.getUsers().filter((u) => u.role !== 'cliente');
+    return this.getUsers().filter((u) => u.role !== 'cliente' && u.role !== 'visitante');
   },
   getCustomers(): UserProfile[] {
     return this.getUsers().filter((u) => u.role === 'cliente');
@@ -3258,6 +3258,66 @@ export const StorageService = {
       previousValues: prevPerms,
       newValues: permissions,
     });
+
+    return { success: true };
+  },
+
+  // Conceder / Alterar / Remover Permissões de Custos e Precificação (Apenas Administrador)
+  grantCostPricingPermissions(
+    targetUserId: string,
+    permissions: Partial<RolePermissions>,
+    adminUser: UserProfile
+  ): { success: boolean; error?: string } {
+    if (adminUser.role !== 'admin' && !this.hasUserPermission(adminUser, 'canManageUsers')) {
+      return {
+        success: false,
+        error: 'Apenas o Administrador do sistema pode alterar permissões do módulo de custos e precificação.',
+      };
+    }
+
+    const users = this.getUsers();
+    const targetIdx = users.findIndex((u) => u.id === targetUserId);
+    if (targetIdx < 0) {
+      return { success: false, error: 'Colaborador não encontrado.' };
+    }
+
+    const targetUser = users[targetIdx];
+    const prevPerms = { ...(targetUser.customPermissions || {}) };
+
+    const updatedPerms: Partial<RolePermissions> = {
+      ...targetUser.customPermissions,
+      ...permissions,
+    };
+
+    targetUser.customPermissions = updatedPerms;
+    users[targetIdx] = targetUser;
+    setStored(STORAGE_KEYS.USERS, users);
+
+    // Se o usuário alterado for o usuário logado atualmente, atualiza a sessão
+    const current = this.getCurrentUser();
+    if (current && current.id === targetUserId) {
+      this.setCurrentUser(targetUser);
+    }
+
+    // Registra na auditoria de segurança
+    const logsKey = 'mb_cost_pricing_audit_logs';
+    const auditLogs = getStored<any[]>(logsKey, []);
+    const newLog = {
+      id: `CP-LOG-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      timestamp: new Date().toISOString(),
+      userId: adminUser.id,
+      userName: adminUser.name,
+      userRole: adminUser.role,
+      action: 'UPDATE_PERMISSIONS',
+      entityType: 'PERMISSOES',
+      entityId: targetUserId,
+      entityName: `Permissões de ${targetUser.name}`,
+      previousValues: prevPerms,
+      newValues: permissions,
+      notes: `Administrador ${adminUser.name} alterou permissões de precificação do usuário ${targetUser.name}.`,
+    };
+    auditLogs.unshift(newLog);
+    setStored(logsKey, auditLogs);
 
     return { success: true };
   },

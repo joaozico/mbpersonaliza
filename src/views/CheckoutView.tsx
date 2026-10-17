@@ -102,6 +102,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   const [showBoletoModal, setShowBoletoModal] = useState(false);
   const [activeBoletos, setActiveBoletos] = useState<BoletoTitulo[]>([]);
   const [boletoSettings, setBoletoSettings] = useState(() => StorageService.getBoletoSettings());
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
 
   const [cardNumber, setCardNumber] = useState('•••• •••• •••• 4242');
   const [cardHolder, setCardHolder] = useState(currentUser.name.toUpperCase());
@@ -272,27 +273,28 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
 
   const handlePlaceOrder = (e: React.FormEvent) => {
     e.preventDefault();
+    setCheckoutError(null);
 
     if (cart.length === 0) {
-      alert('Seu carrinho está vazio.');
+      setCheckoutError('Seu carrinho está vazio.');
       return;
     }
 
     // Validação de Integridade: Impedir finalização sem selecionar modalidade
     if (!selectedShippingOption) {
       if (!shippingCalculation.coverage.allowed && shippingCalculation.coverage.allowPickup) {
-        alert(
+        setCheckoutError(
           'Por favor, selecione uma forma de envio para o seu pedido. Como o endereço informado está fora da nossa área de entrega direta, você pode optar pela modalidade "Retirada no Estabelecimento" caso tenha interesse em retirar na loja.'
         );
       } else {
-        alert('Por favor, selecione uma modalidade de entrega válida para prosseguir com o pedido.');
+        setCheckoutError('Por favor, selecione uma modalidade de entrega válida para prosseguir com o pedido.');
       }
       return;
     }
 
     // Validação de Integridade: Impedir finalização se fora da área atendida e não for retirada
     if (!shippingCalculation.coverage.allowed && selectedShippingOption.type !== 'retirada') {
-      alert(
+      setCheckoutError(
         shippingCalculation.coverage.reason ||
         'Não foi possível concluir o pedido: o CEP e endereço de entrega informado estão fora da nossa área geográfica de atendimento.'
       );
@@ -596,7 +598,12 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
                       setActiveBoletos(bl);
                       setShowBoletoModal(true);
                     } else {
-                      alert('Boleto bancário registrado com sucesso.');
+                      // Attempt to fetch all boletos as fallback
+                      const allB = StorageService.getBoletos();
+                      if (allB.length > 0) {
+                        setActiveBoletos([allB[0]]);
+                        setShowBoletoModal(true);
+                      }
                     }
                   }}
                   className="px-4 py-2 bg-indigo-700 hover:bg-indigo-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
@@ -1393,6 +1400,13 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
                 </span>
               </div>
             </div>
+
+            {checkoutError && (
+              <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-start gap-2 animate-fadeIn">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <span className="font-semibold">{checkoutError}</span>
+              </div>
+            )}
 
             {/* Place Order CTA */}
             <button

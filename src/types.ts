@@ -55,6 +55,17 @@ export interface RolePermissions {
   // Regras de Faturamento e Boletos
   canConfigureBoletoRules?: boolean;
   canAuthorizeDeferredBoleto?: boolean;
+  // Módulo de Orçamento de Custos e Precificação de Produtos
+  canViewCostPricingModule?: boolean;
+  canViewCostsAndCompositions?: boolean;
+  canManageCosts?: boolean;
+  canManageMachines?: boolean;
+  canConfigureDepreciation?: boolean;
+  canConfigurePricingParameters?: boolean;
+  canCreateEditCostQuotes?: boolean;
+  canApprovePricesAndDiscounts?: boolean;
+  canViewPricingReports?: boolean;
+  canExportPricingReports?: boolean;
 }
 
 export type PermissionKey = keyof RolePermissions;
@@ -1478,6 +1489,400 @@ export interface BoletoBillingSettings {
   updatedBy?: string;
 }
 
+// ============================================================================
+// MÓDULO DE ORÇAMENTO DE CUSTOS E PRECIFICAÇÃO DE PRODUTOS
+// ============================================================================
 
+export type RawMaterialCategory =
+  | 'papeis'
+  | 'vinis_lonas'
+  | 'tintas_toners'
+  | 'sublimacao_transfer'
+  | 'produtos_base'
+  | 'embalagens'
+  | 'acabamentos'
+  | 'outros';
 
+export type PurchaseUnit =
+  | 'resma'
+  | 'pacote'
+  | 'caixa'
+  | 'rolo'
+  | 'litro'
+  | 'kg'
+  | 'unidade'
+  | 'm2'
+  | 'cento'
+  | 'milheiro';
 
+export type ConsumptionUnit =
+  | 'folha'
+  | 'unidade'
+  | 'm2'
+  | 'ml'
+  | 'g'
+  | 'metro'
+  | 'cm';
+
+export interface RawMaterial {
+  id: string;
+  code: string; // ex: MP-001
+  name: string; // ex: Papel Couchê 250g A4
+  category: RawMaterialCategory;
+  supplier: string; // ex: Papirus / Suzano / Distribuidor ABC
+  purchaseUnit: PurchaseUnit; // ex: resma
+  consumptionUnit: ConsumptionUnit; // ex: folha
+  conversionFactor: number; // ex: 500 (folhas por resma)
+  purchasePrice: number; // Preço de compra (R$)
+  shippingCost: number; // Frete e custos de aquisição adicionais (R$)
+  nonRecoverableTaxes: number; // Impostos não recuperáveis (R$)
+  estimatedWastePercent: number; // Perdas estimadas (%)
+  currentStock: number; // Quantidade atual em estoque na unidade de consumo
+  stockReferenceId?: string; // ID do produto do catálogo geral, caso vinculado
+  
+  // Custos calculados
+  effectivePurchaseCost: number; // purchasePrice + shippingCost + nonRecoverableTaxes
+  costPerConsumptionUnit: number; // effectivePurchaseCost / conversionFactor
+  costWithWaste: number; // costPerConsumptionUnit * (1 + estimatedWastePercent/100)
+  
+  lastCostUpdate: string; // Data ISO
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type MachineStatus = 'ativo' | 'manutencao' | 'inativo';
+export type DepreciationMethod = 'linear' | 'horas_uso';
+
+export interface MachineEquipment {
+  id: string;
+  code: string; // ex: MAQ-001
+  name: string; // ex: Impressora Laser de Produção A3+
+  brandModel: string; // ex: Konica Minolta AccurioPrint C4065
+  assetNumber: string; // Patrimônio: PAT-2024-08
+  acquisitionDate: string; // YYYY-MM-DD
+  acquisitionValue: number; // R$
+  capitalizedCosts: number; // Frete, instalação, transformador (R$)
+  depreciableValue: number; // acquisitionValue + capitalizedCosts - residualValue
+  residualValue: number; // Valor residual estimado ao fim da vida útil (R$)
+  usefulLifeMonths: number; // Vida útil em meses (ex: 60 meses = 5 anos)
+  depreciationMethod: DepreciationMethod; // Linear padrão
+  monthlyProductiveHours: number; // Horas disponíveis por mês (ex: 176h)
+  
+  // Depreciação calculada
+  monthlyDepreciation: number; // (depreciableValue) / usefulLifeMonths
+  depreciationPerHour: number; // monthlyDepreciation / monthlyProductiveHours
+  depreciationPerMinute: number; // depreciationPerHour / 60
+  
+  // Custos Operacionais
+  energyPowerWatts: number; // Potência em Watts (ex: 2200W)
+  energyConsumptionKwh: number; // energyPowerWatts / 1000 = 2.2 kWh
+  energyTariffKwh: number; // R$ por kWh (ex: R$ 0.85)
+  energyCostPerHour: number; // energyConsumptionKwh * energyTariffKwh
+  
+  monthlyMaintenanceCost: number; // Contrato ou provisão de manutenção mensal (R$)
+  maintenanceCostPerHour: number; // monthlyMaintenanceCost / monthlyProductiveHours
+  monthlyReplacementPartsCost: number; // Peças e cilindros mensais (R$)
+  replacementPartsCostPerHour: number; // monthlyReplacementPartsCost / monthlyProductiveHours
+  otherOperationalCostPerHour: number; // Outros custos operacionais por hora
+  
+  totalOperationalCostPerHour: number; // energyCostPerHour + maintenanceCostPerHour + replacementPartsCostPerHour + otherOperationalCostPerHour
+  totalMachineCostPerHour: number; // depreciationPerHour + totalOperationalCostPerHour
+  totalMachineCostPerMinute: number; // totalMachineCostPerHour / 60
+  
+  maintenanceFrequencyMonths: number; // a cada quantos meses
+  status: MachineStatus;
+  lastRevaluationDate?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LaborOperation {
+  id: string;
+  code: string; // ex: MO-001
+  name: string; // ex: Prensagem Térmica de Canecas
+  roleCategory: string; // ex: Operador Especializado
+  hourlyRate: number; // Salário base / hora (R$)
+  chargesBenefitsPercent: number; // Encargos sociais e benefícios (ex: 70%)
+  effectiveHourlyRate: number; // hourlyRate * (1 + chargesBenefitsPercent/100)
+  effectiveMinuteRate: number; // effectiveHourlyRate / 60
+  defaultSetupTimeMinutes: number; // Tempo de preparação por lote (min)
+  defaultUnitTimeMinutes: number; // Tempo por peça (min)
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type IndirectExpenseAllocationMethod =
+  | 'percentual_custo_direto'
+  | 'hora_produtiva'
+  | 'hora_mao_de_obra'
+  | 'volume_producao';
+
+export interface IndirectExpense {
+  id: string;
+  code: string;
+  name: string; // ex: Aluguel do Galpão / Luz Administrativa / Software Adobe
+  category: string; // ex: Ocupação, Tecnologia, Administrativo, Manutenção Predial
+  monthlyAmount: number; // R$
+  allocationMethod: IndirectExpenseAllocationMethod;
+  notes?: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SheetMaterialItem {
+  materialId: string;
+  materialName: string;
+  category: RawMaterialCategory;
+  quantityNeeded: number;
+  consumptionUnit: ConsumptionUnit;
+  unitCost: number; // Custo com perda embutida
+  wastePercent: number;
+  totalCost: number; // quantityNeeded * unitCost
+}
+
+export interface SheetMachineItem {
+  machineId: string;
+  machineName: string;
+  setupMinutes: number; // Tempo de setup no equipamento
+  unitMinutes: number; // Tempo de processamento por peça
+  hourlyRate: number; // totalMachineCostPerHour
+  totalCost: number; // ((setupMinutes/60) + (unitMinutes/60)) * hourlyRate
+}
+
+export interface SheetLaborItem {
+  operationId: string;
+  operationName: string;
+  roleCategory: string;
+  setupMinutes: number;
+  unitMinutes: number;
+  hourlyRate: number;
+  totalCost: number;
+}
+
+export interface SheetThirdPartyServiceItem {
+  id: string;
+  description: string; // ex: Gravação a Laser Especial Externa / Costura de Reforço
+  provider: string;
+  unitCost: number;
+  totalCost: number;
+}
+
+export interface SheetFinishingItem {
+  id: string;
+  description: string; // ex: Laminação BOPP Fosco / Verniz Localizado
+  costPerUnit: number;
+  totalCost: number;
+}
+
+export interface SheetPackagingItem {
+  id: string;
+  description: string; // ex: Caixa Kraft com visor + fita cetim
+  costPerUnit: number;
+  totalCost: number;
+}
+
+export interface CostCompositionSheet {
+  id: string;
+  code: string; // ex: FT-CAN-001
+  productId?: string; // Vínculo com produto do catálogo geral MB Personaliza
+  productName: string; // ex: Caneca Cerâmica Personalizada Sublimação
+  category: string; // ex: Canecas, Brindes, Papelaria, Banners, Adesivos
+  description: string;
+  dimensions?: {
+    widthCm: number;
+    heightCm: number;
+    areaM2: number;
+  };
+  
+  // Itens da composição
+  materials: SheetMaterialItem[];
+  machines: SheetMachineItem[];
+  labor: SheetLaborItem[];
+  thirdPartyServices: SheetThirdPartyServiceItem[];
+  finishings: SheetFinishingItem[];
+  packaging: SheetPackagingItem[];
+  otherDirectCosts: number;
+  
+  // Custos Diretos
+  totalMaterialsCost: number;
+  totalMachinesCost: number;
+  totalLaborCost: number;
+  totalThirdPartyCost: number;
+  totalFinishingsCost: number;
+  totalPackagingCost: number;
+  totalDirectCostPerUnit: number;
+  totalSetupCost: number; // Custos fixos de preparação diluídos
+  
+  // Custos Indiretos
+  allocatedIndirectCostPerUnit: number;
+  
+  // Custo Total Unitário
+  totalUnitCost: number;
+  
+  // Precificação Sugerida
+  pricingMethod: 'margem_sobre_venda' | 'markup';
+  targetMarginPercent: number; // ex: 35%
+  salesExpensesPercent: number; // Impostos + taxas + comissões (ex: 15%)
+  markupMultiplier: number; // ex: 2.0
+  suggestedUnitPrice: number;
+  
+  isTemplate: boolean;
+  version: number;
+  lastCostRecalculationDate: string;
+  createdAt: string;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+export interface QuantityTierPricing {
+  quantity: number;
+  setupCostDilutedUnit: number;
+  directCostUnit: number;
+  indirectCostUnit: number;
+  totalUnitCost: number;
+  totalBatchCost: number;
+  
+  // Venda & Margem
+  taxesPercent: number;
+  paymentFeePercent: number;
+  commissionPercent: number;
+  marketplaceFeePercent: number;
+  totalSalesExpensesPercent: number;
+  targetMarginPercent: number;
+  
+  suggestedUnitPrice: number;
+  suggestedTotalPrice: number;
+  minAllowedUnitPrice: number;
+  maxDiscountPercent: number;
+  grossProfitAmount: number;
+  effectiveMarginPercent: number;
+  
+  customUnitPriceEntered?: number;
+  customTotalPriceEntered?: number;
+  customEffectiveMarginPercent?: number;
+}
+
+export interface CostQuoteItem {
+  id: string;
+  sheetId?: string;
+  productId?: string;
+  productName: string;
+  description: string;
+  dimensions?: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  
+  // DADOS ESTRITAMENTE INTERNOS (NUNCA VAZAR PARA O CLIENTE)
+  internalEstimatedUnitCost: number;
+  internalTotalCost: number;
+  internalGrossProfit: number;
+  internalMarginPercent: number;
+}
+
+export interface CostQuote {
+  id: string;
+  code: string; // ex: ORC-CUSTO-2026-1042
+  clientId?: string;
+  clientName: string;
+  clientEmail: string;
+  clientPhone: string;
+  clientCompany?: string;
+  clientCpfCnpj?: string;
+  
+  items: CostQuoteItem[];
+  subtotal: number;
+  discount: number;
+  discountPercent?: number;
+  shippingCost: number;
+  total: number;
+  
+  productionDays: number;
+  validityDays: number;
+  validityDate: string;
+  paymentTerms: string;
+  
+  status: 'pendente' | 'aprovado' | 'recusado' | 'convertido';
+  
+  commercialNotes: string; // Exibido ao cliente
+  internalNotes?: string; // ESTRITAMENTE INTERNO
+  
+  // Resumo de Rentabilidade Interna (ESTRITAMENTE INTERNO)
+  internalSummary: {
+    totalDirectCost: number;
+    totalIndirectCost: number;
+    totalProductionCost: number;
+    totalEstimatedTaxesAndFees: number;
+    totalEstimatedGrossProfit: number;
+    overallEstimatedMarginPercent: number;
+    isBelowMinMargin: boolean;
+  };
+  
+  approvalInfo?: {
+    approvedBy: string;
+    approvedAt: string;
+    discountAuthorizedBy?: string;
+    notes?: string;
+  };
+  
+  convertedOrderId?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}
+
+export interface CostPricingAuditLog {
+  id: string;
+  timestamp: string;
+  userId: string;
+  userName: string;
+  userRole: UserRole;
+  entityType: 'material' | 'machine' | 'labor' | 'expense' | 'sheet' | 'quote' | 'settings';
+  entityId: string;
+  entityName: string;
+  operation: 'CRIAR' | 'EDITAR' | 'EXCLUIR' | 'REAVALIAR' | 'APROVAR_PRECO' | 'APROVAR_DESCONTO' | 'RECALCULAR';
+  previousData?: any;
+  newData?: any;
+  details: string;
+}
+
+export interface CostPricingSettings {
+  currency: 'BRL';
+  decimalPlaces: number; // 2 ou 4 para micro-insumos
+  roundingMode: 'arredondar_cima' | 'matematico';
+  defaultTargetMarginPercent: number; // ex: 35%
+  minimumAllowedMarginPercent: number; // ex: 20% (abaixo disso bloqueia ou exige alçada)
+  defaultSalesTaxPercent: number; // ex: 8.5% (Simples Nacional)
+  defaultPaymentGatewayFeePercent: number; // ex: 3.99% (Cartão/Gateway)
+  defaultSalesCommissionPercent: number; // ex: 3.0%
+  defaultMarketplaceFeePercent: number; // ex: 0% ou 14%
+  defaultEnergyTariffKwh: number; // R$ 0.85 / kWh
+  monthlyProductiveHoursDefault: number; // 176h (22 dias x 8h)
+  indirectExpenseAllocationMethod: IndirectExpenseAllocationMethod;
+  defaultQuoteValidityDays: number; // ex: 15 dias
+  outdatedCostDaysThreshold: number; // ex: 60 dias para alertar que o custo está antigo
+  requireApprovalForDiscountOverPercent: number; // ex: 10%
+  requireApprovalBelowMinMargin: boolean;
+  autoRecalculateSheetsOnCostChange: boolean;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+// Seção 15: Regras Obrigatórias de Segurança, Testes e Validação com Evidências
+export interface CostPricingTestResult {
+  id: string;
+  moduleName: string;
+  targetObjective: string;
+  procedureExecuted: string;
+  expectedResult: string;
+  obtainedResult: string;
+  status: 'aprovado' | 'reprovado' | 'bloqueado' | 'nao_executado';
+  errorsFound?: string;
+  correctionsApplied?: string;
+  evidenceData: any;
+  timestamp: string;
+}

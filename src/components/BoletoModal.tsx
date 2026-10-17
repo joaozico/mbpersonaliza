@@ -13,6 +13,7 @@ import {
   User,
   ShieldCheck,
   AlertTriangle,
+  AlertCircle,
   ExternalLink,
   Barcode,
 } from 'lucide-react';
@@ -32,6 +33,7 @@ export const BoletoModal: React.FC<BoletoModalProps> = ({
   const [copied, setCopied] = useState(false);
   const [settling, setSettling] = useState(false);
   const [settledSuccess, setSettledSuccess] = useState<string | null>(null);
+  const [settleError, setSettleError] = useState<string | null>(null);
 
   const currentBoleto = boletos[selectedIdx] || boletos[0];
   if (!currentBoleto) return null;
@@ -62,7 +64,8 @@ export const BoletoModal: React.FC<BoletoModalProps> = ({
         }
         setTimeout(() => setSettledSuccess(null), 4000);
       } else {
-        alert(res.error || res.message);
+        setSettleError(res.error || res.message || 'Erro ao processar baixa.');
+        setTimeout(() => setSettleError(null), 4000);
       }
     } finally {
       setSettling(false);
@@ -140,6 +143,13 @@ export const BoletoModal: React.FC<BoletoModalProps> = ({
           <div className="bg-emerald-600 text-white px-6 py-2.5 text-xs font-bold flex items-center gap-2 animate-pulse print:hidden">
             <CheckCircle2 className="w-4 h-4" />
             <span>{settledSuccess}</span>
+          </div>
+        )}
+
+        {settleError && (
+          <div className="bg-rose-600 text-white px-6 py-2.5 text-xs font-bold flex items-center gap-2 animate-pulse print:hidden">
+            <AlertCircle className="w-4 h-4" />
+            <span>{settleError}</span>
           </div>
         )}
 

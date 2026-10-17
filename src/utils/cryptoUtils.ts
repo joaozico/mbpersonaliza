@@ -106,14 +106,16 @@ export async function calculateSha256(text: string): Promise<string> {
     }
   }
 
-  // 2. Try Node crypto
-  try {
-    const nodeCrypto = await import('crypto');
-    if (nodeCrypto && nodeCrypto.createHash) {
-      return nodeCrypto.createHash('sha256').update(text).digest('hex');
+  // 2. Try Node crypto if in Node environment
+  if (typeof window === 'undefined') {
+    try {
+      const nodeCrypto = await import(/* @vite-ignore */ 'crypto');
+      if (nodeCrypto && nodeCrypto.createHash) {
+        return nodeCrypto.createHash('sha256').update(text).digest('hex');
+      }
+    } catch {
+      // Ignore and proceed to fallback
     }
-  } catch {
-    // Ignore and proceed to fallback
   }
 
   // 3. Pure TS Synchronous Fallback

@@ -22,6 +22,9 @@ import { SiteMetricsView } from './views/SiteMetricsView';
 import { PDVView } from './views/PDVView';
 import { MaintenanceView } from './views/MaintenanceView';
 import { FinancialModuleView } from './views/FinancialModuleView';
+import { CostPricingModuleView } from './views/CostPricingModuleView';
+import { AboutView } from './views/AboutView';
+import { ContactView } from './views/ContactView';
 import { AdminMaintenanceBanner } from './components/AdminMaintenanceBanner';
 import { AnalyticsService } from './services/analytics';
 
@@ -152,6 +155,9 @@ export default function App() {
     } else if (currentView === 'financial' || currentView === 'financeiro') {
       title = 'Módulo Financeiro | MB Personaliza';
       path = '/financeiro';
+    } else if (currentView === 'cost_pricing' || currentView === 'precificacao' || currentView === 'custos') {
+      title = 'Orçamento de Custos & Precificação de Produtos | MB Personaliza';
+      path = '/precificacao';
     }
 
     AnalyticsService.trackPageView(path, title);
@@ -480,6 +486,34 @@ export default function App() {
               refreshData();
             }}
           />
+        )}
+
+        {/* Módulo de Orçamento de Custos & Precificação (Acesso Direto com Proteção de Permissões) */}
+        {(currentView === 'cost_pricing' || currentView === 'precificacao' || currentView === 'custos') && (
+          currentUser.role === 'admin' || StorageService.hasUserPermission(currentUser, 'canViewCostPricingModule') ? (
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+              <CostPricingModuleView currentUser={currentUser} />
+            </div>
+          ) : (
+            <AdminLoginView
+              onLoginSuccess={(user) => {
+                setCurrentUser(user);
+                refreshData();
+                setCurrentView('cost_pricing');
+              }}
+              onNavigate={handleNavigate}
+            />
+          )
+        )}
+
+        {/* About View */}
+        {currentView === 'about' && (
+          <AboutView onNavigate={handleNavigate} />
+        )}
+
+        {/* Contact View */}
+        {currentView === 'contact' && (
+          <ContactView onNavigate={handleNavigate} />
         )}
 
         {/* Maintenance View (Direct route or Admin preview) */}

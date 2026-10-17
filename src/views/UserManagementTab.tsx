@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { UserProfile, UserRole, RolePermissions } from '../types';
 import { StorageService } from '../services/storage';
+import { INITIAL_PERMISSIONS_MATRIX } from '../data/initialData';
 import {
   Users,
   Shield,
@@ -24,6 +25,8 @@ import {
   TrendingUp,
   FileSpreadsheet,
   Key,
+  Calculator,
+  RefreshCw,
 } from 'lucide-react';
 
 interface UserManagementTabProps {
@@ -32,7 +35,7 @@ interface UserManagementTabProps {
 
 export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUser }) => {
   const [activeSubTab, setActiveSubTab] = useState<
-    'employees' | 'financial_access' | 'permissions' | 'customers'
+    'employees' | 'financial_access' | 'cost_pricing_access' | 'permissions' | 'customers'
   >('employees');
 
   const [employees, setEmployees] = useState<UserProfile[]>(() => StorageService.getEmployees());
@@ -44,6 +47,10 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
   // Modal State para Permissões Financeiras Individuais (Requisitos 6, 7 e 8)
   const [selectedUserForFinancial, setSelectedUserForFinancial] = useState<UserProfile | null>(null);
   const [individualPermsDraft, setIndividualPermsDraft] = useState<Partial<RolePermissions>>({});
+
+  // Modal State para Permissões de Custos e Precificação Individuais (Prompt Seção 2)
+  const [selectedUserForCostPricing, setSelectedUserForCostPricing] = useState<UserProfile | null>(null);
+  const [costPricingPermsDraft, setCostPricingPermsDraft] = useState<Partial<RolePermissions>>({});
 
   // Search filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -155,22 +162,14 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
 
   // Permission matrix toggle
   const handleTogglePermission = (role: UserRole, permissionKey: keyof RolePermissions) => {
-    const currentPerms = permissionsMatrix[role] || {
-      canViewDashboard: true,
-      canManageProducts: false,
-      canManageCategories: false,
-      canManageStock: false,
-      canManageQuotes: false,
-      canManageOrders: false,
-      canManageUsers: false,
-      canManageCompanySettings: false,
-      canViewReports: false,
-      canEditPrices: false,
-      canDeleteData: false,
-    };
+    const currentPerms =
+      (permissionsMatrix && permissionsMatrix[role]) ||
+      StorageService.getRolePermissions(role) ||
+      INITIAL_PERMISSIONS_MATRIX[role] ||
+      ({} as any);
 
     const updatedMatrix: Record<UserRole, RolePermissions> = {
-      ...permissionsMatrix,
+      ...(permissionsMatrix || {}),
       [role]: {
         ...currentPerms,
         [permissionKey]: !currentPerms[permissionKey],
@@ -189,7 +188,7 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
   const handleOpenFinancialPermissionsModal = (user: UserProfile) => {
     setSelectedUserForFinancial(user);
     const custom = user.customPermissions || {};
-    const rolePerms = StorageService.getRolePermissions(user.role);
+    const rolePerms = StorageService.getRolePermissions(user.role) || INITIAL_PERMISSIONS_MATRIX[user.role] || (INITIAL_PERMISSIONS_MATRIX.visitante as RolePermissions);
     setIndividualPermsDraft({
       canViewFinancialModule:
         custom.canViewFinancialModule !== undefined
@@ -319,23 +318,104 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
     }
   };
 
+  // Abrir Modal de Permissões de Custos e Precificação (Prompt Seção 2)
+  const handleOpenCostPricingPermissionsModal = (user: UserProfile) => {
+    setSelectedUserForCostPricing(user);
+    const custom = user.customPermissions || {};
+    const rolePerms = StorageService.getRolePermissions(user.role) || INITIAL_PERMISSIONS_MATRIX[user.role] || (INITIAL_PERMISSIONS_MATRIX.visitante as RolePermissions);
+    setCostPricingPermsDraft({
+      canViewCostPricingModule:
+        custom.canViewCostPricingModule !== undefined
+          ? custom.canViewCostPricingModule
+          : rolePerms.canViewCostPricingModule,
+      canViewCostsAndCompositions:
+        custom.canViewCostsAndCompositions !== undefined
+          ? custom.canViewCostsAndCompositions
+          : rolePerms.canViewCostsAndCompositions,
+      canManageCosts:
+        custom.canManageCosts !== undefined
+          ? custom.canManageCosts
+          : rolePerms.canManageCosts,
+      canManageMachines:
+        custom.canManageMachines !== undefined
+          ? custom.canManageMachines
+          : rolePerms.canManageMachines,
+      canConfigureDepreciation:
+        custom.canConfigureDepreciation !== undefined
+          ? custom.canConfigureDepreciation
+          : rolePerms.canConfigureDepreciation,
+      canConfigurePricingParameters:
+        custom.canConfigurePricingParameters !== undefined
+          ? custom.canConfigurePricingParameters
+          : rolePerms.canConfigurePricingParameters,
+      canCreateEditCostQuotes:
+        custom.canCreateEditCostQuotes !== undefined
+          ? custom.canCreateEditCostQuotes
+          : rolePerms.canCreateEditCostQuotes,
+      canApprovePricesAndDiscounts:
+        custom.canApprovePricesAndDiscounts !== undefined
+          ? custom.canApprovePricesAndDiscounts
+          : rolePerms.canApprovePricesAndDiscounts,
+      canViewPricingReports:
+        custom.canViewPricingReports !== undefined
+          ? custom.canViewPricingReports
+          : rolePerms.canViewPricingReports,
+      canExportPricingReports:
+        custom.canExportPricingReports !== undefined
+          ? custom.canExportPricingReports
+          : rolePerms.canExportPricingReports,
+    });
+  };
+
+  const handleSaveIndividualCostPricingPermissions = () => {
+    if (!selectedUserForCostPricing) return;
+
+    const res = StorageService.grantCostPricingPermissions(
+      selectedUserForCostPricing.id,
+      costPricingPermsDraft,
+      currentUser
+    );
+
+    if (res.success) {
+      refreshData();
+      setSelectedUserForCostPricing(null);
+      showNotification(
+        'success',
+        `Permissões de custos e precificação de ${selectedUserForCostPricing.name} atualizadas e registradas na auditoria!`
+      );
+    } else {
+      showNotification('error', res.error || 'Erro ao conceder permissões.');
+    }
+  };
+
   // Filtered employees
   const filteredEmployees = employees.filter((emp) => {
+    if (!emp) return false;
+    const name = emp.name || '';
+    const email = emp.email || '';
+    const dept = emp.department || '';
+    const s = (searchTerm || '').toLowerCase();
     const matchesSearch =
-      emp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      emp.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (emp.department && emp.department.toLowerCase().includes(searchTerm.toLowerCase()));
+      name.toLowerCase().includes(s) ||
+      email.toLowerCase().includes(s) ||
+      dept.toLowerCase().includes(s);
     const matchesRole = roleFilter === 'all' || emp.role === roleFilter;
     return matchesSearch && matchesRole;
   });
 
   // Filtered customers
   const filteredCustomers = customers.filter((cust) => {
+    if (!cust) return false;
+    const name = cust.name || '';
+    const email = cust.email || '';
+    const comp = cust.company || '';
+    const doc = cust.cpfCnpj || '';
+    const s = (searchTerm || '').toLowerCase();
     return (
-      cust.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      cust.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (cust.company && cust.company.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (cust.cpfCnpj && cust.cpfCnpj.includes(searchTerm))
+      name.toLowerCase().includes(s) ||
+      email.toLowerCase().includes(s) ||
+      comp.toLowerCase().includes(s) ||
+      doc.includes(s)
     );
   });
 
@@ -346,20 +426,65 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
     { role: 'estoquista', name: 'Almoxarife / Estoque' },
   ];
 
-  const permissionsList: { key: keyof RolePermissions; label: string; desc: string }[] = [
-    { key: 'canViewDashboard', label: 'Acesso ao Painel Admin', desc: 'Acessar a área de gestão interna' },
-    { key: 'canViewSiteMetrics', label: 'Visualizar Métricas do Site', desc: 'Acessar painel analítico de tráfego e acessos (Estilo Instagram Insights)' },
-    { key: 'canManageProducts', label: 'Produtos & Catálogo', desc: 'Criar, editar e excluir itens' },
-    { key: 'canManageCategories', label: 'Categorias & Subcategorias', desc: 'Estruturação do catálogo' },
-    { key: 'canEditPrices', label: 'Preços & Faixas de Desconto', desc: 'Alterar tabelas e promoções' },
-    { key: 'canManageStock', label: 'Controle de Estoque', desc: 'Lançamentos de entrada e saída' },
-    { key: 'canManageQuotes', label: 'Gestão de Orçamentos', desc: 'Precificar e responder cotações' },
-    { key: 'canManageOrders', label: 'Gestão de Pedidos', desc: 'Alterar status de produção e envio' },
-    { key: 'canManageUsers', label: 'Gestão de Usuários', desc: 'Cadastrar colaboradores e acessos' },
-    { key: 'canManageCompanySettings', label: 'Dados & Logo da Empresa', desc: 'Editar configurações da MB' },
-    { key: 'canCustomizeLayout', label: 'Personalizar Layout do Sistema', desc: 'Configurar cores, textos, banners, blocos e ordem da loja' },
-    { key: 'canViewReports', label: 'Relatórios & Exportações', desc: 'Exportar dados analíticos e pedidos' },
-    { key: 'canDeleteData', label: 'Exclusão de Registros', desc: 'Apagar pedidos, orçamentos ou itens' },
+  const permissionsList: { key: keyof RolePermissions; label: string; desc: string; category: string }[] = [
+    // Operacional & Catálogo
+    { key: 'canViewDashboard', label: 'Acesso ao Painel Admin', desc: 'Acessar a área de gestão interna', category: 'Operacional & Catálogo' },
+    { key: 'canViewSiteMetrics', label: 'Visualizar Métricas do Site', desc: 'Acessar painel analítico de tráfego e acessos', category: 'Operacional & Catálogo' },
+    { key: 'canManageProducts', label: 'Produtos & Catálogo', desc: 'Criar, editar e excluir itens do catálogo', category: 'Operacional & Catálogo' },
+    { key: 'canManageCategories', label: 'Categorias & Subcategorias', desc: 'Estruturação do catálogo e departamentos', category: 'Operacional & Catálogo' },
+    { key: 'canEditPrices', label: 'Preços & Faixas de Desconto', desc: 'Alterar tabelas e promoções de venda', category: 'Operacional & Catálogo' },
+    { key: 'canManageStock', label: 'Controle de Estoque', desc: 'Lançamentos de entrada, saída e inventário', category: 'Operacional & Catálogo' },
+    { key: 'canManageQuotes', label: 'Gestão de Orçamentos', desc: 'Precificar e responder cotações comerciais', category: 'Operacional & Catálogo' },
+    { key: 'canManageOrders', label: 'Gestão de Pedidos', desc: 'Alterar status de produção, separação e envio', category: 'Operacional & Catálogo' },
+    { key: 'canViewReports', label: 'Relatórios & Exportações', desc: 'Exportar dados analíticos e pedidos', category: 'Operacional & Catálogo' },
+    { key: 'canDeleteData', label: 'Exclusão de Registros', desc: 'Apagar pedidos, orçamentos ou itens', category: 'Operacional & Catálogo' },
+
+    // Vendas, PDV & Caixa
+    { key: 'canAccessPDV', label: 'Acesso ao PDV Frente de Caixa', desc: 'Operar o terminal de vendas balcão', category: 'Vendas, PDV & Caixa' },
+    { key: 'canOpenCloseCashRegister', label: 'Abertura e Fechamento de Caixa', desc: 'Abrir turno e encerrar conferência de caixa', category: 'Vendas, PDV & Caixa' },
+    { key: 'canApplyDiscountPDV', label: 'Conceder Descontos no PDV', desc: 'Aplicar abatimentos pontuais no caixa', category: 'Vendas, PDV & Caixa' },
+    { key: 'canCancelPDVSale', label: 'Cancelar Vendas no PDV', desc: 'Cancelar cupons e operações de venda', category: 'Vendas, PDV & Caixa' },
+    { key: 'canPerformSangriaSuprimento', label: 'Sangria & Suprimento', desc: 'Lançar retiradas e reforços no caixa', category: 'Vendas, PDV & Caixa' },
+    { key: 'canViewFinancialTransactions', label: 'Histórico de Transações de Venda', desc: 'Consultar comprovantes e pagamentos recebidos', category: 'Vendas, PDV & Caixa' },
+
+    // Módulo Financeiro & Boletos (Restrito)
+    { key: 'canViewFinancialModule', label: 'Acesso ao Módulo Financeiro', desc: 'Acesso central ao menu e dashboard financeiro', category: 'Módulo Financeiro & Boletos' },
+    { key: 'canViewFinancialDashboard', label: 'Dashboard Financeiro', desc: 'Gráficos e KPIs de receitas e despesas', category: 'Módulo Financeiro & Boletos' },
+    { key: 'canViewReceivables', label: 'Contas a Receber', desc: 'Consultar títulos e faturas a receber', category: 'Módulo Financeiro & Boletos' },
+    { key: 'canCreateReceivable', label: 'Cadastrar Contas a Receber', desc: 'Lançar novos títulos manuais a receber', category: 'Módulo Financeiro & Boletos' },
+    { key: 'canReceivePayment', label: 'Baixar / Quitar Recebíveis', desc: 'Registrar pagamentos de clientes', category: 'Módulo Financeiro & Boletos' },
+    { key: 'canViewPayables', label: 'Contas a Pagar', desc: 'Consultar despesas e títulos a pagar', category: 'Módulo Financeiro & Boletos' },
+    { key: 'canCreatePayable', label: 'Cadastrar Contas a Pagar', desc: 'Lançar novas contas de fornecedores', category: 'Módulo Financeiro & Boletos' },
+    { key: 'canPayBill', label: 'Baixar / Pagar Contas', desc: 'Dar baixa de quitação em contas a pagar', category: 'Módulo Financeiro & Boletos' },
+    { key: 'canViewCashFlow', label: 'Fluxo de Caixa (Realizado / Projetado)', desc: 'Demonstrativo diário e mensal de liquidez', category: 'Módulo Financeiro & Boletos' },
+    { key: 'canViewFinancialReports', label: 'Relatórios Financeiros & DRE', desc: 'Consultar DRE e relatórios contábeis', category: 'Módulo Financeiro & Boletos' },
+    { key: 'canExportFinancialReports', label: 'Exportar Relatórios Financeiros', desc: 'Exportar arquivos CSV e relatórios PDF', category: 'Módulo Financeiro & Boletos' },
+    { key: 'canManageFinancialCategories', label: 'Plano de Contas & Centros de Custo', desc: 'Configurar categorias e centros de custo', category: 'Módulo Financeiro & Boletos' },
+    { key: 'canManageBankAccounts', label: 'Contas Bancárias & Métodos', desc: 'Gerenciar contas correntes e carteiras', category: 'Módulo Financeiro & Boletos' },
+    { key: 'canManageFinancialSettings', label: 'Configurações Financeiras', desc: 'Parâmetros de juros, multas e regras', category: 'Módulo Financeiro & Boletos' },
+    { key: 'canViewFinancialAudit', label: 'Trilha de Auditoria Financeira', desc: 'Log imutável de operações financeiras sensíveis', category: 'Módulo Financeiro & Boletos' },
+    { key: 'canConfigureBoletoRules', label: 'Regras de Boleto Bancário', desc: 'Configurar instruções, juros e multas de boletos', category: 'Módulo Financeiro & Boletos' },
+    { key: 'canAuthorizeDeferredBoleto', label: 'Autorizar Faturamento a Prazo', desc: 'Liberar vendas a prazo para clientes corporativos', category: 'Módulo Financeiro & Boletos' },
+
+    // Módulo de Custos & Precificação
+    { key: 'canViewCostPricingModule', label: 'Acesso ao Módulo de Custos & Precificação', desc: 'Visualizar a aba de engenharia de custos', category: 'Custos & Precificação' },
+    { key: 'canViewCostsAndCompositions', label: 'Consultar Custos & Fichas Técnicas', desc: 'Ver composição de custos unitários e insumos', category: 'Custos & Precificação' },
+    { key: 'canManageCosts', label: 'Cadastrar e Editar Custos', desc: 'Gerenciar insumos, matérias-primas e custos fixos', category: 'Custos & Precificação' },
+    { key: 'canManageMachines', label: 'Gestão de Máquinas & Equipamentos', desc: 'Cadastrar máquinas de personalização', category: 'Custos & Precificação' },
+    { key: 'canConfigureDepreciation', label: 'Configurar Depreciação & Manutenção', desc: 'Ajustar vida útil, potência e depreciação/hora', category: 'Custos & Precificação' },
+    { key: 'canConfigurePricingParameters', label: 'Configurar Parâmetros de Precificação', desc: 'Alterar margens de lucro, impostos e markups', category: 'Custos & Precificação' },
+    { key: 'canCreateEditCostQuotes', label: 'Criar e Editar Orçamentos de Custo', desc: 'Elaborar cotações com cálculo automatizado', category: 'Custos & Precificação' },
+    { key: 'canApprovePricesAndDiscounts', label: 'Aprovar Preços & Descontos Especiais', desc: 'Autorizar margens abaixo da tabela mínima', category: 'Custos & Precificação' },
+    { key: 'canViewPricingReports', label: 'Relatórios de Precificação & Ponto de Equilíbrio', desc: 'Visualizar análise de lucratividade e breakeven', category: 'Custos & Precificação' },
+    { key: 'canExportPricingReports', label: 'Exportar Relatórios de Custos', desc: 'Exportar dados para Excel e PDF', category: 'Custos & Precificação' },
+
+    // Configurações & Sistema
+    { key: 'canManageUsers', label: 'Gestão de Usuários & Equipe', desc: 'Cadastrar colaboradores e conceder acessos', category: 'Configurações & Sistema' },
+    { key: 'canManageCompanySettings', label: 'Dados & Logo da MB Personaliza', desc: 'Alterar dados cadastrais e WhatsApps da empresa', category: 'Configurações & Sistema' },
+    { key: 'canManageDeliverySettings', label: 'Regiões de Atendimento & Frete', desc: 'Configurar CEPs atendidos, taxas e Sedex/PAC', category: 'Configurações & Sistema' },
+    { key: 'canCustomizeLayout', label: 'Personalização de Layout & Banners', desc: 'Configurar cores, temas, banners e loja virtual', category: 'Configurações & Sistema' },
+    { key: 'canManagePaymentGateways', label: 'Gateways de Pagamento (Mercado Pago / PagBank)', desc: 'Credenciais de checkout transparente e PIX', category: 'Configurações & Sistema' },
+    { key: 'canManageMaintenanceMode', label: 'Gerenciar Modo Manutenção', desc: 'Ativar/desativar tela de manutenção do sistema', category: 'Configurações & Sistema' },
   ];
 
   return (
@@ -380,27 +505,42 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
           </div>
         </div>
 
-        {activeSubTab === 'employees' && (
+        <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
           <button
             type="button"
-            onClick={handleOpenCreateModal}
-            className="px-4 py-2.5 text-xs font-extrabold text-white bg-[#E6007E] hover:bg-[#c9006e] rounded-xl shadow-sm transition-all flex items-center gap-2 cursor-pointer self-start sm:self-auto"
+            onClick={() => {
+              refreshData();
+              showNotification('success', 'Dados de colaboradores e matriz de permissões recarregados com sucesso!');
+            }}
+            className="px-3.5 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+            title="Recarregar dados de usuários e permissões"
           >
-            <UserPlus className="w-4 h-4" />
-            <span>Novo Colaborador</span>
+            <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
+            <span>Recarregar</span>
           </button>
-        )}
 
-        {activeSubTab === 'permissions' && (
-          <button
-            type="button"
-            onClick={handleSavePermissionsMatrix}
-            className="px-4 py-2.5 text-xs font-extrabold text-white bg-slate-900 hover:bg-[#E6007E] rounded-xl shadow-sm transition-all flex items-center gap-2 cursor-pointer self-start sm:self-auto"
-          >
-            <Check className="w-4 h-4 text-[#FFDD00]" />
-            <span>Salvar Matriz de Permissões</span>
-          </button>
-        )}
+          {activeSubTab === 'employees' && (
+            <button
+              type="button"
+              onClick={handleOpenCreateModal}
+              className="px-4 py-2 text-xs font-extrabold text-white bg-[#E6007E] hover:bg-[#c9006e] rounded-xl shadow-sm transition-all flex items-center gap-2 cursor-pointer"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>Novo Colaborador</span>
+            </button>
+          )}
+
+          {activeSubTab === 'permissions' && (
+            <button
+              type="button"
+              onClick={handleSavePermissionsMatrix}
+              className="px-4 py-2 text-xs font-extrabold text-white bg-slate-900 hover:bg-[#E6007E] rounded-xl shadow-sm transition-all flex items-center gap-2 cursor-pointer"
+            >
+              <Check className="w-4 h-4 text-[#FFDD00]" />
+              <span>Salvar Matriz de Permissões</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Notification banner */}
@@ -446,7 +586,20 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
           }`}
         >
           <DollarSign className="w-4 h-4 text-[#FFDD00]" />
-          <span>Acesso ao Módulo Financeiro (Restrito)</span>
+          <span>Acesso Módulo Financeiro</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('cost_pricing_access')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${
+            activeSubTab === 'cost_pricing_access'
+              ? 'bg-gradient-to-r from-blue-600 to-indigo-700 text-white shadow-xs ring-2 ring-blue-300'
+              : 'bg-white text-blue-700 hover:bg-blue-50 border border-blue-200/70'
+          }`}
+        >
+          <Calculator className="w-4 h-4 text-[#FFDD00]" />
+          <span>Acesso Custos & Precificação</span>
         </button>
 
         <button
@@ -523,20 +676,25 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredEmployees.map((emp) => {
-                  const roleBadgeConfig = {
+                  const roleBadgeConfig: Record<string, { bg: string; label: string }> = {
                     admin: { bg: 'bg-rose-50 text-rose-700 border-rose-200', label: 'Administrador' },
                     gerente: { bg: 'bg-purple-50 text-purple-700 border-purple-200', label: 'Gerente Geral' },
                     vendedor: { bg: 'bg-blue-50 text-blue-700 border-blue-200', label: 'Comercial / Vendas' },
                     estoquista: { bg: 'bg-amber-50 text-amber-700 border-amber-200', label: 'Almoxarife / Estoque' },
                     cliente: { bg: 'bg-slate-100 text-slate-700 border-slate-200', label: 'Cliente' },
-                  }[emp.role];
+                    visitante: { bg: 'bg-slate-100 text-slate-600 border-slate-200', label: 'Visitante' },
+                  };
+                  const badge = roleBadgeConfig[emp.role] || {
+                    bg: 'bg-slate-100 text-slate-700 border-slate-200',
+                    label: emp.role || 'Colaborador',
+                  };
 
                   return (
                     <tr key={emp.id} className="hover:bg-slate-50/75 transition-colors">
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-3">
                           <div className="w-9 h-9 rounded-xl bg-slate-900 text-white font-extrabold text-xs flex items-center justify-center shrink-0">
-                            {emp.name.substring(0, 2).toUpperCase()}
+                            {(emp.name || emp.email || 'CO').substring(0, 2).toUpperCase()}
                           </div>
                           <div>
                             <p className="font-extrabold text-slate-900 flex items-center gap-1.5">
@@ -555,9 +713,9 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
 
                       <td className="py-3.5 px-4">
                         <span
-                          className={`inline-flex items-center px-2.5 py-1 rounded-lg text-[11px] font-extrabold border ${roleBadgeConfig.bg}`}
+                          className={`inline-flex items-center px-2.5 py-1 rounded-lg text-[11px] font-extrabold border ${badge.bg}`}
                         >
-                          {roleBadgeConfig.label}
+                          {badge.label}
                         </span>
                       </td>
 
@@ -597,6 +755,14 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
                             title="Conceder / Configurar Acesso ao Módulo Financeiro"
                           >
                             <DollarSign className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenCostPricingPermissionsModal(emp)}
+                            className="p-1.5 text-blue-600 hover:text-white hover:bg-blue-600 rounded-lg transition-colors cursor-pointer"
+                            title="Conceder / Configurar Permissões de Custos e Precificação"
+                          >
+                            <Calculator className="w-4 h-4" />
                           </button>
                           <button
                             type="button"
@@ -823,6 +989,174 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
         </div>
       )}
 
+      {/* SUBTAB: COST PRICING ACCESS MANAGEMENT */}
+      {activeSubTab === 'cost_pricing_access' && (
+        <div className="space-y-6">
+          {/* Card Informativo do Módulo de Custos & Precificação */}
+          <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-6 rounded-3xl shadow-lg border border-indigo-900/50 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-md shrink-0">
+                  <Calculator className="w-6 h-6 stroke-[2.5]" />
+                </div>
+                <div>
+                  <h3 className="font-heading text-lg font-black uppercase text-white tracking-wide">
+                    Controle de Acesso: Módulo de Custos & Precificação
+                  </h3>
+                  <p className="text-xs text-indigo-200">
+                    Gerencie quem na equipe pode visualizar composições de custos, cadastrar insumos e máquinas, e configurar margens de lucro.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                  Admin → Acesso Total
+                </span>
+                <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                  Colaborador → Concessão Granular
+                </span>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 bg-slate-800/80 p-3 rounded-2xl border border-slate-700">
+              💡 <strong>Regra de Acesso:</strong> Colaboradores precisam da permissão{' '}
+              <code className="text-blue-400 font-mono">canViewCostPricingModule</code> para acessar o módulo. Permissões de edição de insumos, máquinas, margens e relatórios são configuradas individualmente pelo Administrador.
+            </p>
+          </div>
+
+          {/* Tabela de Colaboradores e Permissões de Custos */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-50/50">
+              <div className="relative w-full sm:w-80">
+                <input
+                  type="text"
+                  placeholder="Buscar colaborador..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-slate-900"
+                />
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              </div>
+
+              <span className="text-xs font-bold text-slate-500">
+                Colaboradores e permissões de custos / orçamentos
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-100/75 text-slate-600 font-bold uppercase tracking-wider text-[10px] border-b border-slate-200">
+                  <tr>
+                    <th className="py-3.5 px-4">Colaborador</th>
+                    <th className="py-3.5 px-4">Cargo / Setor</th>
+                    <th className="py-3.5 px-4">Acesso ao Módulo</th>
+                    <th className="py-3.5 px-4">Permissões de Custo Ativas</th>
+                    <th className="py-3.5 px-4 text-right">Ação</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredEmployees.map((emp) => {
+                    const isEmpAdmin = emp.role === 'admin';
+                    const hasCostModule = StorageService.hasUserPermission(emp, 'canViewCostPricingModule');
+                    const hasCosts = StorageService.hasUserPermission(emp, 'canViewCostsAndCompositions');
+                    const hasManageCosts = StorageService.hasUserPermission(emp, 'canManageCosts');
+                    const hasMachines = StorageService.hasUserPermission(emp, 'canManageMachines');
+                    const hasPricingParams = StorageService.hasUserPermission(emp, 'canConfigurePricingParameters');
+                    const hasQuotes = StorageService.hasUserPermission(emp, 'canCreateEditCostQuotes');
+
+                    return (
+                      <tr key={emp.id} className="hover:bg-slate-50/75 transition-colors">
+                        <td className="py-3.5 px-4">
+                          <p className="font-extrabold text-slate-900">{emp.name}</p>
+                          <p className="text-[11px] text-slate-500">{emp.email}</p>
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          <span className="font-bold text-slate-700 capitalize">{emp.role}</span>
+                          <span className="block text-[11px] text-slate-400">{emp.department || 'Geral'}</span>
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          {isEmpAdmin ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
+                              <ShieldCheck className="w-3.5 h-3.5" />
+                              Total (Admin)
+                            </span>
+                          ) : hasCostModule ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase bg-blue-100 text-blue-800 border border-blue-200">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              Autorizado
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase bg-slate-100 text-slate-500 border border-slate-200">
+                              <Lock className="w-3.5 h-3.5" />
+                              Bloqueado
+                            </span>
+                          )}
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          <div className="flex flex-wrap items-center gap-1 max-w-md">
+                            {isEmpAdmin ? (
+                              <span className="text-[11px] font-bold text-emerald-700">
+                                Acesso total a fichas, máquinas, margens e orçamentos
+                              </span>
+                            ) : hasCostModule ? (
+                              <>
+                                {hasCosts && (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                    Fichas e Insumos
+                                  </span>
+                                )}
+                                {hasManageCosts && (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                    Editar Custos
+                                  </span>
+                                )}
+                                {hasMachines && (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                                    Máquinas
+                                  </span>
+                                )}
+                                {hasPricingParams && (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                    Parâmetros
+                                  </span>
+                                )}
+                                {hasQuotes && (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    Orçamentos
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-[11px] text-slate-400 italic">Sem permissões ativas</span>
+                            )}
+                          </div>
+                        </td>
+
+                        <td className="py-3.5 px-4 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenCostPricingPermissionsModal(emp)}
+                            className="px-3 py-1.5 text-xs font-black rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-all cursor-pointer shadow-xs flex items-center gap-1.5 ml-auto"
+                            title="Configurar permissões de custos deste colaborador"
+                          >
+                            <Calculator className="w-3.5 h-3.5" />
+                            <span>Definir Permissões</span>
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* SUBTAB 2: PERMISSIONS MATRIX */}
       {activeSubTab === 'permissions' && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden p-6 space-y-6">
@@ -851,41 +1185,69 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
-                {permissionsList.map((row) => (
-                  <tr key={row.key} className="hover:bg-slate-50/75">
-                    <td className="py-3.5 px-4">
-                      <p className="font-bold text-slate-900">{row.label}</p>
-                      <p className="text-[11px] text-slate-400">{row.desc}</p>
-                    </td>
-
-                    {rolesToDisplay.map((r) => {
-                      const rolePerms = permissionsMatrix[r.role];
-                      const isAllowed = rolePerms ? Boolean(rolePerms[row.key]) : false;
-                      const isAdminRole = r.role === 'admin';
-
-                      return (
-                        <td key={r.role} className="py-3.5 px-4 text-center">
-                          <button
-                            type="button"
-                            disabled={isAdminRole}
-                            onClick={() => handleTogglePermission(r.role, row.key)}
-                            className={`w-9 h-9 rounded-xl inline-flex items-center justify-center transition-all ${
-                              isAllowed
-                                ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
-                                : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
-                            } ${isAdminRole ? 'opacity-90 cursor-not-allowed' : 'cursor-pointer shadow-xs'}`}
-                            title={isAllowed ? 'Permitido' : 'Bloqueado'}
-                          >
-                            {isAllowed ? (
-                              <Check className="w-5 h-5 font-black stroke-[3]" />
-                            ) : (
-                              <X className="w-4 h-4 font-bold" />
-                            )}
-                          </button>
+                {Object.entries(
+                  permissionsList.reduce<Record<string, typeof permissionsList>>((acc, perm) => {
+                    acc[perm.category] = acc[perm.category] || [];
+                    acc[perm.category].push(perm);
+                    return acc;
+                  }, {})
+                ).map(([catName, items]) => (
+                  <React.Fragment key={catName}>
+                    <tr className="bg-slate-100/90 border-y border-slate-200">
+                      <td
+                        colSpan={rolesToDisplay.length + 1}
+                        className="py-2.5 px-4 text-[11px] font-black uppercase tracking-wider text-slate-800"
+                      >
+                        📂 {catName}
+                      </td>
+                    </tr>
+                    {items.map((row) => (
+                      <tr key={row.key} className="hover:bg-slate-50/75 transition-colors">
+                        <td className="py-3 px-4">
+                          <p className="font-bold text-slate-900">{row.label}</p>
+                          <p className="text-[11px] text-slate-400">{row.desc}</p>
                         </td>
-                      );
-                    })}
-                  </tr>
+
+                        {rolesToDisplay.map((r) => {
+                          const rolePerms =
+                            (permissionsMatrix && permissionsMatrix[r.role]) ||
+                            StorageService.getRolePermissions(r.role) ||
+                            INITIAL_PERMISSIONS_MATRIX[r.role] ||
+                            ({} as any);
+                          const isAllowed = rolePerms ? Boolean(rolePerms[row.key]) : false;
+                          const isAdminRole = r.role === 'admin';
+
+                          return (
+                            <td key={r.role} className="py-3 px-4 text-center">
+                              <button
+                                type="button"
+                                disabled={isAdminRole}
+                                onClick={() => handleTogglePermission(r.role, row.key)}
+                                className={`w-9 h-9 rounded-xl inline-flex items-center justify-center transition-all ${
+                                  isAllowed
+                                    ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                                    : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                                } ${isAdminRole ? 'opacity-90 cursor-not-allowed' : 'cursor-pointer shadow-xs'}`}
+                                title={
+                                  isAdminRole
+                                    ? 'Administrador possui acesso total fixo'
+                                    : isAllowed
+                                    ? 'Permitido (Clique para bloquear)'
+                                    : 'Bloqueado (Clique para permitir)'
+                                }
+                              >
+                                {isAllowed ? (
+                                  <Check className="w-5 h-5 font-black stroke-[3]" />
+                                ) : (
+                                  <X className="w-4 h-4 font-bold" />
+                                )}
+                              </button>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
@@ -943,7 +1305,7 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
                     <td className="py-3.5 px-4">
                       <div className="flex items-center gap-3">
                         <div className="w-9 h-9 rounded-xl bg-pink-100 text-[#E6007E] font-extrabold text-xs flex items-center justify-center shrink-0">
-                          {cust.name.substring(0, 2).toUpperCase()}
+                          {(cust.name || cust.email || 'CL').substring(0, 2).toUpperCase()}
                         </div>
                         <div>
                           <p className="font-extrabold text-slate-900">{cust.company || cust.name}</p>
@@ -1728,6 +2090,312 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
               >
                 <Check className="w-4 h-4 text-[#FFDD00]" />
                 <span>Salvar Permissões do Usuário</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE PERMISSÕES INDIVIDUAIS DE CUSTOS & PRECIFICAÇÃO (Prompt Seção 2) */}
+      {selectedUserForCostPricing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-slate-100 my-8 space-y-6">
+            <div className="flex items-start justify-between border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-blue-100 text-blue-700 rounded-2xl">
+                  <Calculator className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900">
+                    Permissões de Custos & Precificação
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Colaborador:{' '}
+                    <strong className="text-slate-800">{selectedUserForCostPricing.name}</strong> • Cargo:{' '}
+                    <span className="uppercase text-[11px] font-extrabold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                      {selectedUserForCostPricing.role}
+                    </span>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedUserForCostPricing(null)}
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Aviso informativo de auditoria */}
+            <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200/80 flex items-start gap-2.5 text-xs text-amber-900">
+              <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <strong>Acesso Restrito & Controle de Auditoria:</strong> Por padrão apenas o perfil
+                Administrador possui acesso total. Qualquer alteração de permissão individual concedida
+                aqui é registrada na trilha de auditoria com data, hora e responsável.
+              </div>
+            </div>
+
+            {/* Atalhos Rápidos de Seleção */}
+            <div className="flex items-center justify-between gap-2 p-3 bg-slate-50 rounded-2xl border border-slate-200">
+              <span className="text-xs font-bold text-slate-600">Ações Rápidas:</span>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCostPricingPermsDraft({
+                      canViewCostPricingModule: true,
+                      canViewCostsAndCompositions: true,
+                      canManageCosts: true,
+                      canManageMachines: true,
+                      canConfigureDepreciation: true,
+                      canConfigurePricingParameters: true,
+                      canCreateEditCostQuotes: true,
+                      canApprovePricesAndDiscounts: true,
+                      canViewPricingReports: true,
+                      canExportPricingReports: true,
+                    });
+                  }}
+                  className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer"
+                >
+                  🟢 Conceder Todos
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCostPricingPermsDraft({
+                      canViewCostPricingModule: true,
+                      canViewCostsAndCompositions: true,
+                      canManageCosts: false,
+                      canManageMachines: false,
+                      canConfigureDepreciation: false,
+                      canConfigurePricingParameters: false,
+                      canCreateEditCostQuotes: true,
+                      canApprovePricesAndDiscounts: false,
+                      canViewPricingReports: true,
+                      canExportPricingReports: true,
+                    });
+                  }}
+                  className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-blue-100 text-blue-800 hover:bg-blue-200 cursor-pointer"
+                >
+                  🔵 Operador / Orçamentista
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCostPricingPermsDraft({
+                      canViewCostPricingModule: false,
+                      canViewCostsAndCompositions: false,
+                      canManageCosts: false,
+                      canManageMachines: false,
+                      canConfigureDepreciation: false,
+                      canConfigurePricingParameters: false,
+                      canCreateEditCostQuotes: false,
+                      canApprovePricesAndDiscounts: false,
+                      canViewPricingReports: false,
+                      canExportPricingReports: false,
+                    });
+                  }}
+                  className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300 cursor-pointer"
+                >
+                  ⚪ Revogar Todos
+                </button>
+              </div>
+            </div>
+
+            {/* Checkboxes Granulares Organizados */}
+            <div className="space-y-4 text-xs max-h-[50vh] overflow-y-auto pr-1">
+              {/* Grupo: Acesso ao Módulo */}
+              <div className="p-3.5 rounded-2xl border border-blue-200/80 bg-blue-50/30 space-y-2">
+                <span className="font-black uppercase text-blue-900 tracking-wider text-[11px] block">
+                  1. Acesso ao Módulo
+                </span>
+                <label className="flex items-center gap-2.5 cursor-pointer font-bold text-slate-800">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(costPricingPermsDraft.canViewCostPricingModule)}
+                    onChange={(e) =>
+                      setCostPricingPermsDraft({
+                        ...costPricingPermsDraft,
+                        canViewCostPricingModule: e.target.checked,
+                      })
+                    }
+                    className="w-4 h-4 rounded text-blue-600"
+                  />
+                  <span>Visualizar o Módulo de Custos & Precificação (Aba no Painel Admin)</span>
+                </label>
+              </div>
+
+              {/* Grupo: Gestão de Custos & Máquinas */}
+              <div className="p-3.5 rounded-2xl border border-slate-200 space-y-2 bg-slate-50/50">
+                <span className="font-black uppercase text-slate-900 tracking-wider text-[11px] block">
+                  2. Custos, Insumos & Equipamentos
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-800">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(costPricingPermsDraft.canViewCostsAndCompositions)}
+                      onChange={(e) =>
+                        setCostPricingPermsDraft({
+                          ...costPricingPermsDraft,
+                          canViewCostsAndCompositions: e.target.checked,
+                        })
+                      }
+                      className="w-4 h-4 rounded text-slate-900"
+                    />
+                    <span>Consultar custos e composições</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(costPricingPermsDraft.canManageCosts)}
+                      onChange={(e) =>
+                        setCostPricingPermsDraft({
+                          ...costPricingPermsDraft,
+                          canManageCosts: e.target.checked,
+                        })
+                      }
+                      className="w-4 h-4 rounded text-slate-900"
+                    />
+                    <span>Cadastrar e editar custos (Insumos, Mão de Obra, Fixos)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(costPricingPermsDraft.canManageMachines)}
+                      onChange={(e) =>
+                        setCostPricingPermsDraft({
+                          ...costPricingPermsDraft,
+                          canManageMachines: e.target.checked,
+                        })
+                      }
+                      className="w-4 h-4 rounded text-slate-900"
+                    />
+                    <span>Cadastrar máquinas e equipamentos</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(costPricingPermsDraft.canConfigureDepreciation)}
+                      onChange={(e) =>
+                        setCostPricingPermsDraft({
+                          ...costPricingPermsDraft,
+                          canConfigureDepreciation: e.target.checked,
+                        })
+                      }
+                      className="w-4 h-4 rounded text-slate-900"
+                    />
+                    <span>Configurar depreciação e custo operacional</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Grupo: Precificação & Parâmetros */}
+              <div className="p-3.5 rounded-2xl border border-slate-200 space-y-2 bg-slate-50/50">
+                <span className="font-black uppercase text-slate-900 tracking-wider text-[11px] block">
+                  3. Parâmetros de Precificação & Orçamentos
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <label className="flex items-center gap-2 cursor-pointer text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(costPricingPermsDraft.canConfigurePricingParameters)}
+                      onChange={(e) =>
+                        setCostPricingPermsDraft({
+                          ...costPricingPermsDraft,
+                          canConfigurePricingParameters: e.target.checked,
+                        })
+                      }
+                      className="w-4 h-4 rounded text-slate-900"
+                    />
+                    <span>Alterar impostos, taxas, margens e parâmetros</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-800">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(costPricingPermsDraft.canCreateEditCostQuotes)}
+                      onChange={(e) =>
+                        setCostPricingPermsDraft({
+                          ...costPricingPermsDraft,
+                          canCreateEditCostQuotes: e.target.checked,
+                        })
+                      }
+                      className="w-4 h-4 rounded text-slate-900"
+                    />
+                    <span>Criar e editar orçamentos personalizados</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer font-bold text-amber-700">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(costPricingPermsDraft.canApprovePricesAndDiscounts)}
+                      onChange={(e) =>
+                        setCostPricingPermsDraft({
+                          ...costPricingPermsDraft,
+                          canApprovePricesAndDiscounts: e.target.checked,
+                        })
+                      }
+                      className="w-4 h-4 rounded text-amber-600"
+                    />
+                    <span>Aprovar preços e descontos especiais</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Grupo: Relatórios */}
+              <div className="p-3.5 rounded-2xl border border-slate-200 space-y-2 bg-slate-50/50">
+                <span className="font-black uppercase text-slate-900 tracking-wider text-[11px] block">
+                  4. Relatórios & Exportação
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <label className="flex items-center gap-2 cursor-pointer text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(costPricingPermsDraft.canViewPricingReports)}
+                      onChange={(e) =>
+                        setCostPricingPermsDraft({
+                          ...costPricingPermsDraft,
+                          canViewPricingReports: e.target.checked,
+                        })
+                      }
+                      className="w-4 h-4 rounded text-slate-900"
+                    />
+                    <span>Visualizar relatórios gerenciais e ponto de equilíbrio</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(costPricingPermsDraft.canExportPricingReports)}
+                      onChange={(e) =>
+                        setCostPricingPermsDraft({
+                          ...costPricingPermsDraft,
+                          canExportPricingReports: e.target.checked,
+                        })
+                      }
+                      className="w-4 h-4 rounded text-slate-900"
+                    />
+                    <span>Exportar ou imprimir relatórios e propostas</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setSelectedUserForCostPricing(null)}
+                className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 rounded-xl transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveIndividualCostPricingPermissions}
+                className="px-6 py-2.5 text-xs font-extrabold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2"
+              >
+                <Check className="w-4 h-4 text-white" />
+                <span>Salvar Permissões de Custos</span>
               </button>
             </div>
           </div>
