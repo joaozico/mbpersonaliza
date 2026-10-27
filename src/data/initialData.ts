@@ -1854,7 +1854,7 @@ export const INITIAL_LAYOUT_SETTINGS: SystemLayoutSettings = {
     primaryCtaText: 'Explorar Catálogo',
     primaryCtaLink: 'catalog',
     primaryCtaVisible: true,
-    secondaryCtaText: 'Solicitar Cotação B2B',
+    secondaryCtaText: 'Solicitar Cotação',
     secondaryCtaLink: 'quote',
     secondaryCtaVisible: true,
     tertiaryCtaText: 'Catálogo PDF',

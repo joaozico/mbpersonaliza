@@ -1374,6 +1374,9 @@ export const StorageService = {
       hero: {
         ...INITIAL_LAYOUT_SETTINGS.hero,
         ...(stored.hero || {}),
+        secondaryCtaText: stored.hero?.secondaryCtaText
+          ? stored.hero.secondaryCtaText.replace(/Cotação B2B/g, 'Cotação')
+          : INITIAL_LAYOUT_SETTINGS.hero.secondaryCtaText,
         titleParts:
           stored.hero?.titleParts && stored.hero.titleParts.length > 0
             ? stored.hero.titleParts

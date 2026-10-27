@@ -457,7 +457,7 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
       <div className="text-center max-w-2xl mx-auto space-y-2">
         <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-pink-50 text-[#E6007E] text-xs font-bold uppercase tracking-wider">
           <Sparkles className="w-3.5 h-3.5" />
-          Cotação Rápida B2B & Personalizados
+          Cotação Rápida & Personalizados
         </span>
         <h1 className="text-3xl sm:text-4xl font-extrabold uppercase font-heading text-slate-900">
           Solicite seu Orçamento Personalizado
@@ -1330,12 +1330,7 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
         </div>
 
         {/* Submit action */}
-        <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="text-xs text-slate-500 flex items-center gap-1.5">
-            <Info className="w-4 h-4 text-[#00AEEF]" />
-            <span>Resposta formal por e-mail e WhatsApp em até 2 horas úteis.</span>
-          </div>
-
+        <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-end gap-4">
           <button
             type="submit"
             className="w-full sm:w-auto px-8 py-3.5 bg-gradient-to-r from-[#00AEEF] to-[#E6007E] hover:opacity-95 text-white font-extrabold text-sm uppercase rounded-2xl transition-all shadow-lg hover:shadow-pink-500/25 flex items-center justify-center gap-2 cursor-pointer"
