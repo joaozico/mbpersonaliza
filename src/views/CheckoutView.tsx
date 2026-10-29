@@ -8,6 +8,9 @@ import {
   DeliveryAndShippingSettings,
   BoletoTitulo,
   Quote,
+  DiscountCoupon,
+  OrderCouponInfo,
+  CouponValidationResult,
 } from '../types';
 import { StorageService } from '../services/storage';
 import { PaymentService } from '../services/paymentService';
@@ -44,6 +47,10 @@ import {
   Clock,
   Search,
   Package,
+  Ticket,
+  Tag,
+  X,
+  Percent,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -174,6 +181,114 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
     0
   );
 
+  // Estados de Cupom de Desconto
+  const [couponInput, setCouponInput] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState<DiscountCoupon | null>(null);
+  const [couponDiscount, setCouponDiscount] = useState<number>(0);
+  const [couponValidationResult, setCouponValidationResult] = useState<CouponValidationResult | null>(null);
+  const [couponLoading, setCouponLoading] = useState(false);
+  const [couponFeedback, setCouponFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Função para aplicar cupom com validação completa no backend (e fallback no Storage)
+  const handleApplyCoupon = async (overrideCode?: string) => {
+    const codeToTest = (overrideCode !== undefined ? overrideCode : couponInput).trim();
+    if (!codeToTest) {
+      setCouponFeedback({ type: 'error', text: 'Por favor, digite o código do cupom.' });
+      return;
+    }
+
+    setCouponLoading(true);
+    setCouponFeedback(null);
+
+    const payloadCartItems = (cart || []).map((it) => ({
+      productId: it.productId,
+      categoryId: it.product?.categoryId,
+      unitPrice: it.calculatedUnitPrice,
+      quantity: it.quantity,
+      isPromo: it.product?.promo_price !== undefined && it.product.promo_price > 0,
+    }));
+
+    const customerData = {
+      id: currentUser?.id,
+      email: email || currentUser?.email,
+      cpfCnpj: cpfCnpj || currentUser?.cpfCnpj,
+    };
+
+    try {
+      // Tentar validação no backend
+      const res = await fetch('/api/coupons/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: codeToTest,
+          cartItems: payloadCartItems,
+          subtotal,
+          customer: customerData,
+        }),
+      });
+
+      let data: CouponValidationResult;
+      if (res.ok) {
+        data = await res.json();
+      } else {
+        // Fallback local caso dev server temporário
+        data = StorageService.validateCoupon(codeToTest, payloadCartItems, subtotal, customerData);
+      }
+
+      if (data.valid && data.coupon) {
+        setAppliedCoupon(data.coupon);
+        setCouponDiscount(data.discountAmount);
+        setCouponValidationResult(data);
+        setCouponFeedback({
+          type: 'success',
+          text: `Cupom "${data.coupon.code}" aplicado! Desconto de ${
+            data.coupon.discountType === 'percentage'
+              ? `${data.coupon.discountValue}% (R$ ${data.discountAmount.toFixed(2).replace('.', ',')})`
+              : `R$ ${data.discountAmount.toFixed(2).replace('.', ',')}`
+          }`,
+        });
+      } else {
+        setAppliedCoupon(null);
+        setCouponDiscount(0);
+        setCouponValidationResult(null);
+        setCouponFeedback({
+          type: 'error',
+          text: data.error || 'Código de cupom inválido ou expirado.',
+        });
+      }
+    } catch {
+      // Fallback para StorageService local
+      const localResult = StorageService.validateCoupon(codeToTest, payloadCartItems, subtotal, customerData);
+      if (localResult.valid && localResult.coupon) {
+        setAppliedCoupon(localResult.coupon);
+        setCouponDiscount(localResult.discountAmount);
+        setCouponValidationResult(localResult);
+        setCouponFeedback({
+          type: 'success',
+          text: `Cupom "${localResult.coupon.code}" aplicado com sucesso!`,
+        });
+      } else {
+        setAppliedCoupon(null);
+        setCouponDiscount(0);
+        setCouponValidationResult(null);
+        setCouponFeedback({
+          type: 'error',
+          text: localResult.error || 'Código de cupom inválido.',
+        });
+      }
+    } finally {
+      setCouponLoading(false);
+    }
+  };
+
+  const handleRemoveCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponDiscount(0);
+    setCouponValidationResult(null);
+    setCouponInput('');
+    setCouponFeedback(null);
+  };
+
   // Calcula opções de frete disponíveis para o endereço e carrinho atual
   const shippingCalculation = useMemo(() => {
     const cleaned = cleanCep(zip);
@@ -231,8 +346,10 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
 
   // Custo de frete dinâmico: se transportadora 'a combinar', custo é 0 no checkout imediato
   const shippingCost = selectedShippingOption ? selectedShippingOption.cost : 0;
-  const pixDiscount = paymentMethod === 'pix' ? subtotal * pixDiscountRate : 0;
-  const total = subtotal + shippingCost - pixDiscount;
+  // Subtotal com desconto de cupom
+  const subtotalAfterCoupon = Math.max(0, subtotal - couponDiscount);
+  const pixDiscount = paymentMethod === 'pix' ? subtotalAfterCoupon * pixDiscountRate : 0;
+  const total = Math.max(0, subtotalAfterCoupon + shippingCost - pixDiscount);
   const installmentOptions = PaymentService.calculateInstallments(total, activeGateway);
 
   // Consulta automática de CEP via ViaCEP oficial
@@ -324,19 +441,36 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
         },
         items: cart.map((item) => ({
           id: `oi-${Date.now()}-${item.id}`,
-          productId: item.product.id,
-          productName: item.product.name,
-          productSku: item.product.code,
-          productImage: item.product.images[0],
+          productId: item.product?.id || item.productId || '',
+          productName: item.product?.name || 'Produto Personalizado',
+          productSku: item.product?.code || 'SKU',
+          productImage: item.product?.images?.[0] || '',
           variantName: item.variant?.name,
-          unitPrice: item.calculatedUnitPrice,
-          quantity: item.quantity,
-          total: item.calculatedUnitPrice * item.quantity,
+          unitPrice: item.calculatedUnitPrice || 0,
+          quantity: item.quantity || 1,
+          total: (item.calculatedUnitPrice || 0) * (item.quantity || 1),
           customTechnique: item.customTechnique,
           customArtworkName: item.customArtworkName,
         })),
         subtotal,
-        discount: pixDiscount,
+        discount: Number((pixDiscount + couponDiscount).toFixed(2)),
+        couponCode: appliedCoupon?.code,
+        couponId: appliedCoupon?.id,
+        couponDiscount: couponDiscount > 0 ? couponDiscount : undefined,
+        couponInfo: appliedCoupon
+          ? {
+              couponId: appliedCoupon.id,
+              code: appliedCoupon.code,
+              campaignName: appliedCoupon.campaignName,
+              discountType: appliedCoupon.discountType,
+              discountValue: appliedCoupon.discountValue,
+              discountApplied: couponDiscount,
+              originalSubtotal: subtotal,
+              eligibleSubtotal: couponValidationResult?.eligibleSubtotal ?? subtotal,
+              appliedAt: new Date().toISOString(),
+              customerIdentified: email || name,
+            }
+          : undefined,
         shippingCost,
         shippingInfo: {
           methodId: selectedShippingOption.methodId,
@@ -436,6 +570,8 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
         metadata: {
           shippingCost,
           subtotal,
+          couponDiscount,
+          couponCode: appliedCoupon?.code,
           pixDiscount,
         },
         history: [
@@ -1332,21 +1468,21 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
               {cart.map((item) => (
                 <div key={item.id} className="pt-3 flex items-center justify-between text-xs gap-3">
                   <img
-                    src={item.product.images[0]}
-                    alt={item.product.name}
+                    src={item.product?.images?.[0] || 'https://images.unsplash.com/photo-1544816155-12df9643f363?auto=format&fit=crop&w=400&q=80'}
+                    alt={item.product?.name || 'Produto'}
                     className="w-12 h-12 object-cover rounded-lg border border-slate-100 flex-shrink-0"
                   />
                   <div className="flex-1 min-w-0">
-                    <p className="font-bold text-slate-900 truncate">{item.product.name}</p>
+                    <p className="font-bold text-slate-900 truncate">{item.product?.name || 'Produto'}</p>
                     <p className="text-[11px] text-slate-500">
-                      {item.quantity} un x R$ {item.calculatedUnitPrice.toFixed(2)}
+                      {item.quantity || 1} un x R$ {(item.calculatedUnitPrice || 0).toFixed(2)}
                     </p>
                     {item.variant && (
                       <span className="text-[10px] text-slate-400">{item.variant.name}</span>
                     )}
                   </div>
                   <span className="font-bold text-slate-900 font-heading">
-                    R$ {(item.calculatedUnitPrice * item.quantity).toFixed(2)}
+                    R$ {((item.calculatedUnitPrice || 0) * (item.quantity || 1)).toFixed(2)}
                   </span>
                 </div>
               ))}
@@ -1385,6 +1521,99 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
                   )}
                 </span>
               </div>
+
+              {/* Cupom de Desconto */}
+              <div className="pt-3 pb-2 border-t border-slate-200">
+                <label className="block text-xs font-bold text-slate-800 mb-1.5 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Ticket className="w-3.5 h-3.5 text-[#E6007E]" />
+                    <span>Cupom de desconto</span>
+                  </span>
+                  {appliedCoupon && (
+                    <span className="text-[10px] text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-semibold border border-emerald-200">
+                      Cupom Ativo
+                    </span>
+                  )}
+                </label>
+
+                {!appliedCoupon ? (
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <input
+                        type="text"
+                        value={couponInput}
+                        onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
+                        onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleApplyCoupon())}
+                        placeholder="Ex: PRIMEIRACOMPRA"
+                        className="w-full px-3 py-2 text-xs font-mono font-semibold uppercase bg-white border border-slate-300 rounded-xl focus:border-slate-900 focus:outline-none"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleApplyCoupon()}
+                      disabled={couponLoading || !couponInput.trim()}
+                      className="px-3.5 py-2 bg-slate-900 hover:bg-[#E6007E] text-white text-xs font-bold rounded-xl transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5 shrink-0"
+                    >
+                      {couponLoading ? (
+                        <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <span>Aplicar</span>
+                      )}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold text-xs">
+                        <Tag className="w-3.5 h-3.5" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-emerald-950 font-mono">
+                          {appliedCoupon.code}
+                        </div>
+                        <div className="text-[10px] text-emerald-700">
+                          {appliedCoupon.campaignName}
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRemoveCoupon}
+                      className="p-1 text-emerald-700 hover:text-rose-600 hover:bg-emerald-100 rounded-lg transition-colors cursor-pointer"
+                      title="Remover cupom"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+
+                {couponFeedback && (
+                  <div
+                    className={`mt-2 p-2 rounded-lg text-[11px] leading-tight flex items-start gap-1.5 ${
+                      couponFeedback.type === 'success'
+                        ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                        : 'bg-rose-50 text-rose-800 border border-rose-200'
+                    }`}
+                  >
+                    {couponFeedback.type === 'success' ? (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0 mt-0.5" />
+                    )}
+                    <span>{couponFeedback.text}</span>
+                  </div>
+                )}
+              </div>
+
+              {couponDiscount > 0 && (
+                <div className="flex justify-between text-[#E6007E] bg-pink-50 px-2.5 py-1.5 rounded-lg font-bold border border-pink-100">
+                  <span className="flex items-center gap-1.5">
+                    <Tag className="w-3.5 h-3.5" />
+                    <span>Desconto do Cupom ({appliedCoupon?.code}):</span>
+                  </span>
+                  <span>- R$ {couponDiscount.toFixed(2)}</span>
+                </div>
+              )}
 
               {pixDiscount > 0 && (
                 <div className="flex justify-between text-emerald-700 bg-emerald-50 px-2.5 py-1.5 rounded-lg font-bold">

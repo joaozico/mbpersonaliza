@@ -29,7 +29,7 @@ interface ProductDetailViewProps {
   productId: string;
   products: Product[];
   onNavigate: (view: string, param?: string) => void;
-  onAddToCart: (item: CartItem) => void;
+  onAddToCart: (item: CartItem, openDrawer?: boolean) => void;
   onOpenQuoteModal: (initialItem?: { product: Product; variant?: ProductVariant; quantity: number }) => void;
 }
 
@@ -40,39 +40,57 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
   onAddToCart,
   onOpenQuoteModal,
 }) => {
-  const product = products.find((p) => p.id === productId || p.slug === productId) || products[0];
+  const product = (products || []).find((p) => p.id === productId || p.slug === productId) || products?.[0];
 
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | undefined>(
-    product.variants && product.variants.length > 0 ? product.variants[0] : undefined
+    product?.variants && product.variants.length > 0 ? product.variants[0] : undefined
   );
   const [selectedTechnique, setSelectedTechnique] = useState<string>(
-    product.details.customTechniques[0] || 'Gravação a Laser'
+    product?.details?.customTechniques?.[0] || 'Gravação a Laser'
   );
-  const [quantity, setQuantity] = useState<number>(product.min_order_qty || 10);
+  const [quantity, setQuantity] = useState<number>(product?.min_order_qty || 10);
   const [uploadedArtwork, setUploadedArtwork] = useState<{ name: string; url: string; size: string } | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
 
   // Dynamic price calculation based on quantity and tiers
   const currentUnitPrice = useMemo(() => {
+    if (!product) return 0;
     return StorageService.calculateUnitPrice(product, quantity);
   }, [product, quantity]);
 
-  const baseStandardPrice = product.promo_price || product.base_price;
+  const baseStandardPrice = product?.promo_price || product?.base_price || 0;
   const totalPrice = currentUnitPrice * quantity;
   const standardTotal = baseStandardPrice * quantity;
   const savings = Math.max(0, standardTotal - totalPrice);
 
   // Related products
-  const relatedProducts = products
-    .filter((p) => p.id !== product.id && p.categoryId === product.categoryId)
+  const relatedProducts = (products || [])
+    .filter((p) => product && p.id !== product.id && p.categoryId === product.categoryId)
     .slice(0, 3);
+
+  if (!product) {
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-20 text-center space-y-4">
+        <h2 className="text-2xl font-bold text-slate-800 font-heading">Produto não encontrado</h2>
+        <p className="text-slate-500 text-sm max-w-md mx-auto">
+          O produto que você tentou acessar não foi localizado ou não está mais ativo em nossa base.
+        </p>
+        <button
+          onClick={() => onNavigate('catalog')}
+          className="px-6 py-2.5 bg-slate-900 hover:bg-[#E6007E] text-white font-bold rounded-xl text-sm transition-colors cursor-pointer"
+        >
+          Voltar ao Catálogo
+        </button>
+      </div>
+    );
+  }
 
   const handleQuantityChange = (newQty: number) => {
     setQuantity(Math.max(product.min_order_qty || 1, newQty));
   };
 
-  const handleAddToCart = () => {
+  const handleAddToCart = (openDrawer: boolean = true) => {
     const item: CartItem = {
       id: `cart-${product.id}-${selectedVariant?.id || 'default'}-${Date.now()}`,
       product,
@@ -82,11 +100,11 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
       customArtworkName: uploadedArtwork?.name,
       calculatedUnitPrice: currentUnitPrice,
     };
-    onAddToCart(item);
+    onAddToCart(item, openDrawer);
   };
 
   const handleBuyNow = () => {
-    handleAddToCart();
+    handleAddToCart(false);
     onNavigate('checkout');
   };
 
@@ -120,16 +138,16 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
     <div className="w-full min-w-0 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-12" id="product-detail-page">
       <SEOHead
         title={`${product.name} Personalizado`}
-        description={`${product.name}: ${product.short_description || product.description.substring(0, 155)}... Opções de personalização via ${product.details.customTechniques.join(', ')}. Quantidade mínima: ${product.min_order_qty} un.`}
+        description={`${product.name}: ${product.short_description || product.description.substring(0, 155)}... Opções de personalização via ${(product.details?.customTechniques || []).join(', ')}. Quantidade mínima: ${product.min_order_qty} un.`}
         canonicalPath={`/produto/${product.slug || product.id}`}
         ogType="product"
-        ogImage={product.images[0]}
-        twitterImage={product.images[0]}
+        ogImage={product.images?.[0] || ''}
+        twitterImage={product.images?.[0] || ''}
         keywords={[
           product.name.toLowerCase(),
           `${product.name.toLowerCase()} personalizado`,
           `${product.name.toLowerCase()} corporativo`,
-          ...product.details.customTechniques.map((t) => t.toLowerCase()),
+          ...(product.details?.customTechniques || []).map((t) => t.toLowerCase()),
           'brindes personalizados sp',
           'MB Personaliza',
         ]}
@@ -141,7 +159,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
         productData={{
           name: product.name,
           description: product.description,
-          image: product.images[0],
+          image: product.images?.[0] || '',
           sku: product.code,
           price: currentUnitPrice,
           currency: 'BRL',

@@ -47,19 +47,19 @@ export const HomeView: React.FC<HomeViewProps> = ({
     };
   }, []);
 
-  const featuredLimit = layout.featuredSection.limit || 6;
-  const categoriesLimit = layout.categoriesSection.limit || 6;
+  const featuredLimit = layout?.featuredSection?.limit || 6;
+  const categoriesLimit = layout?.categoriesSection?.limit || 6;
 
-  const featuredProducts = products
-    .filter((p) => p.is_active && p.is_featured)
+  const featuredProducts = (products || [])
+    .filter((p) => p && p.is_active && p.is_featured)
     .slice(0, featuredLimit);
 
-  const displayCategories = categories.slice(0, categoriesLimit);
+  const displayCategories = (categories || []).slice(0, categoriesLimit);
 
   // Sort blocks by order and only visible
-  const visibleBlocks = [...layout.blocks]
-    .filter((b) => b.isVisible)
-    .sort((a, b) => a.order - b.order);
+  const visibleBlocks = (Array.isArray(layout?.blocks) ? layout.blocks : [])
+    .filter((b) => b && b.isVisible)
+    .sort((a, b) => (a?.order || 0) - (b?.order || 0));
 
   // Filter other blocks so offers_banner is not duplicated in the map
   const contentBlocks = visibleBlocks.filter((b) => b.type !== 'offers_banner');
@@ -202,13 +202,22 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     </div>
 
                     {/* Trust Badges */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-6 border-t border-slate-800/80 text-xs">
-                      {layout.hero.trustBadges.map((badge, idx) => (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-6 border-t border-slate-800/80 text-xs">
+                      {(layout?.hero?.trustBadges || []).map((badge, idx) => (
                         <div key={badge.id} className="flex items-center gap-2 text-slate-300">
-                          {idx === 0 && <Zap className="w-4 h-4 text-[#FFDD00] flex-shrink-0" />}
-                          {idx === 1 && <ShieldCheck className="w-4 h-4 text-emerald-400 flex-shrink-0" />}
-                          {idx === 2 && <Truck className="w-4 h-4 text-[#00AEEF] flex-shrink-0" />}
-                          {idx === 3 && <Award className="w-4 h-4 text-[#E6007E] flex-shrink-0" />}
+                          {badge.icon === 'Zap' ? (
+                            <Zap className="w-4 h-4 text-[#FFDD00] flex-shrink-0" />
+                          ) : badge.icon === 'ShieldCheck' ? (
+                            <ShieldCheck className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                          ) : badge.icon === 'Truck' ? (
+                            <Truck className="w-4 h-4 text-[#00AEEF] flex-shrink-0" />
+                          ) : badge.icon === 'CheckCircle' ? (
+                            <CheckCircle className="w-4 h-4 text-[#E6007E] flex-shrink-0" />
+                          ) : badge.icon === 'Award' ? (
+                            <Award className="w-4 h-4 text-[#E6007E] flex-shrink-0" />
+                          ) : (
+                            <Sparkles className="w-4 h-4 text-[#00AEEF] flex-shrink-0" />
+                          )}
                           <div>
                             <span className="font-bold block text-white">{badge.title}</span>
                             <span className="text-[10px] text-slate-400 block">{badge.description}</span>
@@ -432,7 +441,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
                         {/* Techniques Tags */}
                         <div className="flex flex-wrap gap-1">
-                          {product.details.customTechniques.slice(0, 2).map((t, idx) => (
+                          {(product.details?.customTechniques || []).slice(0, 2).map((t, idx) => (
                             <span
                               key={idx}
                               className="text-[10px] font-medium px-2 py-0.5 rounded bg-slate-100 text-slate-700"
@@ -514,7 +523,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       {layout.b2bBanner.description}
                     </p>
                     <div className="flex flex-wrap gap-4 pt-2 text-xs text-slate-300">
-                      {layout.b2bBanner.benefits.map((benefit, bIdx) => (
+                      {(layout?.b2bBanner?.benefits || []).map((benefit, bIdx) => (
                         <span key={bIdx} className="flex items-center gap-1.5">
                           <CheckCircle className="w-4 h-4 text-emerald-400" /> {benefit}
                         </span>
@@ -571,7 +580,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {layout.whyChoose.items.map((item, idx) => (
+                {(layout?.whyChoose?.items || []).map((item, idx) => (
                   <div key={item.id} className="p-6 bg-white rounded-2xl border border-slate-200 space-y-3">
                     <div
                       className="w-12 h-12 rounded-xl flex items-center justify-center"

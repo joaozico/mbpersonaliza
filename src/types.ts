@@ -66,6 +66,15 @@ export interface RolePermissions {
   canApprovePricesAndDiscounts?: boolean;
   canViewPricingReports?: boolean;
   canExportPricingReports?: boolean;
+  // Módulo de Cupons de Desconto & Promoções
+  canViewCoupons?: boolean;
+  canCreateCoupons?: boolean;
+  canEditCoupons?: boolean;
+  canToggleCoupons?: boolean;
+  canCancelCoupons?: boolean;
+  canViewCouponUsageHistory?: boolean;
+  canViewCouponReports?: boolean;
+  canSendCouponsToCustomers?: boolean;
 }
 
 export type PermissionKey = keyof RolePermissions;
@@ -492,6 +501,10 @@ export interface Order {
   items: OrderItem[];
   subtotal: number;
   discount: number;
+  couponCode?: string;
+  couponId?: string;
+  couponDiscount?: number;
+  couponInfo?: OrderCouponInfo;
   shippingCost: number;
   shippingInfo?: OrderShippingInfo;
   total: number;
@@ -505,6 +518,144 @@ export interface Order {
   boletos?: BoletoTitulo[];
   createdAt: string;
   updatedAt?: string;
+}
+
+// ==========================================
+// MÓDULO DE CUPONS DE DESCONTO & PROMOÇÕES
+// ==========================================
+
+export type CouponDiscountType = 'percentage' | 'fixed';
+export type CouponStatus = 'draft' | 'active' | 'paused' | 'expired' | 'cancelled';
+export type CouponTargetType = 'all_store' | 'categories' | 'products';
+export type CouponCustomerRestriction = 'general' | 'specific_customers';
+
+export interface OrderCouponInfo {
+  couponId: string;
+  code: string;
+  campaignName: string;
+  discountType: CouponDiscountType;
+  discountValue: number;
+  discountApplied: number;
+  originalSubtotal: number;
+  eligibleSubtotal: number;
+  appliedAt: string;
+  customerIdentified?: string;
+}
+
+export interface DiscountCoupon {
+  id: string;
+  code: string; // Ex: PRIMEIRACOMPRA, MBVIP10, DESCONTO50
+  campaignName: string; // Nome da campanha ou descrição
+  discountType: CouponDiscountType; // 'percentage' | 'fixed'
+  discountValue: number; // e.g. 10 (%) ou 50.00 (R$)
+  startDate: string; // ISO ou YYYY-MM-DDTHH:mm
+  endDate: string; // ISO ou YYYY-MM-DDTHH:mm
+  minPurchaseAmount?: number; // Valor mínimo de compra elegível
+  maxDiscountAmount?: number; // Teto de desconto em R$ (ex: 15% até R$ 150)
+  maxUsageTotal?: number; // Quantidade máxima de utilizações globais
+  maxUsagePerCustomer?: number; // Limite de utilizações por cliente (e-mail/CPF)
+  targetType: CouponTargetType; // 'all_store' | 'categories' | 'products'
+  targetCategoryIds?: string[];
+  targetProductIds?: string[];
+  customerRestriction: CouponCustomerRestriction; // 'general' | 'specific_customers'
+  specificCustomerIds?: string[];
+  specificCustomerEmails?: string[];
+  canCombineWithPromotions: boolean; // Se acumula com produtos em promoção (promo_price)
+  status: CouponStatus;
+  internalNotes?: string;
+  currentUsageCount: number; // Quantidade de vezes que já foi utilizado
+  totalDiscountGranted: number; // R$ total concedido em descontos
+  totalSalesVolume: number; // R$ total faturado em pedidos com este cupom
+  sentCount: number; // Quantidade de envios para clientes
+  createdAt: string;
+  createdByUserId: string;
+  createdByUserName: string;
+  updatedAt?: string;
+}
+
+export interface CouponUsageEntry {
+  id: string;
+  couponId: string;
+  couponCode: string;
+  orderId: string;
+  orderCode: string;
+  customerId?: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone?: string;
+  customerCpfCnpj?: string;
+  subtotalOriginal: number;
+  eligibleAmount: number;
+  discountApplied: number;
+  shippingCost: number;
+  finalTotal: number;
+  usedAt: string;
+  status: 'confirmed' | 'cancelled' | 'refunded';
+  cancelledAt?: string;
+  cancelReason?: string;
+}
+
+export interface CouponSendHistoryEntry {
+  id: string;
+  couponId: string;
+  couponCode: string;
+  customerId?: string;
+  customerName: string;
+  customerPhone?: string;
+  customerEmail?: string;
+  channel: 'whatsapp' | 'email' | 'clipboard';
+  sentAt: string;
+  sentByUserId: string;
+  sentByUserName: string;
+  messagePreview: string;
+  status: 'copied' | 'shared_whatsapp' | 'sent_email';
+}
+
+export interface CouponAuditLog {
+  id: string;
+  timestamp: string;
+  couponId?: string;
+  couponCode?: string;
+  action:
+    | 'create'
+    | 'update'
+    | 'activate'
+    | 'pause'
+    | 'cancel'
+    | 'delete'
+    | 'send'
+    | 'apply_cart'
+    | 'confirm_order'
+    | 'revert_cancel';
+  userId: string;
+  userName: string;
+  userRole: string;
+  details: string;
+  ip?: string;
+}
+
+export interface CouponValidationResult {
+  valid: boolean;
+  coupon?: DiscountCoupon;
+  discountAmount: number;
+  originalSubtotal: number;
+  eligibleSubtotal: number;
+  finalSubtotalAfterCoupon: number;
+  error?: string;
+  errorCode?:
+    | 'NOT_FOUND'
+    | 'INACTIVE'
+    | 'EXPIRED'
+    | 'NOT_STARTED'
+    | 'MIN_PURCHASE_NOT_MET'
+    | 'MAX_USAGE_REACHED'
+    | 'CUSTOMER_LIMIT_REACHED'
+    | 'CUSTOMER_NOT_AUTHORIZED'
+    | 'CUSTOMER_NOT_ELIGIBLE'
+    | 'NO_ELIGIBLE_PRODUCTS'
+    | 'NO_ELIGIBLE_ITEMS'
+    | 'CANNOT_COMBINE_PROMO';
+  message?: string;
 }
 
 export interface CartItem {

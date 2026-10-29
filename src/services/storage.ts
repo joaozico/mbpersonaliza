@@ -39,6 +39,12 @@ import {
   BoletoTitulo,
   BoletoBillingSettings,
   QuoteBillingTerms,
+  DiscountCoupon,
+  CouponUsageEntry,
+  CouponSendHistoryEntry,
+  CouponAuditLog,
+  CouponValidationResult,
+  OrderCouponInfo,
 } from '../types';
 import {
   INITIAL_PRODUCTS,
@@ -69,6 +75,10 @@ import {
   INITIAL_BACKUP_HISTORY,
   INITIAL_BOLETO_SETTINGS,
   INITIAL_BOLETOS,
+  INITIAL_COUPONS,
+  INITIAL_COUPON_USAGES,
+  INITIAL_COUPON_SEND_HISTORY,
+  INITIAL_COUPON_AUDIT_LOGS,
 } from '../data/initialData';
 import { calculateSha256Sync, formatBytes, generateBackupFilename } from '../utils/cryptoUtils';
 import { criarBoletoTitulo, calcularDataVencimento } from '../utils/boletoGenerator';
@@ -106,6 +116,10 @@ const STORAGE_KEYS = {
   DELIVERY_SETTINGS: 'mb_personaliza_delivery_settings_v1',
   BOLETOS: 'mb_personaliza_boletos_v1',
   BOLETO_SETTINGS: 'mb_personaliza_boleto_settings_v1',
+  COUPONS: 'mb_personaliza_coupons_v1',
+  COUPON_USAGES: 'mb_personaliza_coupon_usages_v1',
+  COUPON_SEND_HISTORY: 'mb_personaliza_coupon_send_history_v1',
+  COUPON_AUDIT_LOGS: 'mb_personaliza_coupon_audit_logs_v1',
 };
 
 function getStored<T>(key: string, fallback: T): T {
@@ -139,16 +153,36 @@ export const StorageService = {
   // Products
   getProducts(): Product[] {
     const p = getStored<Product[]>(STORAGE_KEYS.PRODUCTS, INITIAL_PRODUCTS);
-    const list = Array.isArray(p) ? p : INITIAL_PRODUCTS;
+    const list = Array.isArray(p) && p.length > 0 ? p : INITIAL_PRODUCTS;
     // Garante que novos produtos do sistema e da Stricker sejam incorporados se ainda não constarem
     const existingIds = new Set(list.map((item) => item.id));
     const missing = INITIAL_PRODUCTS.filter((initProd) => !existingIds.has(initProd.id));
-    if (missing.length > 0) {
-      const merged = [...list, ...missing];
-      setStored(STORAGE_KEYS.PRODUCTS, merged);
-      return merged;
-    }
-    return list;
+    const merged = missing.length > 0 ? [...list, ...missing] : list;
+
+    // Sanitiza cada produto garantindo que details, customTechniques, images e variants existam
+    return merged.map((prod) => {
+      const safeCustomTechniques =
+        Array.isArray(prod.details?.customTechniques) && prod.details.customTechniques.length > 0
+          ? prod.details.customTechniques
+          : ['Gravação a Laser', 'Silk Screen', 'Transfer DTF'];
+
+      return {
+        ...prod,
+        details: {
+          materials: 'Materiais de Alto Padrão',
+          dimensions: 'Dimensões padrão',
+          printAreas: 'Área frontal / traseira',
+          customTechniques: safeCustomTechniques,
+          ...(prod.details || {}),
+        },
+        images:
+          Array.isArray(prod.images) && prod.images.length > 0
+            ? prod.images
+            : ['https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?auto=format&fit=crop&q=80&w=800'],
+        price_tiers: Array.isArray(prod.price_tiers) ? prod.price_tiers : [],
+        variants: Array.isArray(prod.variants) ? prod.variants : [],
+      };
+    });
   },
   saveProducts(products: Product[]): void {
     setStored(STORAGE_KEYS.PRODUCTS, products);
@@ -287,6 +321,34 @@ export const StorageService = {
       });
     });
 
+    // Record coupon usage if coupon applied
+    if (order.couponInfo || order.couponCode) {
+      const cInfo = order.couponInfo;
+      const couponCode = cInfo?.code || order.couponCode || '';
+      const coupon = this.getCouponByCode(couponCode);
+      if (coupon) {
+        this.recordCouponUsage({
+          id: `cuse-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          couponId: coupon.id,
+          couponCode: coupon.code,
+          orderId: order.id,
+          orderCode: order.code,
+          customerId: order.clientId,
+          customerName: order.clientName,
+          customerEmail: order.clientEmail,
+          customerPhone: order.clientPhone,
+          customerCpfCnpj: undefined,
+          subtotalOriginal: cInfo?.originalSubtotal ?? order.subtotal,
+          eligibleAmount: cInfo?.eligibleSubtotal ?? order.subtotal,
+          discountApplied: cInfo?.discountApplied ?? order.couponDiscount ?? order.discount,
+          shippingCost: order.shippingCost,
+          finalTotal: order.total,
+          usedAt: new Date().toISOString(),
+          status: 'confirmed',
+        });
+      }
+    }
+
     return order;
   },
   updateOrder(order: Order): void {
@@ -327,6 +389,12 @@ export const StorageService = {
     if (notes !== undefined) orders[index].notes = notes;
     orders[index].updatedAt = new Date().toISOString();
     this.saveOrders(orders);
+
+    // If order was cancelled, release coupon quota
+    if (status === 'cancelado' && (order.couponInfo || order.couponCode)) {
+      this.cancelCouponUsage(order.id, `Cancelamento do pedido ${order.code} via status de pedido`);
+    }
+
     return { success: true };
   },
 
@@ -1361,106 +1429,129 @@ export const StorageService = {
   // ==========================================
 
   getLayoutSettings(): SystemLayoutSettings {
-    const stored = getStored<SystemLayoutSettings | null>(STORAGE_KEYS.LAYOUT_SETTINGS, null);
-    if (!stored) {
-      return { ...INITIAL_LAYOUT_SETTINGS };
-    }
-    // Deep merge to guarantee all keys exist and prevent undefined errors
-    return {
-      ...INITIAL_LAYOUT_SETTINGS,
-      ...stored,
-      colors: { ...INITIAL_LAYOUT_SETTINGS.colors, ...(stored.colors || {}) },
-      header: { ...INITIAL_LAYOUT_SETTINGS.header, ...(stored.header || {}) },
-      hero: {
+    try {
+      const stored = getStored<SystemLayoutSettings | null>(STORAGE_KEYS.LAYOUT_SETTINGS, null);
+      if (!stored || typeof stored !== 'object') {
+        return { ...INITIAL_LAYOUT_SETTINGS };
+      }
+
+      const safeColors = { ...INITIAL_LAYOUT_SETTINGS.colors, ...(stored.colors || {}) };
+      const safeHeader = { ...INITIAL_LAYOUT_SETTINGS.header, ...(stored.header || {}) };
+
+      const rawBadges =
+        Array.isArray(stored.hero?.trustBadges) && stored.hero.trustBadges.length > 0
+          ? stored.hero.trustBadges
+          : INITIAL_LAYOUT_SETTINGS.hero.trustBadges;
+
+      const safeTrustBadges = (Array.isArray(rawBadges) ? rawBadges : [])
+        .filter((b: any) => !b?.title?.toLowerCase().includes('envio para todo brasil'))
+        .map((b: any) => {
+          if (b?.title?.toLowerCase().includes('gravação industrial') || b?.id === 'badge-1') {
+            return { ...b, title: 'Gravações' };
+          }
+          return b;
+        });
+
+      const safeHero = {
         ...INITIAL_LAYOUT_SETTINGS.hero,
         ...(stored.hero || {}),
         secondaryCtaText: stored.hero?.secondaryCtaText
           ? stored.hero.secondaryCtaText.replace(/Cotação B2B/g, 'Cotação')
           : INITIAL_LAYOUT_SETTINGS.hero.secondaryCtaText,
         titleParts:
-          stored.hero?.titleParts && stored.hero.titleParts.length > 0
+          Array.isArray(stored.hero?.titleParts) && stored.hero.titleParts.length > 0
             ? stored.hero.titleParts
-            : [
-                {
-                  id: 'part-1',
-                  text: stored.hero?.titlePart1 || INITIAL_LAYOUT_SETTINGS.hero.titlePart1,
-                  color: stored.hero?.titlePart1Color || '#FFFFFF',
-                  isHighlight: false,
-                },
-                {
-                  id: 'part-2',
-                  text: stored.hero?.titleHighlight || INITIAL_LAYOUT_SETTINGS.hero.titleHighlight,
-                  color: stored.hero?.titleHighlightColor || '#E6007E',
-                  isHighlight: true,
-                },
-                {
-                  id: 'part-3',
-                  text: stored.hero?.titlePart2 || INITIAL_LAYOUT_SETTINGS.hero.titlePart2,
-                  color: stored.hero?.titlePart2Color || '#FFFFFF',
-                  isHighlight: false,
-                },
-              ],
-        trustBadges:
-          stored.hero?.trustBadges && stored.hero.trustBadges.length > 0
-            ? stored.hero.trustBadges
-            : INITIAL_LAYOUT_SETTINGS.hero.trustBadges,
-      },
-      categoriesSection: { ...INITIAL_LAYOUT_SETTINGS.categoriesSection, ...(stored.categoriesSection || {}) },
-      offersBanner: {
-        ...INITIAL_LAYOUT_SETTINGS.offersBanner,
-        ...(stored.offersBanner || {}),
-        enabled: stored.offersBanner?.enabled !== undefined ? stored.offersBanner.enabled : true,
-        height: stored.offersBanner?.height || INITIAL_LAYOUT_SETTINGS.offersBanner.height || 'panoramic',
-        items: (() => {
-          const storedItems = stored.offersBanner?.items;
-          if (storedItems && storedItems.length > 0) {
-            const hasNewThemes = storedItems.some((i: any) => i.backgroundTheme);
-            if (hasNewThemes) return storedItems;
-          }
-          return INITIAL_LAYOUT_SETTINGS.offersBanner.items;
-        })(),
-      },
-      featuredSection: { ...INITIAL_LAYOUT_SETTINGS.featuredSection, ...(stored.featuredSection || {}) },
-      b2bBanner: {
+            : INITIAL_LAYOUT_SETTINGS.hero.titleParts || [],
+        trustBadges: safeTrustBadges,
+      };
+
+      const safeCategoriesSection = {
+        ...INITIAL_LAYOUT_SETTINGS.categoriesSection,
+        ...(stored.categoriesSection || {}),
+      };
+
+      const safeFeaturedSection = {
+        ...INITIAL_LAYOUT_SETTINGS.featuredSection,
+        ...(stored.featuredSection || {}),
+      };
+
+      const safeB2bBanner = {
         ...INITIAL_LAYOUT_SETTINGS.b2bBanner,
         ...(stored.b2bBanner || {}),
         benefits:
-          stored.b2bBanner?.benefits && stored.b2bBanner.benefits.length > 0
+          Array.isArray(stored.b2bBanner?.benefits) && stored.b2bBanner.benefits.length > 0
             ? stored.b2bBanner.benefits
             : INITIAL_LAYOUT_SETTINGS.b2bBanner.benefits,
-      },
-      whyChoose: {
+      };
+
+      const safeWhyChoose = {
         ...INITIAL_LAYOUT_SETTINGS.whyChoose,
         ...(stored.whyChoose || {}),
         items:
-          stored.whyChoose?.items && stored.whyChoose.items.length > 0
+          Array.isArray(stored.whyChoose?.items) && stored.whyChoose.items.length > 0
             ? stored.whyChoose.items
             : INITIAL_LAYOUT_SETTINGS.whyChoose.items,
-      },
-      footer: { ...INITIAL_LAYOUT_SETTINGS.footer, ...(stored.footer || {}) },
-      blocks: (() => {
-        let bList =
-          stored.blocks && stored.blocks.length > 0
-            ? [...stored.blocks]
-            : [...INITIAL_LAYOUT_SETTINGS.blocks];
-        const offersIdx = bList.findIndex((b) => b.type === 'offers_banner');
-        if (offersIdx > 0) {
-          const [offers] = bList.splice(offersIdx, 1);
-          bList.unshift(offers);
-        } else if (offersIdx === -1) {
-          bList.unshift({
-            id: 'block-offers-banner',
-            type: 'offers_banner',
-            title: 'Banner de Ofertas',
-            subtitle: 'Carrossel dinâmico com ofertas e transições de produtos',
-            isVisible: true,
-            order: 1,
-          });
-        }
-        bList = bList.map((b, idx) => ({ ...b, order: idx + 1 }));
-        return bList;
-      })(),
-    };
+      };
+
+      const safeFooter = {
+        ...INITIAL_LAYOUT_SETTINGS.footer,
+        ...(stored.footer || {}),
+      };
+
+      let bList =
+        Array.isArray(stored.blocks) && stored.blocks.length > 0
+          ? [...stored.blocks]
+          : [...INITIAL_LAYOUT_SETTINGS.blocks];
+
+      const offersIdx = bList.findIndex((b) => b?.type === 'offers_banner');
+      if (offersIdx > 0) {
+        const [offers] = bList.splice(offersIdx, 1);
+        bList.unshift(offers);
+      } else if (offersIdx === -1) {
+        bList.unshift({
+          id: 'block-offers-banner',
+          type: 'offers_banner',
+          title: 'Banner de Ofertas',
+          subtitle: 'Carrossel dinâmico com ofertas e transições de produtos',
+          isVisible: true,
+          order: 1,
+        });
+      }
+      bList = bList.map((b, idx) => ({ ...b, order: idx + 1 }));
+
+      const safeOffersBanner = {
+        ...INITIAL_LAYOUT_SETTINGS.offersBanner,
+        ...(stored.offersBanner || {}),
+        enabled: stored.offersBanner?.enabled !== undefined ? stored.offersBanner.enabled : true,
+        height: stored.offersBanner?.height || INITIAL_LAYOUT_SETTINGS.offersBanner?.height || 'panoramic',
+        items: (() => {
+          const storedItems = stored.offersBanner?.items;
+          if (Array.isArray(storedItems) && storedItems.length > 0) {
+            const hasNewThemes = storedItems.some((i: any) => i?.backgroundTheme);
+            if (hasNewThemes) return storedItems;
+          }
+          return INITIAL_LAYOUT_SETTINGS.offersBanner?.items || [];
+        })(),
+      };
+
+      return {
+        ...INITIAL_LAYOUT_SETTINGS,
+        ...stored,
+        colors: safeColors,
+        header: safeHeader,
+        hero: safeHero,
+        categoriesSection: safeCategoriesSection,
+        featuredSection: safeFeaturedSection,
+        b2bBanner: safeB2bBanner,
+        whyChoose: safeWhyChoose,
+        footer: safeFooter,
+        blocks: bList,
+        offersBanner: safeOffersBanner,
+      };
+    } catch (err) {
+      console.warn('Error reading layout settings, falling back to initial:', err);
+      return { ...INITIAL_LAYOUT_SETTINGS };
+    }
   },
 
   saveLayoutSettings(settings: SystemLayoutSettings): { success: boolean; error?: string } {
@@ -3836,6 +3927,487 @@ export const StorageService = {
     }
   },
 
+  // ==========================================
+  // MÓDULO DE CUPONS DE DESCONTO & PROMOÇÕES
+  // ==========================================
+
+  getCoupons(): DiscountCoupon[] {
+    const list = getStored<DiscountCoupon[]>(STORAGE_KEYS.COUPONS, INITIAL_COUPONS);
+    return Array.isArray(list) ? list : INITIAL_COUPONS;
+  },
+
+  saveCoupons(coupons: DiscountCoupon[]): void {
+    setStored(STORAGE_KEYS.COUPONS, coupons);
+  },
+
+  getCouponById(id: string): DiscountCoupon | undefined {
+    return this.getCoupons().find((c) => c.id === id);
+  },
+
+  getCouponByCode(code: string): DiscountCoupon | undefined {
+    if (!code) return undefined;
+    const clean = code.trim().toUpperCase();
+    return this.getCoupons().find((c) => c.code.trim().toUpperCase() === clean);
+  },
+
+  saveCoupon(
+    couponData: Partial<DiscountCoupon> & { code: string; campaignName: string; discountType: 'percentage' | 'fixed'; discountValue: number },
+    actor?: { id: string; name: string; role: string }
+  ): { success: boolean; coupon?: DiscountCoupon; error?: string } {
+    const coupons = this.getCoupons();
+    const cleanCode = couponData.code.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+
+    if (!cleanCode) {
+      return { success: false, error: 'O código do cupom é obrigatório e deve conter apenas letras, números e traços.' };
+    }
+
+    if (!couponData.campaignName || couponData.campaignName.trim().length === 0) {
+      return { success: false, error: 'O nome da campanha ou descrição do cupom é obrigatório.' };
+    }
+
+    if (couponData.discountValue <= 0) {
+      return { success: false, error: 'O valor do desconto deve ser maior que zero.' };
+    }
+
+    if (couponData.discountType === 'percentage' && couponData.discountValue > 100) {
+      return { success: false, error: 'O percentual de desconto não pode ser maior que 100%.' };
+    }
+
+    const existingIndex = coupons.findIndex(
+      (c) => c.id !== couponData.id && c.code.trim().toUpperCase() === cleanCode
+    );
+    if (existingIndex >= 0) {
+      return { success: false, error: `Já existe um cupom cadastrado com o código "${cleanCode}".` };
+    }
+
+    const isUpdate = !!couponData.id;
+    let savedCoupon: DiscountCoupon;
+
+    if (isUpdate) {
+      const idx = coupons.findIndex((c) => c.id === couponData.id);
+      if (idx < 0) return { success: false, error: 'Cupom não encontrado para atualização.' };
+      savedCoupon = {
+        ...coupons[idx],
+        ...couponData,
+        code: cleanCode,
+        updatedAt: new Date().toISOString(),
+      };
+      coupons[idx] = savedCoupon;
+    } else {
+      savedCoupon = {
+        id: `cpn-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        code: cleanCode,
+        campaignName: couponData.campaignName.trim(),
+        discountType: couponData.discountType,
+        discountValue: Number(couponData.discountValue),
+        startDate: couponData.startDate || new Date().toISOString().substring(0, 16),
+        endDate: couponData.endDate || new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().substring(0, 16),
+        minPurchaseAmount: couponData.minPurchaseAmount ? Number(couponData.minPurchaseAmount) : undefined,
+        maxDiscountAmount: couponData.maxDiscountAmount ? Number(couponData.maxDiscountAmount) : undefined,
+        maxUsageTotal: couponData.maxUsageTotal ? Number(couponData.maxUsageTotal) : undefined,
+        maxUsagePerCustomer: couponData.maxUsagePerCustomer ? Number(couponData.maxUsagePerCustomer) : 1,
+        targetType: couponData.targetType || 'all_store',
+        targetCategoryIds: couponData.targetCategoryIds || [],
+        targetProductIds: couponData.targetProductIds || [],
+        customerRestriction: couponData.customerRestriction || 'general',
+        specificCustomerIds: couponData.specificCustomerIds || [],
+        specificCustomerEmails: couponData.specificCustomerEmails || [],
+        canCombineWithPromotions: couponData.canCombineWithPromotions !== undefined ? couponData.canCombineWithPromotions : true,
+        status: couponData.status || 'active',
+        internalNotes: couponData.internalNotes || '',
+        currentUsageCount: 0,
+        totalDiscountGranted: 0,
+        totalSalesVolume: 0,
+        sentCount: 0,
+        createdAt: new Date().toISOString(),
+        createdByUserId: actor?.id || 'admin',
+        createdByUserName: actor?.name || 'Administrador',
+      };
+      coupons.unshift(savedCoupon);
+    }
+
+    this.saveCoupons(coupons);
+
+    this.logCouponAudit({
+      couponId: savedCoupon.id,
+      couponCode: savedCoupon.code,
+      action: isUpdate ? 'update' : 'create',
+      userId: actor?.id || 'admin',
+      userName: actor?.name || 'Administrador MB',
+      userRole: actor?.role || 'admin',
+      details: isUpdate
+        ? `Atualização do cupom ${savedCoupon.code} (${savedCoupon.campaignName})`
+        : `Criação do cupom ${savedCoupon.code} (${savedCoupon.discountType === 'percentage' ? `${savedCoupon.discountValue}%` : `R$ ${savedCoupon.discountValue.toFixed(2)}`})`,
+    });
+
+    return { success: true, coupon: savedCoupon };
+  },
+
+  deleteCoupon(id: string, actor?: { id: string; name: string; role: string }): { success: boolean; error?: string } {
+    const coupons = this.getCoupons();
+    const idx = coupons.findIndex((c) => c.id === id);
+    if (idx < 0) return { success: false, error: 'Cupom não encontrado.' };
+
+    const coupon = coupons[idx];
+    if (coupon.currentUsageCount > 0) {
+      // Soft cancel instead of hard delete if already used
+      coupon.status = 'cancelled';
+      coupon.updatedAt = new Date().toISOString();
+      this.saveCoupons(coupons);
+      this.logCouponAudit({
+        couponId: coupon.id,
+        couponCode: coupon.code,
+        action: 'cancel',
+        userId: actor?.id || 'admin',
+        userName: actor?.name || 'Administrador MB',
+        userRole: actor?.role || 'admin',
+        details: `Cupom ${coupon.code} cancelado (não excluído fisicamente pois possui ${coupon.currentUsageCount} utilizações registradas)`,
+      });
+      return { success: true };
+    }
+
+    coupons.splice(idx, 1);
+    this.saveCoupons(coupons);
+
+    this.logCouponAudit({
+      couponId: coupon.id,
+      couponCode: coupon.code,
+      action: 'delete',
+      userId: actor?.id || 'admin',
+      userName: actor?.name || 'Administrador MB',
+      userRole: actor?.role || 'admin',
+      details: `Exclusão permanente do cupom ${coupon.code}`,
+    });
+
+    return { success: true };
+  },
+
+  toggleCouponStatus(
+    id: string,
+    newStatus: 'active' | 'paused' | 'cancelled',
+    actor?: { id: string; name: string; role: string }
+  ): { success: boolean; error?: string } {
+    const coupons = this.getCoupons();
+    const coupon = coupons.find((c) => c.id === id);
+    if (!coupon) return { success: false, error: 'Cupom não encontrado.' };
+
+    const oldStatus = coupon.status;
+    coupon.status = newStatus;
+    coupon.updatedAt = new Date().toISOString();
+    this.saveCoupons(coupons);
+
+    this.logCouponAudit({
+      couponId: coupon.id,
+      couponCode: coupon.code,
+      action: newStatus === 'active' ? 'activate' : newStatus === 'paused' ? 'pause' : 'cancel',
+      userId: actor?.id || 'admin',
+      userName: actor?.name || 'Administrador MB',
+      userRole: actor?.role || 'admin',
+      details: `Status do cupom ${coupon.code} alterado de "${oldStatus}" para "${newStatus}"`,
+    });
+
+    return { success: true };
+  },
+
+  validateCoupon(
+    rawCode: string,
+    cartItems: Array<{ productId: string; categoryId?: string; unitPrice: number; quantity: number; isPromo?: boolean }>,
+    subtotal: number,
+    customer?: { id?: string; email?: string; cpfCnpj?: string }
+  ): CouponValidationResult {
+    const emptyResult = (errorCode: CouponValidationResult['errorCode'], errorMsg: string): CouponValidationResult => ({
+      valid: false,
+      discountAmount: 0,
+      originalSubtotal: subtotal,
+      eligibleSubtotal: 0,
+      finalSubtotalAfterCoupon: subtotal,
+      errorCode,
+      error: errorMsg,
+    });
+
+    if (!rawCode || !rawCode.trim()) {
+      return emptyResult('NOT_FOUND', 'Informe o código do cupom.');
+    }
+
+    const coupon = this.getCouponByCode(rawCode);
+    if (!coupon) {
+      return emptyResult('NOT_FOUND', 'Código de cupom inválido ou inexistente.');
+    }
+
+    const now = new Date();
+
+    // 1. Status ativo
+    if (coupon.status === 'paused') {
+      return emptyResult('INACTIVE', 'Este cupom está temporariamente pausado pela administração.');
+    }
+    if (coupon.status === 'cancelled') {
+      return emptyResult('INACTIVE', 'Este cupom foi cancelado e não pode mais ser utilizado.');
+    }
+    if (coupon.status === 'draft') {
+      return emptyResult('INACTIVE', 'Este cupom ainda não foi publicado.');
+    }
+
+    // 2. Data de Início
+    if (coupon.startDate) {
+      const start = new Date(coupon.startDate);
+      if (!isNaN(start.getTime()) && now < start) {
+        return emptyResult('NOT_STARTED', `Este cupom será válido somente a partir de ${start.toLocaleDateString('pt-BR')} às ${start.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.`);
+      }
+    }
+
+    // 3. Data de Término
+    if (coupon.endDate) {
+      const end = new Date(coupon.endDate);
+      if (!isNaN(end.getTime()) && now > end) {
+        return emptyResult('EXPIRED', `Este cupom expirou em ${end.toLocaleDateString('pt-BR')}.`);
+      }
+    }
+
+    // 4. Limite de utilizações globais
+    if (coupon.maxUsageTotal && coupon.currentUsageCount >= coupon.maxUsageTotal) {
+      return emptyResult('MAX_USAGE_REACHED', 'Este cupom atingiu o limite máximo de utilizações permitidas.');
+    }
+
+    // 5. Restrição de cliente específico
+    if (coupon.customerRestriction === 'specific_customers') {
+      const custEmail = customer?.email?.toLowerCase().trim();
+      const custId = customer?.id;
+      const allowedEmails = (coupon.specificCustomerEmails || []).map((e) => e.toLowerCase().trim());
+      const allowedIds = coupon.specificCustomerIds || [];
+
+      const isMatch = (custEmail && allowedEmails.includes(custEmail)) || (custId && allowedIds.includes(custId));
+      if (!isMatch) {
+        return emptyResult('CUSTOMER_NOT_ELIGIBLE', 'Este cupom é exclusivo e não está associado à sua conta/e-mail.');
+      }
+    }
+
+    // 6. Limite de utilizações por cliente
+    if (coupon.maxUsagePerCustomer && coupon.maxUsagePerCustomer > 0 && customer) {
+      const usages = this.getCouponUsages(coupon.id);
+      const custEmail = customer.email?.toLowerCase().trim();
+      const custCpf = customer.cpfCnpj?.replace(/\D/g, '');
+      const custId = customer.id;
+
+      const customerUsageCount = usages.filter((u) => {
+        if (u.status !== 'confirmed') return false;
+        if (custId && u.customerId === custId) return true;
+        if (custEmail && u.customerEmail?.toLowerCase().trim() === custEmail) return true;
+        if (custCpf && u.customerCpfCnpj?.replace(/\D/g, '') === custCpf) return true;
+        return false;
+      }).length;
+
+      if (customerUsageCount >= coupon.maxUsagePerCustomer) {
+        return emptyResult('CUSTOMER_LIMIT_REACHED', `Você já atingiu o limite de ${coupon.maxUsagePerCustomer} ${coupon.maxUsagePerCustomer === 1 ? 'utilização' : 'utilizações'} para este cupom.`);
+      }
+    }
+
+    // 7. Base de cálculo e produtos elegíveis
+    let eligibleItems = cartItems || [];
+
+    // Se não permite acumular com promoções, filtrar itens com promo
+    if (!coupon.canCombineWithPromotions) {
+      eligibleItems = eligibleItems.filter((item) => !item.isPromo);
+    }
+
+    // Filtrar por categorias ou produtos específicos
+    if (coupon.targetType === 'categories' && coupon.targetCategoryIds && coupon.targetCategoryIds.length > 0) {
+      eligibleItems = eligibleItems.filter((item) => item.categoryId && coupon.targetCategoryIds?.includes(item.categoryId));
+    } else if (coupon.targetType === 'products' && coupon.targetProductIds && coupon.targetProductIds.length > 0) {
+      eligibleItems = eligibleItems.filter((item) => coupon.targetProductIds?.includes(item.productId));
+    }
+
+    const eligibleSubtotal = eligibleItems.reduce((acc, it) => acc + (it.unitPrice * it.quantity), 0);
+
+    if (eligibleSubtotal <= 0) {
+      return emptyResult(
+        'NO_ELIGIBLE_ITEMS',
+        coupon.canCombineWithPromotions === false
+          ? 'Este cupom não é acumulável com os produtos em promoção que estão no seu carrinho.'
+          : 'Nenhum dos produtos no seu carrinho é elegível para este cupom.'
+      );
+    }
+
+    // 8. Valor mínimo de compra elegível
+    if (coupon.minPurchaseAmount && eligibleSubtotal < coupon.minPurchaseAmount) {
+      return emptyResult(
+        'MIN_PURCHASE_NOT_MET',
+        `O valor mínimo em produtos elegíveis para usar este cupom é de R$ ${coupon.minPurchaseAmount.toFixed(2).replace('.', ',')}. Subtotal elegível atual: R$ ${eligibleSubtotal.toFixed(2).replace('.', ',')}.`
+      );
+    }
+
+    // 9. Cálculo do desconto
+    let calculatedDiscount = 0;
+    if (coupon.discountType === 'percentage') {
+      calculatedDiscount = (eligibleSubtotal * coupon.discountValue) / 100;
+      if (coupon.maxDiscountAmount && coupon.maxDiscountAmount > 0) {
+        calculatedDiscount = Math.min(calculatedDiscount, coupon.maxDiscountAmount);
+      }
+    } else {
+      // Valor fixo
+      calculatedDiscount = coupon.discountValue;
+    }
+
+    // O desconto nunca pode ultrapassar o subtotal elegível ou gerar valor negativo
+    calculatedDiscount = Math.min(calculatedDiscount, eligibleSubtotal);
+    calculatedDiscount = Math.max(0, Math.round(calculatedDiscount * 100) / 100);
+
+    const finalSubtotal = Math.max(0, subtotal - calculatedDiscount);
+
+    return {
+      valid: true,
+      coupon,
+      discountAmount: calculatedDiscount,
+      originalSubtotal: subtotal,
+      eligibleSubtotal,
+      finalSubtotalAfterCoupon: finalSubtotal,
+    };
+  },
+
+  getCouponUsages(couponId?: string): CouponUsageEntry[] {
+    const list = getStored<CouponUsageEntry[]>(STORAGE_KEYS.COUPON_USAGES, INITIAL_COUPON_USAGES);
+    const valid = Array.isArray(list) ? list : INITIAL_COUPON_USAGES;
+    if (!couponId) return valid;
+    return valid.filter((u) => u.couponId === couponId);
+  },
+
+  recordCouponUsage(entry: CouponUsageEntry, actor?: { id: string; name: string; role: string }): void {
+    const usages = this.getCouponUsages();
+    usages.unshift(entry);
+    setStored(STORAGE_KEYS.COUPON_USAGES, usages);
+
+    // Atualiza estatísticas no cupom
+    const coupons = this.getCoupons();
+    const coupon = coupons.find((c) => c.id === entry.couponId || c.code.toUpperCase() === entry.couponCode.toUpperCase());
+    if (coupon) {
+      coupon.currentUsageCount = (coupon.currentUsageCount || 0) + 1;
+      coupon.totalDiscountGranted = Number(((coupon.totalDiscountGranted || 0) + entry.discountApplied).toFixed(2));
+      coupon.totalSalesVolume = Number(((coupon.totalSalesVolume || 0) + entry.finalTotal).toFixed(2));
+      coupon.updatedAt = new Date().toISOString();
+      this.saveCoupons(coupons);
+    }
+
+    this.logCouponAudit({
+      couponId: entry.couponId,
+      couponCode: entry.couponCode,
+      action: 'confirm_order',
+      userId: actor?.id || entry.customerId || 'online_checkout',
+      userName: actor?.name || entry.customerName,
+      userRole: actor?.role || 'cliente',
+      details: `Utilização confirmada no pedido ${entry.orderCode} - Desconto concedido: R$ ${entry.discountApplied.toFixed(2)} - Total: R$ ${entry.finalTotal.toFixed(2)}`,
+    });
+  },
+
+  cancelCouponUsage(orderId: string, reason?: string, actor?: { id: string; name: string; role: string }): void {
+    const usages = this.getCouponUsages();
+    const usage = usages.find((u) => u.orderId === orderId && u.status === 'confirmed');
+    if (!usage) return;
+
+    usage.status = 'cancelled';
+    usage.cancelledAt = new Date().toISOString();
+    usage.cancelReason = reason || 'Cancelamento de pedido';
+    setStored(STORAGE_KEYS.COUPON_USAGES, usages);
+
+    // Reverte contagem no cupom
+    const coupons = this.getCoupons();
+    const coupon = coupons.find((c) => c.id === usage.couponId);
+    if (coupon) {
+      coupon.currentUsageCount = Math.max(0, (coupon.currentUsageCount || 1) - 1);
+      coupon.totalDiscountGranted = Math.max(0, Number(((coupon.totalDiscountGranted || 0) - usage.discountApplied).toFixed(2)));
+      coupon.totalSalesVolume = Math.max(0, Number(((coupon.totalSalesVolume || 0) - usage.finalTotal).toFixed(2)));
+      coupon.updatedAt = new Date().toISOString();
+      this.saveCoupons(coupons);
+    }
+
+    this.logCouponAudit({
+      couponId: usage.couponId,
+      couponCode: usage.couponCode,
+      action: 'revert_cancel',
+      userId: actor?.id || 'system',
+      userName: actor?.name || 'Sistema de Vendas',
+      userRole: actor?.role || 'admin',
+      details: `Utilização do cupom ${usage.couponCode} estornada referente ao pedido ${usage.orderCode}. Motivo: ${reason || 'Cancelamento'}`,
+    });
+  },
+
+  getCouponSendHistory(couponId?: string): CouponSendHistoryEntry[] {
+    const list = getStored<CouponSendHistoryEntry[]>(STORAGE_KEYS.COUPON_SEND_HISTORY, INITIAL_COUPON_SEND_HISTORY);
+    const valid = Array.isArray(list) ? list : INITIAL_COUPON_SEND_HISTORY;
+    if (!couponId) return valid;
+    return valid.filter((s) => s.couponId === couponId);
+  },
+
+  recordCouponSend(entry: CouponSendHistoryEntry): void {
+    const history = this.getCouponSendHistory();
+    history.unshift(entry);
+    setStored(STORAGE_KEYS.COUPON_SEND_HISTORY, history);
+
+    const coupons = this.getCoupons();
+    const coupon = coupons.find((c) => c.id === entry.couponId);
+    if (coupon) {
+      coupon.sentCount = (coupon.sentCount || 0) + 1;
+      this.saveCoupons(coupons);
+    }
+
+    this.logCouponAudit({
+      couponId: entry.couponId,
+      couponCode: entry.couponCode,
+      action: 'send',
+      userId: entry.sentByUserId,
+      userName: entry.sentByUserName,
+      userRole: 'operador',
+      details: `Envio do cupom ${entry.couponCode} para ${entry.customerName} via ${entry.channel.toUpperCase()} (${entry.status})`,
+    });
+  },
+
+  getCouponAuditLogs(couponId?: string): CouponAuditLog[] {
+    const list = getStored<CouponAuditLog[]>(STORAGE_KEYS.COUPON_AUDIT_LOGS, INITIAL_COUPON_AUDIT_LOGS);
+    const valid = Array.isArray(list) ? list : INITIAL_COUPON_AUDIT_LOGS;
+    if (!couponId) return valid;
+    return valid.filter((l) => l.couponId === couponId);
+  },
+
+  logCouponAudit(entry: Omit<CouponAuditLog, 'id' | 'timestamp'>): void {
+    const logs = this.getCouponAuditLogs();
+    const newLog: CouponAuditLog = {
+      id: `caud-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: new Date().toISOString(),
+      ...entry,
+    };
+    logs.unshift(newLog);
+    // Manter últimos 200 logs
+    if (logs.length > 200) logs.length = 200;
+    setStored(STORAGE_KEYS.COUPON_AUDIT_LOGS, logs);
+  },
+
+  getCouponMetrics(): {
+    totalCoupons: number;
+    activeCoupons: number;
+    totalUsageCount: number;
+    totalDiscountGranted: number;
+    totalSalesVolume: number;
+    totalSent: number;
+    conversionRatePercent: number;
+  } {
+    const coupons = this.getCoupons();
+    const totalCoupons = coupons.length;
+    const activeCoupons = coupons.filter((c) => c.status === 'active').length;
+    const totalUsageCount = coupons.reduce((acc, c) => acc + (c.currentUsageCount || 0), 0);
+    const totalDiscountGranted = Number(coupons.reduce((acc, c) => acc + (c.totalDiscountGranted || 0), 0).toFixed(2));
+    const totalSalesVolume = Number(coupons.reduce((acc, c) => acc + (c.totalSalesVolume || 0), 0).toFixed(2));
+    const totalSent = coupons.reduce((acc, c) => acc + (c.sentCount || 0), 0);
+    const conversionRatePercent = totalSent > 0 ? Number(((totalUsageCount / totalSent) * 100).toFixed(1)) : 0;
+
+    return {
+      totalCoupons,
+      activeCoupons,
+      totalUsageCount,
+      totalDiscountGranted,
+      totalSalesVolume,
+      totalSent,
+      conversionRatePercent,
+    };
+  },
+
   // Reset to initial demo data
   resetAllData(): void {
     localStorage.clear();
@@ -3848,6 +4420,16 @@ export const StorageService = {
     setStored(STORAGE_KEYS.USERS, INITIAL_USERS);
     setStored(STORAGE_KEYS.CURRENT_USER, INITIAL_USERS[0]);
     setStored(STORAGE_KEYS.CART, []);
+    setStored(STORAGE_KEYS.COMPANY_SETTINGS, INITIAL_COMPANY_SETTINGS);
+    setStored(STORAGE_KEYS.LAYOUT_SETTINGS, INITIAL_LAYOUT_SETTINGS);
+    setStored(STORAGE_KEYS.DELIVERY_SETTINGS, INITIAL_DELIVERY_SETTINGS);
+    setStored(STORAGE_KEYS.PERMISSIONS_MATRIX, INITIAL_PERMISSIONS_MATRIX);
+    setStored(STORAGE_KEYS.PAYMENT_GATEWAYS, INITIAL_PAYMENT_GATEWAYS);
+    setStored(STORAGE_KEYS.MAINTENANCE_SETTINGS, INITIAL_MAINTENANCE_SETTINGS);
+    setStored(STORAGE_KEYS.COUPONS, INITIAL_COUPONS);
+    setStored(STORAGE_KEYS.COUPON_USAGES, INITIAL_COUPON_USAGES);
+    setStored(STORAGE_KEYS.COUPON_SEND_HISTORY, INITIAL_COUPON_SEND_HISTORY);
+    setStored(STORAGE_KEYS.COUPON_AUDIT_LOGS, INITIAL_COUPON_AUDIT_LOGS);
     window.location.reload();
   },
 };

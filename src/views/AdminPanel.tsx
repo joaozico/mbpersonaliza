@@ -24,6 +24,7 @@ import { DeliverySettingsTab } from './DeliverySettingsTab';
 import { DeliveryOrdersTab } from './DeliveryOrdersTab';
 import { BoletoBillingManagementTab } from './BoletoBillingManagementTab';
 import { CostPricingModuleView } from './CostPricingModuleView';
+import { CouponsManagementTab } from './CouponsManagementTab';
 import { SEOHead } from '../components/SEOHead';
 import {
   Calculator,
@@ -69,6 +70,7 @@ import {
   HardDriveDownload,
   Info,
   AlertCircle,
+  Ticket,
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -108,6 +110,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     | 'financial'
     | 'boletos'
     | 'cost_pricing'
+    | 'coupons'
     | 'backup'
   >('dashboard');
 
@@ -150,6 +153,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const canViewCostPricingModule =
     currentUser.role === 'admin' ||
     StorageService.hasUserPermission(currentUser, 'canViewCostPricingModule');
+  const canViewCoupons =
+    currentUser.role === 'admin' ||
+    currentUser.role === 'gerente' ||
+    StorageService.hasUserPermission(currentUser, 'canViewCoupons');
   const canViewSiteMetrics = StorageService.hasUserPermission(currentUser, 'canViewSiteMetrics');
   const canManageUsers =
     currentUser.role === 'admin' ||
@@ -692,6 +699,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               <option value="gateways">Gateways de Pagamento (Mercado Pago / PagBank)</option>
               <option value="cash_register">Controle de Caixa</option>
               <option value="boletos">Boletos & Faturamento a Prazo (FEBRABAN)</option>
+              {canViewCoupons && (
+                <option value="coupons">Cupons de Desconto & Promoções</option>
+              )}
             </optgroup>
             <optgroup label="Configurações & Integrações">
               <option value="stricker">Integração Stricker / SPOT</option>
@@ -902,6 +912,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <span>Custos & Precificação</span>
                   <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase bg-[#E6007E] text-white tracking-wider">
                     Novo
+                  </span>
+                </button>
+              )}
+
+              {canViewCoupons && (
+                <button
+                  onClick={() => setActiveTab('coupons')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'coupons'
+                      ? 'bg-gradient-to-r from-[#E6007E] to-rose-700 text-white shadow-md ring-2 ring-pink-400/50'
+                      : 'text-slate-900 bg-pink-50/70 hover:bg-pink-100 border border-pink-200/80'
+                  }`}
+                  title="Módulo de Cupons de Desconto & Promoções"
+                >
+                  <Ticket className={`w-4 h-4 ${activeTab === 'coupons' ? 'text-[#FFDD00]' : 'text-[#E6007E]'}`} />
+                  <span>Cupons de Desconto</span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase bg-[#E6007E] text-white tracking-wider">
+                    Promo
                   </span>
                 </button>
               )}
@@ -2235,6 +2263,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       {/* TAB: MÓDULO DE ORÇAMENTO DE CUSTOS & PRECIFICAÇÃO (14 SUBMÓDULOS) */}
       {activeTab === 'cost_pricing' && (
         <CostPricingModuleView currentUser={currentUser} />
+      )}
+
+      {/* TAB: MÓDULO DE CUPONS DE DESCONTO & CAMPANHAS */}
+      {activeTab === 'coupons' && canViewCoupons && (
+        <CouponsManagementTab currentUser={currentUser} />
       )}
 
       {/* TAB 14: BACKUP AGENDADO & RECUPERAÇÃO DE DESASTRES (JSON SEGURO) */}

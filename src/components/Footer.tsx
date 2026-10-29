@@ -42,7 +42,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
     };
   }, []);
 
-  const cleanWhatsappNumber = settings.whatsapp.replace(/\D/g, '');
+  const cleanWhatsappNumber = (settings?.whatsapp || '').replace(/\D/g, '');
 
   return (
     <footer className="w-full min-w-0 max-w-full bg-slate-950 text-slate-300 pt-16 pb-8 border-t border-slate-800 no-print" id="site-footer">
@@ -52,10 +52,10 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
           <div className="lg:col-span-2 space-y-4">
             <Logo variant="dark" size="lg" />
             <p className="text-sm text-slate-400 max-w-sm leading-relaxed mt-3">
-              {layoutSettings.footer.aboutText || settings.tagline || 'Especialistas em brindes corporativos, presentes personalizados e soluções em comunicação visual de alto padrão.'}
+              {layoutSettings?.footer?.aboutText || settings?.tagline || 'Especialistas em brindes corporativos, presentes personalizados e soluções em comunicação visual de alto padrão.'}
             </p>
 
-            {layoutSettings.footer.showSocialLinks && (
+            {layoutSettings?.footer?.showSocialLinks && (
               <div className="flex items-center gap-3 pt-2">
                 {settings.socialLinks?.instagram && (
                   <a
@@ -283,9 +283,9 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
         </div>
 
         {/* Badges & Payments */}
-        {(layoutSettings.footer.showPaymentBadges || layoutSettings.footer.showSecurityBadge) && (
+        {(layoutSettings?.footer?.showPaymentBadges || layoutSettings?.footer?.showSecurityBadge) && (
           <div className="pt-8 border-t border-slate-900 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-slate-500">
-            {layoutSettings.footer.showPaymentBadges ? (
+            {layoutSettings?.footer?.showPaymentBadges ? (
               <div className="flex items-center gap-3">
                 <span className="font-semibold text-slate-400">Formas de Pagamento:</span>
                 <span className="flex items-center gap-1 px-2 py-1 rounded bg-slate-900 text-emerald-400 border border-slate-800 font-bold">
@@ -298,19 +298,19 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
             ) : <div />}
 
             <div className="flex items-center gap-4">
-              {layoutSettings.footer.showSecurityBadge && (
+              {layoutSettings?.footer?.showSecurityBadge && (
                 <span className="flex items-center gap-1 text-slate-400">
                   <ShieldCheck className="w-4 h-4 text-emerald-400" /> Site Seguro SSL 256-bit
                 </span>
               )}
-              <span>CNPJ: {settings.cnpj}</span>
+              <span>CNPJ: {settings?.cnpj || '50.123.456/0001-78'}</span>
             </div>
           </div>
         )}
 
         {/* Bottom copyright */}
         <div className="mt-8 pt-4 text-center text-[11px] text-slate-600 border-t border-slate-900/50">
-          {layoutSettings.footer.copyrightText || `© ${new Date().getFullYear()} ${settings.corporateName || settings.name} — Todos os direitos reservados. ${settings.tagline}`}
+          {layoutSettings?.footer?.copyrightText || `© ${new Date().getFullYear()} ${settings?.corporateName || settings?.name || 'MB Personaliza'} — Todos os direitos reservados. ${settings?.tagline || ''}`}
         </div>
       </div>
 

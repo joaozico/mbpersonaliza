@@ -245,15 +245,21 @@ export default function App() {
       return;
     }
 
+    if (view === 'checkout') {
+      setIsCartOpen(false);
+    }
+
     setCurrentView(view);
     setViewParam(param);
   };
 
   // Cart Handlers
-  const handleAddToCart = (item: CartItem) => {
+  const handleAddToCart = (item: CartItem, openDrawer: boolean = true) => {
     StorageService.addToCart(item);
     setCart(StorageService.getCart());
-    setIsCartOpen(true);
+    if (openDrawer) {
+      setIsCartOpen(true);
+    }
   };
 
   const handleUpdateCartQty = (itemId: string, qty: number) => {
@@ -373,7 +379,7 @@ export default function App() {
 
         {currentView === 'product-detail' && (
           <ProductDetailView
-            productId={viewParam || products[0].id}
+            productId={viewParam || products[0]?.id || ''}
             products={products}
             onNavigate={handleNavigate}
             onAddToCart={handleAddToCart}

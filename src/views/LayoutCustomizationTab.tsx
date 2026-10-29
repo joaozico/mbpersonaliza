@@ -3478,7 +3478,7 @@ export const LayoutCustomizationTab: React.FC<LayoutCustomizationTabProps> = ({
                             </div>
 
                             {/* Trust Badges */}
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-6 border-t border-slate-200">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-6 border-t border-slate-200">
                               {settings.hero.trustBadges.map((badge) => (
                                 <div key={badge.id} className="text-left space-y-0.5">
                                   <p className="font-extrabold text-xs text-slate-900">{badge.title}</p>

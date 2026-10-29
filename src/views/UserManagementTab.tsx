@@ -478,6 +478,16 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
     { key: 'canViewPricingReports', label: 'Relatórios de Precificação & Ponto de Equilíbrio', desc: 'Visualizar análise de lucratividade e breakeven', category: 'Custos & Precificação' },
     { key: 'canExportPricingReports', label: 'Exportar Relatórios de Custos', desc: 'Exportar dados para Excel e PDF', category: 'Custos & Precificação' },
 
+    // Módulo de Cupons de Desconto & Promoções
+    { key: 'canViewCoupons', label: 'Acesso ao Módulo de Cupons', desc: 'Visualizar cupons cadastrados e listagens', category: 'Cupons de Desconto & Promoções' },
+    { key: 'canCreateCoupons', label: 'Criar Novos Cupons', desc: 'Cadastrar cupons promocionais percentuais ou fixos', category: 'Cupons de Desconto & Promoções' },
+    { key: 'canEditCoupons', label: 'Editar Cupons Existentes', desc: 'Modificar regras, datas, limites e valores', category: 'Cupons de Desconto & Promoções' },
+    { key: 'canToggleCoupons', label: 'Ativar e Pausar Cupons', desc: 'Suspender temporariamente ou reativar cupons', category: 'Cupons de Desconto & Promoções' },
+    { key: 'canCancelCoupons', label: 'Cancelar e Excluir Cupons', desc: 'Revogar ou remover cupons definitivamente', category: 'Cupons de Desconto & Promoções' },
+    { key: 'canViewCouponUsageHistory', label: 'Histórico de Utilização', desc: 'Consultar pedidos e clientes que usaram cupons', category: 'Cupons de Desconto & Promoções' },
+    { key: 'canViewCouponReports', label: 'Relatórios & Conversão de Cupons', desc: 'Métricas gerenciais de faturamento e conversão', category: 'Cupons de Desconto & Promoções' },
+    { key: 'canSendCouponsToCustomers', label: 'Disparo de Cupons aos Clientes', desc: 'Enviar via WhatsApp Web, e-mail corporativo ou copiar', category: 'Cupons de Desconto & Promoções' },
+
     // Configurações & Sistema
     { key: 'canManageUsers', label: 'Gestão de Usuários & Equipe', desc: 'Cadastrar colaboradores e conceder acessos', category: 'Configurações & Sistema' },
     { key: 'canManageCompanySettings', label: 'Dados & Logo da MB Personaliza', desc: 'Alterar dados cadastrais e WhatsApps da empresa', category: 'Configurações & Sistema' },

@@ -170,10 +170,10 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
           productId: initialItem.product.id,
           productName: initialItem.product.name,
           productSku: initialItem.product.code,
-          productImage: initialItem.product.images[0],
+          productImage: initialItem.product.images?.[0] || '',
           variantName: initialItem.variant?.name,
           quantity: initialItem.quantity || initialItem.product.min_order_qty || 50,
-          customTechnique: initialItem.product.details.customTechniques[0] || 'Gravação a Laser',
+          customTechnique: initialItem.product.details?.customTechniques?.[0] || 'Gravação a Laser',
           unit_price_estimated: price,
           subtotal: Number(((price || 0) * (initialItem.quantity || 50)).toFixed(2)),
         },
@@ -181,7 +181,7 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
     }
     const defaultProd = products[0];
     if (!defaultProd) return [];
-    const defaultPrice = defaultProd.promo_price || defaultProd.base_price;
+    const defaultPrice = defaultProd.promo_price || defaultProd.base_price || 0;
     const defaultQty = defaultProd.min_order_qty || 50;
 
     return [
@@ -190,9 +190,9 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
         productId: defaultProd.id,
         productName: defaultProd.name,
         productSku: defaultProd.code,
-        productImage: defaultProd.images[0],
+        productImage: defaultProd.images?.[0] || '',
         quantity: defaultQty,
-        customTechnique: defaultProd.details.customTechniques[0] || 'Gravação a Laser',
+        customTechnique: defaultProd.details?.customTechniques?.[0] || 'Gravação a Laser',
         unit_price_estimated: defaultPrice,
         subtotal: Number(((defaultPrice || 0) * defaultQty).toFixed(2)),
       },
@@ -212,7 +212,7 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
   // Add Item to quote directly from product
   const handleAddItemFromProduct = (product: Product, quantity?: number, technique?: string) => {
     const qty = quantity || searchItemQuantities[product.id] || product.min_order_qty || 50;
-    const tech = technique || product.details.customTechniques[0] || 'Gravação a Laser';
+    const tech = technique || product.details?.customTechniques?.[0] || 'Gravação a Laser';
     const price = product.promo_price || product.base_price;
 
     const newItem: QuoteItem = {
@@ -220,7 +220,7 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
       productId: product.id,
       productName: product.name,
       productSku: product.code,
-      productImage: product.images[0],
+      productImage: product.images?.[0] || '',
       quantity: qty,
       customTechnique: tech,
       unit_price_estimated: price,
@@ -242,8 +242,8 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
         productId: product.id,
         productName: product.name,
         productSku: product.code,
-        productImage: product.images[0],
-        customTechnique: product.details.customTechniques[0] || 'Gravação a Laser',
+        productImage: product.images?.[0] || '',
+        customTechnique: product.details?.customTechniques?.[0] || 'Gravação a Laser',
         variantName: undefined,
         unit_price_estimated: price,
         subtotal: Number(((price || 0) * currentQty).toFixed(2)),

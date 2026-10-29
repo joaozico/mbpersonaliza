@@ -224,14 +224,14 @@ export const DigitalCatalogView: React.FC<DigitalCatalogViewProps> = ({
 
                   {/* Details specs */}
                   <div className="mt-2 text-[10px] text-slate-600 space-y-0.5 border-t border-slate-100 pt-1.5">
-                    {product.details.materials && (
+                    {product.details?.materials && (
                       <p>
                         <strong className="text-slate-700">Material:</strong> {product.details.materials}
                       </p>
                     )}
                     <p>
                       <strong className="text-slate-700">Gravações:</strong>{' '}
-                      {product.details.customTechniques.join(', ')}
+                      {(product.details?.customTechniques || ['Gravação a Laser', 'Silk Screen']).join(', ')}
                     </p>
                   </div>
                 </div>

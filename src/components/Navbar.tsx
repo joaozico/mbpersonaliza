@@ -109,19 +109,19 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-xs no-print">
       {/* Top Banner */}
-      {layoutSettings.header.showTopBanner && (
+      {layoutSettings?.header?.showTopBanner && (
         <div
           className="text-xs py-1.5 px-4 transition-colors"
           style={{
-            backgroundColor: layoutSettings.colors.topBannerBg,
-            color: layoutSettings.colors.topBannerText,
+            backgroundColor: layoutSettings?.colors?.topBannerBg || '#0F172A',
+            color: layoutSettings?.colors?.topBannerText || '#FFFFFF',
           }}
         >
           <div className="w-full max-w-7xl mx-auto flex items-center justify-between gap-2 min-w-0">
             <div className="flex items-center gap-4 shrink min-w-0">
               <span className="flex items-center gap-1.5 text-xs font-medium truncate">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                <span className="truncate">{layoutSettings.header.topBannerText}</span>
+                <span className="truncate">{layoutSettings?.header?.topBannerText || 'MB Personaliza • Brindes Corporativos'}</span>
               </span>
             </div>
 
@@ -332,7 +332,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               Catálogo
             </button>
-            {layoutSettings.header.showCatalogPdfLink && (
+            {layoutSettings?.header?.showCatalogPdfLink && (
               <button
                 onClick={() => onNavigate('digital-catalog')}
                 className={`flex items-center gap-1.5 px-2 py-1 2xl:px-2.5 2xl:py-1 rounded-md text-xs font-semibold bg-sky-50 text-[#00AEEF] hover:bg-sky-100 transition-colors whitespace-nowrap cursor-pointer ${
@@ -352,7 +352,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               Solicitar Orçamento
             </button>
-            {layoutSettings.header.showAboutLink && (
+            {layoutSettings?.header?.showAboutLink && (
               <button
                 onClick={() => onNavigate('about')}
                 className={`px-2 py-1.5 2xl:px-2.5 2xl:py-1.5 rounded-lg hover:text-[#E6007E] hover:bg-slate-50 transition-colors whitespace-nowrap cursor-pointer ${

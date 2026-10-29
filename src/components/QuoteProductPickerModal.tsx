@@ -132,7 +132,7 @@ export const QuoteProductPickerModal: React.FC<QuoteProductPickerModalProps> = (
 
   const handlePickProduct = (product: Product) => {
     const defaultQty = product.min_order_qty || 50;
-    const defaultTech = product.details.customTechniques[0] || 'Gravação a Laser';
+    const defaultTech = product.details?.customTechniques?.[0] || 'Gravação a Laser';
     onSelectProduct(product, defaultQty, defaultTech);
 
     setJustAddedId(product.id);

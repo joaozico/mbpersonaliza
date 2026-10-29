@@ -9,6 +9,7 @@ import { financialRouter } from "./src/server/financialRouter";
 import { backupRouter } from "./src/server/backupRouter";
 import { backupSchedulerWorker } from "./src/server/backupSchedulerWorker";
 import { costPricingRouter } from "./src/server/costPricingRouter";
+import { couponRouter } from "./src/server/couponRouter";
 
 async function startServer() {
   const app = express();
@@ -44,6 +45,9 @@ async function startServer() {
 
   // Módulo de Orçamento de Custos e Precificação de Produtos
   app.use("/api/cost-pricing", costPricingRouter);
+
+  // Módulo de Cupons de Desconto & Campanhas Promocionais
+  app.use("/api/coupons", couponRouter);
 
   // Stricker / SPOT Webservice API Proxy Routes
   app.use("/api/stricker", strickerRouter);

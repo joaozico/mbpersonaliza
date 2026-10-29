@@ -13,6 +13,10 @@ import {
   QrCode,
   FileSpreadsheet,
   Package,
+  Ticket,
+  Tag,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
 
 export interface CartDrawerProps {
@@ -40,6 +44,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   onCheckout,
   onRequestQuote,
 }) => {
+  // Coupon state (must remain before any early return to obey React Rules of Hooks)
+  const [couponCode, setCouponCode] = React.useState('');
+  const [appliedCoupon, setAppliedCoupon] = React.useState<any>(null);
+  const [couponDiscount, setCouponDiscount] = React.useState(0);
+  const [couponMsg, setCouponMsg] = React.useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isApplying, setIsApplying] = React.useState(false);
+
   // Listen for Escape key to close
   useEffect(() => {
     if (!isOpen) return;
@@ -59,8 +70,6 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       document.body.style.overflow = originalOverflow;
     };
   }, [isOpen, onClose]);
-
-  if (!isOpen) return null;
 
   // Unify cart items from either 'cart' or 'items' prop, fallback to empty array
   const cartList: CartItem[] = Array.isArray(cart)
@@ -123,8 +132,50 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     return acc + getItemQuantity(item);
   }, 0);
 
-  const pixDiscount = subtotal * 0.05; // 5% discount for PIX
-  const totalWithPix = Math.max(0, subtotal - pixDiscount);
+  const handleApplyCoupon = () => {
+    const code = couponCode.trim().toUpperCase();
+    if (!code) {
+      setCouponMsg({ type: 'error', text: 'Informe o código do cupom.' });
+      return;
+    }
+    setIsApplying(true);
+    setCouponMsg(null);
+
+    const payloadItems = cartList.map((item) => ({
+      productId: item.product?.id || '',
+      categoryId: item.product?.categoryId,
+      unitPrice: getUnitPrice(item),
+      quantity: getItemQuantity(item),
+      isPromo: item.product?.promo_price !== undefined && item.product.promo_price > 0,
+    }));
+
+    const result = StorageService.validateCoupon(code, payloadItems, subtotal);
+    setIsApplying(false);
+
+    if (result.valid && result.coupon) {
+      setAppliedCoupon(result.coupon);
+      setCouponDiscount(result.discountAmount);
+      setCouponMsg({
+        type: 'success',
+        text: `Cupom ${result.coupon.code} aplicado! (- R$ ${result.discountAmount.toFixed(2)})`,
+      });
+    } else {
+      setAppliedCoupon(null);
+      setCouponDiscount(0);
+      setCouponMsg({ type: 'error', text: result.error || 'Cupom inválido ou expirado.' });
+    }
+  };
+
+  const handleRemoveCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponDiscount(0);
+    setCouponCode('');
+    setCouponMsg(null);
+  };
+
+  const subtotalAfterCoupon = Math.max(0, subtotal - couponDiscount);
+  const pixDiscount = subtotalAfterCoupon * 0.05; // 5% discount for PIX
+  const totalWithPix = Math.max(0, subtotalAfterCoupon - pixDiscount);
 
   const handleGoToCheckout = () => {
     onClose();
@@ -150,6 +201,8 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       onNavigate('catalog');
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div
@@ -345,10 +398,84 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           {cartList.length > 0 && (
             <div className="p-4 sm:p-5 border-t border-slate-200 bg-slate-50 space-y-3">
               <div className="space-y-1.5 text-xs">
+                {/* Campo de Cupom no Drawer */}
+                <div className="pb-2 border-b border-slate-200">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
+                      <Ticket className="w-3.5 h-3.5 text-[#E6007E]" />
+                      <span>Possui cupom de desconto?</span>
+                    </span>
+                  </div>
+
+                  {!appliedCoupon ? (
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        value={couponCode}
+                        onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                        onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleApplyCoupon())}
+                        placeholder="Ex: PRIMEIRACOMPRA"
+                        className="flex-1 px-2.5 py-1.5 text-xs font-mono uppercase bg-white border border-slate-300 rounded-lg focus:outline-none focus:border-slate-800"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleApplyCoupon}
+                        disabled={isApplying || !couponCode.trim()}
+                        className="px-3 py-1.5 bg-slate-900 hover:bg-[#E6007E] text-white text-xs font-bold rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        Aplicar
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Tag className="w-3.5 h-3.5 text-emerald-600" />
+                        <span className="font-mono font-bold text-emerald-900 text-xs">{appliedCoupon.code}</span>
+                        <span className="text-[10px] text-emerald-700 font-semibold">
+                          (- R$ {couponDiscount.toFixed(2)})
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleRemoveCoupon}
+                        className="text-emerald-700 hover:text-rose-600 p-0.5 rounded cursor-pointer"
+                        title="Remover"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+
+                  {couponMsg && (
+                    <div
+                      className={`mt-1.5 p-1.5 rounded text-[10px] flex items-center gap-1 ${
+                        couponMsg.type === 'success'
+                          ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                          : 'bg-rose-50 text-rose-800 border border-rose-200'
+                      }`}
+                    >
+                      {couponMsg.type === 'success' ? (
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                      ) : (
+                        <AlertCircle className="w-3 h-3 text-rose-600 shrink-0" />
+                      )}
+                      <span>{couponMsg.text}</span>
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex justify-between text-slate-600">
                   <span>Subtotal ({totalItemCount} itens):</span>
                   <span className="font-semibold text-slate-800">R$ {subtotal.toFixed(2)}</span>
                 </div>
+
+                {couponDiscount > 0 && (
+                  <div className="flex justify-between text-[#E6007E] bg-pink-50 px-2 py-1 rounded font-semibold border border-pink-100">
+                    <span>Desconto do Cupom ({appliedCoupon?.code}):</span>
+                    <span>- R$ {couponDiscount.toFixed(2)}</span>
+                  </div>
+                )}
+
                 <div className="flex justify-between text-emerald-700 bg-emerald-50 px-2.5 py-1.5 rounded-lg font-medium border border-emerald-100">
                   <span className="flex items-center gap-1.5">
                     <QrCode className="w-3.5 h-3.5 text-emerald-600" />

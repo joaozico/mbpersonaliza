@@ -542,7 +542,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                 </h3>
                 <p className="text-xs text-slate-500 line-clamp-1">{product.description}</p>
                 <div className="flex flex-wrap items-center justify-center sm:justify-start gap-1 pt-1">
-                  {product.details.customTechniques.map((t, idx) => (
+                  {(product.details?.customTechniques || []).map((t, idx) => (
                     <span
                       key={idx}
                       className="text-[10px] font-medium px-2 py-0.5 rounded bg-slate-100 text-slate-700"
