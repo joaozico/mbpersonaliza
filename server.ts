@@ -11,6 +11,9 @@ import { backupSchedulerWorker } from "./src/server/backupSchedulerWorker";
 import { costPricingRouter } from "./src/server/costPricingRouter";
 import { couponRouter } from "./src/server/couponRouter";
 
+import { databaseRouter } from "./src/server/databaseRouter";
+import { seedInitialDataIfEmpty } from "./src/db/repository";
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -23,10 +26,18 @@ async function startServer() {
   // Inicia worker de exportação agendada e recuperação de desastres
   backupSchedulerWorker.start();
 
+  // Inicializa seed de dados essenciais no Cloud SQL PostgreSQL se vazio
+  seedInitialDataIfEmpty().catch((err) => {
+    console.warn('[Server] PostgreSQL initial check/seed:', err);
+  });
+
   // API Health
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", app: "MB Personaliza", version: "1.0.0" });
   });
+
+  // PostgreSQL Cloud SQL Database API Routes
+  app.use("/api/db", databaseRouter);
 
   // Modo de Manutenção & Configurações do Sistema
   app.use("/api/system", systemRouter);

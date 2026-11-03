@@ -201,7 +201,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
     setCouponFeedback(null);
 
     const payloadCartItems = (cart || []).map((it) => ({
-      productId: it.productId,
+      productId: it.product?.id || it.productId || it.id,
       categoryId: it.product?.categoryId,
       unitPrice: it.calculatedUnitPrice,
       quantity: it.quantity,
@@ -1379,7 +1379,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
                   <div className="flex items-center justify-between mb-1">
                     <label className="text-xs font-bold text-slate-700">Parcelamento no Cartão</label>
                     <span className="text-[10px] text-[#00AEEF] font-bold">
-                      Processado via {activeGateway.name}
+                      Processado via {activeGateway?.name || 'Mercado Pago'}
                     </span>
                   </div>
                   <select

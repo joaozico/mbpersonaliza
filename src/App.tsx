@@ -26,6 +26,7 @@ import { CostPricingModuleView } from './views/CostPricingModuleView';
 import { AboutView } from './views/AboutView';
 import { ContactView } from './views/ContactView';
 import { AdminMaintenanceBanner } from './components/AdminMaintenanceBanner';
+import { GlobalSearchModal } from './components/GlobalSearchModal';
 import { AnalyticsService } from './services/analytics';
 
 export default function App() {
@@ -45,6 +46,10 @@ export default function App() {
 
   // Auth Modal State
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+
+  // Global Search / Spotlight State
+  const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState<boolean>(false);
+  const [globalSearchInitialQuery, setGlobalSearchInitialQuery] = useState<string>('');
 
   // Company Settings & Multi-WhatsApp Contact State
   const [companySettings, setCompanySettings] = useState<CompanySettings>(() => StorageService.getCompanySettings());
@@ -73,8 +78,18 @@ export default function App() {
       currentUser.role === 'gerente' ||
       Boolean(currentUser.customPermissions?.canManageCompanySettings));
 
-  // Sync maintenance status from backend API on initial load
+  // Sync official data from PostgreSQL (Cloud SQL) on application start
   useEffect(() => {
+    StorageService.initPostgresSync()
+      .then((synced) => {
+        if (synced) {
+          refreshData();
+        }
+      })
+      .catch((err) => {
+        console.warn('PostgreSQL initial sync notice:', err);
+      });
+
     fetch('/api/system/maintenance', { cache: 'no-store' })
       .then((res) => res.json())
       .then((data) => {
@@ -230,6 +245,41 @@ export default function App() {
     return () => clearInterval(intervalTimer);
   }, []);
 
+  // Global Keyboard Shortcuts (Ctrl+K, Cmd+K, '/') and Event Handler for Global Search
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+K or Cmd+K
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsGlobalSearchOpen((prev) => !prev);
+        return;
+      }
+
+      // '/' when not inside an input, textarea or select
+      if (
+        e.key === '/' &&
+        !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)
+      ) {
+        e.preventDefault();
+        setIsGlobalSearchOpen(true);
+      }
+    };
+
+    const handleCustomOpen = (e: any) => {
+      const q = e?.detail?.query || '';
+      setGlobalSearchInitialQuery(q);
+      setIsGlobalSearchOpen(true);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('mb_open_global_search', handleCustomOpen);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('mb_open_global_search', handleCustomOpen);
+    };
+  }, []);
+
   // Navigation Handler
   const handleNavigate = (view: string, param?: string) => {
     // If maintenance is active and user is NOT an authorized admin:
@@ -347,6 +397,10 @@ export default function App() {
           onOpenCart={() => setIsCartOpen(true)}
           products={products}
           categories={categories}
+          onOpenGlobalSearch={(initialQuery) => {
+            setGlobalSearchInitialQuery(initialQuery || '');
+            setIsGlobalSearchOpen(true);
+          }}
         />
       )}
 
@@ -560,6 +614,23 @@ export default function App() {
           setIsCartOpen(false);
           handleNavigate('quote');
         }}
+      />
+
+      {/* Pesquisa Global / Spotlight Command Palette */}
+      <GlobalSearchModal
+        isOpen={isGlobalSearchOpen}
+        onClose={() => {
+          setIsGlobalSearchOpen(false);
+          setGlobalSearchInitialQuery('');
+        }}
+        products={products}
+        categories={categories}
+        subcategories={subcategories}
+        currentUser={currentUser}
+        onNavigate={handleNavigate}
+        onOpenCart={() => setIsCartOpen(true)}
+        onOpenQuoteModal={handleOpenQuoteModal}
+        initialQuery={globalSearchInitialQuery}
       />
 
       {/* Auth Modal (Login / Sign Up) */}

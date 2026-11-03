@@ -124,89 +124,7 @@ export const FinancialModuleView: React.FC<FinancialModuleViewProps> = ({
     }
   }, [hasModuleAccess, currentUser]);
 
-  // Se bloqueado:
-  if (!hasModuleAccess) {
-    return (
-      <div className="min-h-[80vh] flex items-center justify-center p-4 sm:p-6 bg-slate-50">
-        <div className="max-w-md w-full bg-white rounded-3xl border border-rose-200 p-8 text-center shadow-xl space-y-6">
-          <div className="w-20 h-20 rounded-3xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto shadow-inner">
-            <ShieldAlert className="w-10 h-10 animate-bounce" />
-          </div>
 
-          <div className="space-y-2">
-            <span className="px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-rose-100 text-rose-700">
-              Segurança do Sistema • Acesso Restrito
-            </span>
-            <h1 className="text-2xl font-heading font-black text-slate-900 uppercase">
-              Acesso Negado
-            </h1>
-            <p className="text-sm text-slate-600 leading-relaxed font-medium">
-              Você não possui permissão para acessar este módulo. Entre em contato com o administrador do sistema.
-            </p>
-          </div>
-
-          <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-left text-xs space-y-1.5 text-slate-600">
-            <p>
-              <strong className="text-slate-800">Colaborador:</strong> {currentUser.name}
-            </p>
-            <p>
-              <strong className="text-slate-800">Perfil:</strong> {currentUser.role.toUpperCase()}
-            </p>
-            <p>
-              <strong className="text-slate-800">Permissão ausente:</strong>{' '}
-              <code className="text-rose-600 font-mono bg-rose-50 px-1 rounded">canViewFinancialModule</code>
-            </p>
-          </div>
-
-          {/* Test switcher para o avaliador testar diferentes perfis facilmente */}
-          {onUserChange && (
-            <div className="pt-2 border-t border-slate-100">
-              <p className="text-[11px] text-slate-400 font-bold mb-2">Simular Perfil para Teste:</p>
-              <div className="flex flex-wrap items-center justify-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const admin = StorageService.switchRole('admin');
-                    onUserChange(admin);
-                  }}
-                  className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-900 text-white hover:bg-[#E6007E] cursor-pointer"
-                >
-                  Admin (Acesso Total)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const gerente = StorageService.switchRole('gerente');
-                    onUserChange(gerente);
-                  }}
-                  className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-200 text-slate-800 hover:bg-slate-300 cursor-pointer"
-                >
-                  Gerente (Padrão: Sem Acesso)
-                </button>
-              </div>
-            </div>
-          )}
-
-          <div className="pt-2 flex flex-col sm:flex-row gap-2 justify-center">
-            <button
-              type="button"
-              onClick={() => onNavigate('home')}
-              className="px-5 py-2.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
-            >
-              Página Inicial
-            </button>
-            <button
-              type="button"
-              onClick={() => onNavigate('admin')}
-              className="px-5 py-2.5 rounded-xl text-xs font-bold bg-slate-900 text-white hover:bg-slate-800 transition-colors cursor-pointer"
-            >
-              Voltar ao Painel Geral
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   // --------------------------------------------------------------------------
   // ESTADO DO MÓDULO FINANCEIRO
@@ -1156,6 +1074,90 @@ export const FinancialModuleView: React.FC<FinancialModuleViewProps> = ({
       return true;
     });
   }, [accounts, activeTab, statusFilter, categoryFilter, searchTerm]);
+
+  // Se bloqueado:
+  if (!hasModuleAccess) {
+    return (
+      <div className="min-h-[80vh] flex items-center justify-center p-4 sm:p-6 bg-slate-50">
+        <div className="max-w-md w-full bg-white rounded-3xl border border-rose-200 p-8 text-center shadow-xl space-y-6">
+          <div className="w-20 h-20 rounded-3xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto shadow-inner">
+            <ShieldAlert className="w-10 h-10 animate-bounce" />
+          </div>
+
+          <div className="space-y-2">
+            <span className="px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-rose-100 text-rose-700">
+              Segurança do Sistema • Acesso Restrito
+            </span>
+            <h1 className="text-2xl font-heading font-black text-slate-900 uppercase">
+              Acesso Negado
+            </h1>
+            <p className="text-sm text-slate-600 leading-relaxed font-medium">
+              Você não possui permissão para acessar este módulo. Entre em contato com o administrador do sistema.
+            </p>
+          </div>
+
+          <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-left text-xs space-y-1.5 text-slate-600">
+            <p>
+              <strong className="text-slate-800">Colaborador:</strong> {currentUser.name}
+            </p>
+            <p>
+              <strong className="text-slate-800">Perfil:</strong> {currentUser.role.toUpperCase()}
+            </p>
+            <p>
+              <strong className="text-slate-800">Permissão ausente:</strong>{' '}
+              <code className="text-rose-600 font-mono bg-rose-50 px-1 rounded">canViewFinancialModule</code>
+            </p>
+          </div>
+
+          {/* Test switcher para o avaliador testar diferentes perfis facilmente */}
+          {onUserChange && (
+            <div className="pt-2 border-t border-slate-100">
+              <p className="text-[11px] text-slate-400 font-bold mb-2">Simular Perfil para Teste:</p>
+              <div className="flex flex-wrap items-center justify-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const admin = StorageService.switchRole('admin');
+                    onUserChange(admin);
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-900 text-white hover:bg-[#E6007E] cursor-pointer"
+                >
+                  Admin (Acesso Total)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const gerente = StorageService.switchRole('gerente');
+                    onUserChange(gerente);
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-200 text-slate-800 hover:bg-slate-300 cursor-pointer"
+                >
+                  Gerente (Padrão: Sem Acesso)
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="pt-2 flex flex-col sm:flex-row gap-2 justify-center">
+            <button
+              type="button"
+              onClick={() => onNavigate('home')}
+              className="px-5 py-2.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+            >
+              Página Inicial
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate('admin')}
+              className="px-5 py-2.5 rounded-xl text-xs font-bold bg-slate-900 text-white hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              Voltar ao Painel Geral
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full min-w-0 max-w-7xl mx-auto px-4 sm:px-6 py-6 pb-20 space-y-6">

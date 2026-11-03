@@ -34,6 +34,7 @@ interface NavbarProps {
   onOpenCart: () => void;
   products: Product[];
   categories: Category[];
+  onOpenGlobalSearch?: (initialQuery?: string) => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -45,6 +46,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenCart,
   products,
   categories,
+  onOpenGlobalSearch,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -204,115 +206,22 @@ export const Navbar: React.FC<NavbarProps> = ({
             <Logo size="md" showSubtitle={false} />
           </button>
 
-          {/* Desktop Search Bar (Large Screens >= 1536px) */}
-          <div className="hidden 2xl:flex items-center relative w-56 shrink-0" ref={searchRef}>
-            <div className="relative w-full">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setIsSearchOpen(true);
-                }}
-                onFocus={() => setIsSearchOpen(true)}
-                placeholder="Buscar produtos..."
-                className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-100 hover:bg-slate-100/90 focus:bg-white text-slate-800 placeholder-slate-400 rounded-lg border border-slate-200/80 focus:border-[#00AEEF] focus:ring-1 focus:ring-sky-200 transition-all outline-none"
-                id="search-input"
-              />
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2" />
-            </div>
-
-            {/* Instant Search Results Dropdown */}
-            {isSearchOpen && searchQuery.trim().length > 1 && (
-              <div className="absolute top-full left-0 right-0 mt-1.5 bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden z-50 animate-in fade-in">
-                <div className="p-2 border-b border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                  <span>Produtos encontrados ({filteredProducts.length})</span>
-                  <span className="text-[10px] text-slate-400">Enter para ver</span>
-                </div>
-                {filteredProducts.length > 0 ? (
-                  <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
-                    {filteredProducts.map((p) => (
-                      <button
-                        key={p.id}
-                        onClick={() => handleSelectProduct(p.id)}
-                        className="w-full flex items-center gap-2.5 p-2 hover:bg-slate-50 text-left transition-colors cursor-pointer"
-                      >
-                        <img
-                          src={p.images[0]}
-                          alt={p.name}
-                          className="w-8 h-8 object-cover rounded-md border border-slate-200 shrink-0"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold text-slate-800 truncate">{p.name}</p>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className="text-[10px] text-slate-400 font-mono">{p.code}</span>
-                            {p.show_price ? (
-                              <span className="text-xs font-bold text-slate-900">
-                                R$ {p.promo_price ? p.promo_price.toFixed(2) : p.base_price.toFixed(2)}
-                              </span>
-                            ) : (
-                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 font-semibold">
-                                Sob Orçamento
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="p-4 text-center text-xs text-slate-500">
-                    Nenhum produto encontrado para "{searchQuery}".
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Compact Search Button on Laptop Screens (1024px - 1279px) */}
-          <div className="hidden lg:flex xl:hidden relative shrink-0" ref={searchRef}>
-            <button
-              type="button"
-              onClick={() => setIsSearchOpen(!isSearchOpen)}
-              className="p-1.5 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer"
-              title="Buscar no Catálogo"
-            >
-              <Search className="w-4 h-4" />
-            </button>
-            {isSearchOpen && (
-              <div className="absolute top-full left-0 mt-2 w-72 bg-white rounded-xl shadow-2xl border border-slate-200 p-2 z-50 animate-in fade-in">
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Buscar produtos..."
-                    autoFocus
-                    className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-100 rounded-lg outline-none border border-slate-200 focus:border-[#00AEEF]"
-                  />
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2" />
-                </div>
-                {filteredProducts.length > 0 && (
-                  <div className="divide-y divide-slate-100 max-h-60 overflow-y-auto mt-2">
-                    {filteredProducts.map((p) => (
-                      <button
-                        key={p.id}
-                        onClick={() => handleSelectProduct(p.id)}
-                        className="w-full flex items-center gap-2 p-2 hover:bg-slate-50 text-left transition-colors cursor-pointer"
-                      >
-                        <img src={p.images[0]} alt={p.name} className="w-8 h-8 object-cover rounded shrink-0" />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-semibold text-slate-800 truncate">{p.name}</p>
-                          <span className="text-[10px] text-slate-400 font-mono">{p.code}</span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+          {/* Global Search Command Bar Trigger (Desktop & Large Screens) */}
+          <button
+            type="button"
+            onClick={() => onOpenGlobalSearch?.()}
+            className="hidden lg:flex items-center justify-between w-52 xl:w-64 2xl:w-72 px-3 py-1.5 text-xs bg-slate-100 hover:bg-slate-200/70 text-slate-500 hover:text-slate-800 rounded-xl border border-slate-200/80 transition-all cursor-pointer group shadow-2xs"
+            title="Abrir Pesquisa Global (Ctrl + K)"
+            id="nav-global-search-btn"
+          >
+            <span className="flex items-center gap-2 truncate">
+              <Search className="w-3.5 h-3.5 text-slate-400 group-hover:text-[#00AEEF] transition-colors shrink-0" />
+              <span className="truncate">Pesquisar produtos, páginas...</span>
+            </span>
+            <kbd className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-mono font-bold bg-white text-slate-400 rounded-md border border-slate-200 shadow-2xs group-hover:border-slate-300">
+              <span className="text-[9px]">⌘</span>K
+            </kbd>
+          </button>
 
           {/* Desktop Nav Links (Visible on >= 1280px with responsive spacing) */}
           <nav className="hidden xl:flex items-center gap-1 2xl:gap-2.5 text-xs 2xl:text-sm font-semibold text-slate-700 shrink min-w-0">
@@ -455,6 +364,18 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             )}
 
+            {/* Global Search Icon Button (Mobile & Tablet Screens < 1024px) */}
+            <button
+              type="button"
+              onClick={() => onOpenGlobalSearch?.()}
+              className="lg:hidden p-2 rounded-lg text-slate-700 hover:bg-slate-100 transition-colors focus:outline-none cursor-pointer shrink-0"
+              title="Pesquisa Global (Ctrl+K)"
+              aria-label="Abrir Pesquisa Global"
+              id="btn-mobile-global-search"
+            >
+              <Search className="w-5 h-5 shrink-0" />
+            </button>
+
             {/* Shopping Cart Button */}
             <button
               onClick={onOpenCart}
@@ -487,16 +408,22 @@ export const Navbar: React.FC<NavbarProps> = ({
       {/* Mobile & Tablet & Laptop Drawer Menu */}
       {isMobileMenuOpen && (
         <div className="xl:hidden bg-white border-b border-slate-200 px-4 py-4 space-y-3 animate-in slide-in-from-top-2 max-h-[calc(100vh-4rem)] overflow-y-auto shadow-xl">
-          <div className="relative w-full mb-3">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar produtos..."
-              className="w-full pl-9 pr-4 py-2 text-sm bg-slate-100 text-slate-800 rounded-lg border border-slate-200"
-            />
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setIsMobileMenuOpen(false);
+              onOpenGlobalSearch?.();
+            }}
+            className="w-full flex items-center justify-between px-3.5 py-2.5 text-xs bg-slate-100 text-slate-600 rounded-xl border border-slate-200 hover:bg-slate-200/70 transition-colors cursor-pointer mb-2"
+          >
+            <span className="flex items-center gap-2">
+              <Search className="w-4 h-4 text-slate-400" />
+              <span>Pesquisa global (produtos, pedidos, páginas)...</span>
+            </span>
+            <span className="px-1.5 py-0.5 rounded bg-white text-[10px] font-bold text-slate-500 border border-slate-200 shadow-2xs">
+              Buscar
+            </span>
+          </button>
 
           <div className="flex flex-col space-y-2 text-sm font-semibold text-slate-800">
             {/* PDV Quick Action for Employees in Mobile Drawer */}

@@ -159,26 +159,7 @@ export const CostPricingModuleView: React.FC<CostPricingModuleViewProps> = ({ cu
   );
   const indirectRatePerHour = useMemo(() => CostPricingService.getIndirectRatePerHour(), [expenses, settings]);
 
-  // Se o usuário não tiver permissão de acesso ao módulo:
-  if (!canViewModule) {
-    return (
-      <div className="min-h-[500px] flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-white rounded-3xl p-8 border border-rose-200 shadow-xl text-center space-y-4">
-          <div className="w-16 h-16 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto">
-            <Lock className="w-8 h-8" />
-          </div>
-          <h2 className="text-xl font-black text-slate-900">Acesso Restrito ao Módulo de Custos</h2>
-          <p className="text-sm text-slate-600">
-            Você não possui autorização para visualizar ou consultar os parâmetros de custos e precificação.
-            Apenas administradores ou usuários com permissão concedida podem acessar esta área.
-          </p>
-          <div className="pt-2 text-xs text-slate-400">
-            Solicite a permissão <code className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-mono">canViewCostPricingModule</code> com a gerência.
-          </div>
-        </div>
-      </div>
-    );
-  }
+
 
   // ==========================================================================
   // ESTADOS DOS MODAIS
@@ -252,6 +233,27 @@ export const CostPricingModuleView: React.FC<CostPricingModuleViewProps> = ({ cu
       return matchText && matchStatus;
     });
   }, [quotes, quoteSearch, quoteStatusFilter]);
+
+  // Se o usuário não tiver permissão de acesso ao módulo:
+  if (!canViewModule) {
+    return (
+      <div className="min-h-[500px] flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-white rounded-3xl p-8 border border-rose-200 shadow-xl text-center space-y-4">
+          <div className="w-16 h-16 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto">
+            <Lock className="w-8 h-8" />
+          </div>
+          <h2 className="text-xl font-black text-slate-900">Acesso Restrito ao Módulo de Custos</h2>
+          <p className="text-sm text-slate-600">
+            Você não possui autorização para visualizar ou consultar os parâmetros de custos e precificação.
+            Apenas administradores ou usuários com permissão concedida podem acessar esta área.
+          </p>
+          <div className="pt-2 text-xs text-slate-400">
+            Solicite a permissão <code className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-mono">canViewCostPricingModule</code> com a gerência.
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Executar bateria de testes automatizados E2E (Seção 15)
   const handleRunE2ETests = async () => {

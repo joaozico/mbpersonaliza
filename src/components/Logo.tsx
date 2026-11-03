@@ -22,6 +22,7 @@ export const Logo: React.FC<LogoProps> = ({
   const [storedSettings, setStoredSettings] = useState<CompanySettings>(() =>
     StorageService.getCompanySettings()
   );
+  const [imgError, setImgError] = useState(false);
 
   useEffect(() => {
     if (customSettings) return;
@@ -46,6 +47,16 @@ export const Logo: React.FC<LogoProps> = ({
 
   const settings = customSettings || storedSettings;
 
+  const activeCustomUrl =
+    variant === 'dark' && settings.logoDarkUrl && settings.logoDarkUrl.trim().length > 0
+      ? settings.logoDarkUrl
+      : settings.logoUrl;
+
+  // Reset img error on url change
+  useEffect(() => {
+    setImgError(false);
+  }, [activeCustomUrl, settings.logoType]);
+
   const textColor = variant === 'dark' ? '#FFFFFF' : '#111111';
   const subColor = variant === 'dark' ? 'text-slate-400' : 'text-slate-500';
 
@@ -58,28 +69,16 @@ export const Logo: React.FC<LogoProps> = ({
     '2xl': { iconWidth: 160, iconHeight: 96, fontSize: 'text-5xl', subSize: 'text-base' },
   }[size];
 
-  const activeCustomUrl =
-    variant === 'dark' && settings.logoDarkUrl && settings.logoDarkUrl.trim().length > 0
-      ? settings.logoDarkUrl
-      : settings.logoUrl;
-
   const hasCustomImage =
     settings.logoType === 'custom_image' &&
     activeCustomUrl &&
     activeCustomUrl.trim().length > 0;
 
-  const [imgError, setImgError] = useState(false);
-
-  // Reset img error on url change
-  useEffect(() => {
-    setImgError(false);
-  }, [activeCustomUrl, settings.logoType]);
-
   // Primary color for branding accent
   const primaryBrandColor = settings.primaryColor || '#E6007E';
 
   // SVG Emblem precisely matching the official MB Personaliza logo:
-  const EmblemSVG = ({ width, height }: { width: number; height: number }) => {
+  const renderEmblemSVG = (width: number, height: number) => {
     if (hasCustomImage && !imgError) {
       return (
         <img
@@ -200,7 +199,7 @@ export const Logo: React.FC<LogoProps> = ({
   if (layout === 'stacked') {
     return (
       <div className={`flex flex-col items-center select-none text-center ${className}`} id="mb-logo-stacked">
-        <EmblemSVG width={dimensions.iconWidth * 1.6} height={dimensions.iconHeight * 1.6} />
+        {renderEmblemSVG(dimensions.iconWidth * 1.6, dimensions.iconHeight * 1.6)}
         <span
           className={`font-black uppercase font-heading tracking-tight mt-1.5 ${
             size === 'sm'
@@ -230,7 +229,7 @@ export const Logo: React.FC<LogoProps> = ({
   if (layout === 'icon-only') {
     return (
       <div className={`inline-flex items-center justify-center select-none ${className}`} id="mb-logo-icon">
-        <EmblemSVG width={dimensions.iconWidth} height={dimensions.iconHeight} />
+        {renderEmblemSVG(dimensions.iconWidth, dimensions.iconHeight)}
       </div>
     );
   }
@@ -238,7 +237,7 @@ export const Logo: React.FC<LogoProps> = ({
   // Horizontal Layout
   return (
     <div className={`flex items-center gap-3 select-none ${className}`} id="mb-logo-horizontal">
-      <EmblemSVG width={dimensions.iconWidth} height={dimensions.iconHeight} />
+      {renderEmblemSVG(dimensions.iconWidth, dimensions.iconHeight)}
 
       <div className="flex flex-col leading-none">
         <div className="flex items-center">

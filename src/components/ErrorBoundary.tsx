@@ -141,6 +141,7 @@ export class ErrorBoundary extends (React.Component as any) {
                 {this.state.showDetails && (
                   <pre className="mt-2 p-2.5 bg-slate-900 text-slate-200 rounded-lg text-[10px] font-mono overflow-auto max-h-40 whitespace-pre-wrap break-all leading-tight">
                     {this.state.error.stack || this.state.error.message}
+                    {this.state.errorInfo?.componentStack ? `\n\nComponent Stack:\n${this.state.errorInfo.componentStack}` : ''}
                   </pre>
                 )}
               </div>

@@ -149,7 +149,116 @@ function setStored<T>(key: string, data: T): boolean {
   }
 }
 
+function syncToPostgres(endpoint: string, method: string = 'POST', data?: any) {
+  try {
+    if (typeof fetch === 'undefined') return;
+    fetch(`/api/db/${endpoint}`, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: data ? JSON.stringify(data) : undefined,
+    }).catch((err) => {
+      console.warn(`[PostgreSQL Sync Notice] ${endpoint}:`, err);
+    });
+  } catch {
+    // ignore
+  }
+}
+
 export const StorageService = {
+  // PostgreSQL Database Initialization & Real-time Synchronization
+  async initPostgresSync(): Promise<boolean> {
+    try {
+      const res = await fetch('/api/db/init');
+      if (!res.ok) return false;
+      const json = await res.json();
+      if (!json.success || !json.data) return false;
+
+      const { products, categories, subcategories, quotes, orders, users, coupons, settings } = json.data;
+
+      if (Array.isArray(products) && products.length > 0) {
+        const mappedProducts: Product[] = products.map((p: any) => ({
+          id: p.id,
+          code: p.code || 'PRD-001',
+          name: p.name,
+          slug: p.slug,
+          categoryId: p.categoryId,
+          subcategoryId: p.subcategoryId,
+          description: p.description || p.shortDescription || '',
+          base_price: Number(p.basePrice) || 0,
+          promo_price: p.promoPrice ? Number(p.promoPrice) : undefined,
+          cost_price: Number(p.costPrice) || 0,
+          profit_margin: Number(p.profitMargin) || 60,
+          stock_qty: Number(p.stockQty) || 0,
+          min_stock_alert: Number(p.minStockAlert) || 5,
+          min_order_qty: Number(p.minOrderQty) || 1,
+          is_active: p.isActive ?? true,
+          is_featured: p.isFeatured ?? false,
+          images: Array.isArray(p.images) ? p.images : [],
+          badge: p.badge,
+          show_price: p.showPrice ?? true,
+          price_tiers: Array.isArray(p.priceTiers) ? p.priceTiers : [],
+          variants: Array.isArray(p.variants) ? p.variants : [],
+          details: p.details || { customTechniques: ['Laser', 'UV'] },
+          barcode: p.barcode,
+          qrCode: p.qrCode,
+          createdAt: p.createdAt ? new Date(p.createdAt).toISOString() : new Date().toISOString(),
+        }));
+        setStored(STORAGE_KEYS.PRODUCTS, mappedProducts);
+      }
+
+      if (Array.isArray(categories) && categories.length > 0) {
+        setStored(STORAGE_KEYS.CATEGORIES, categories);
+      }
+      if (Array.isArray(subcategories) && subcategories.length > 0) {
+        setStored(STORAGE_KEYS.SUBCATEGORIES, subcategories);
+      }
+      if (Array.isArray(quotes) && quotes.length > 0) {
+        setStored(STORAGE_KEYS.QUOTES, quotes);
+      }
+      if (Array.isArray(orders) && orders.length > 0) {
+        setStored(STORAGE_KEYS.ORDERS, orders);
+      }
+      if (Array.isArray(users) && users.length > 0) {
+        setStored(STORAGE_KEYS.USERS, users);
+      }
+      if (Array.isArray(coupons) && coupons.length > 0) {
+        setStored(STORAGE_KEYS.COUPONS, coupons);
+      }
+      if (settings?.company) {
+        setStored(STORAGE_KEYS.COMPANY_SETTINGS, settings.company);
+      }
+      if (settings?.delivery) {
+        setStored(STORAGE_KEYS.DELIVERY_SETTINGS, settings.delivery);
+      }
+      if (settings?.boleto) {
+        setStored(STORAGE_KEYS.BOLETO_SETTINGS, settings.boleto);
+      }
+      if (settings?.layout) {
+        setStored(STORAGE_KEYS.LAYOUT_SETTINGS, settings.layout);
+      }
+      if (settings?.maintenance) {
+        setStored(STORAGE_KEYS.MAINTENANCE_SETTINGS, settings.maintenance);
+      }
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('mb_storage_updated'));
+        window.dispatchEvent(new Event('mb_products_updated'));
+      }
+      return true;
+    } catch (err) {
+      console.warn('[StorageService] PostgreSQL sync warning:', err);
+      return false;
+    }
+  },
+
+  async getPostgresStatus(): Promise<any> {
+    try {
+      const res = await fetch('/api/db/status');
+      return await res.json();
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  },
   // Products
   getProducts(): Product[] {
     const p = getStored<Product[]>(STORAGE_KEYS.PRODUCTS, INITIAL_PRODUCTS);
@@ -199,10 +308,12 @@ export const StorageService = {
       products.unshift(product);
     }
     this.saveProducts(products);
+    syncToPostgres('products', 'POST', product);
   },
   deleteProduct(id: string): void {
     const products = this.getProducts().filter((p) => p.id !== id);
     this.saveProducts(products);
+    syncToPostgres(`products/${id}`, 'DELETE');
   },
 
   // Categories
@@ -222,6 +333,7 @@ export const StorageService = {
       list.push(category);
     }
     this.saveCategories(list);
+    syncToPostgres('categories', 'POST', category);
     return { success: true };
   },
   deleteCategory(id: string): { success: boolean; error?: string } {
@@ -283,6 +395,7 @@ export const StorageService = {
     const quotes = this.getQuotes();
     quotes.unshift(quote);
     this.saveQuotes(quotes);
+    syncToPostgres('quotes', 'POST', quote);
     return quote;
   },
   updateQuote(quote: Quote): void {
@@ -291,6 +404,7 @@ export const StorageService = {
     if (index >= 0) {
       quotes[index] = { ...quote, updatedAt: new Date().toISOString() };
       this.saveQuotes(quotes);
+      syncToPostgres('quotes', 'POST', quotes[index]);
     }
   },
 
@@ -306,6 +420,7 @@ export const StorageService = {
     const orders = this.getOrders();
     orders.unshift(order);
     this.saveOrders(orders);
+    syncToPostgres('orders', 'POST', order);
 
     // Record stock deduction for products
     order.items.forEach((item) => {
@@ -803,6 +918,9 @@ export const StorageService = {
         };
       }
 
+      // Sync company settings to PostgreSQL
+      syncToPostgres('settings/company', 'POST', { value: settings });
+
       // Update favicon in browser head if provided
       if (settings.faviconUrl && typeof document !== 'undefined') {
         let link = document.querySelector<HTMLLinkElement>("link[rel*='icon']");
@@ -881,6 +999,7 @@ export const StorageService = {
       if (!saved) {
         return { success: false, error: 'Falha ao salvar configurações de entrega no armazenamento.' };
       }
+      syncToPostgres('settings/delivery', 'POST', { value: settings });
       if (typeof window !== 'undefined') {
         setTimeout(() => {
           window.dispatchEvent(new CustomEvent('mb_delivery_settings_updated', { detail: settings }));
@@ -896,6 +1015,7 @@ export const StorageService = {
 
   resetDeliverySettings(): { success: boolean } {
     setStored(STORAGE_KEYS.DELIVERY_SETTINGS, INITIAL_DELIVERY_SETTINGS);
+    syncToPostgres('settings/delivery', 'POST', { value: INITIAL_DELIVERY_SETTINGS });
     if (typeof window !== 'undefined') {
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('mb_delivery_settings_updated', { detail: INITIAL_DELIVERY_SETTINGS }));
@@ -938,6 +1058,7 @@ export const StorageService = {
       if (!saved) {
         return { success: false, error: 'Falha ao salvar configurações de boleto no armazenamento.' };
       }
+      syncToPostgres('settings/boleto', 'POST', { value: settings });
 
       this.addFinancialAuditEntry({
         userId: 'admin_sys',

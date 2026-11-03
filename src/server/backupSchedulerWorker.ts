@@ -233,6 +233,13 @@ export async function executeServerBackup(
     const updatedHistory = [entry, ...history].slice(0, config.retentionCount || 15);
     saveServerBackupHistory(updatedHistory);
 
+    // Record into independent PostgreSQL Database table
+    import('../db/repository.js')
+      .then(({ recordBackupInDb }) => {
+        recordBackupInDb(entry).catch((err) => console.warn('[BackupWorker] PostgreSQL backup record:', err));
+      })
+      .catch(() => {});
+
     // Prune old files on disk that are no longer in history
     try {
       const activeFiles = new Set(updatedHistory.map((h) => h.filename));
