@@ -416,6 +416,7 @@ export default function App() {
           <HomeView
             products={products}
             categories={categories}
+            currentUser={currentUser}
             onNavigate={handleNavigate}
           />
         )}
@@ -426,6 +427,7 @@ export default function App() {
             categories={categories}
             subcategories={subcategories}
             selectedCategoryId={viewParam}
+            currentUser={currentUser}
             onNavigate={handleNavigate}
             onOpenQuoteModal={handleOpenQuoteModal}
           />
@@ -435,6 +437,7 @@ export default function App() {
           <ProductDetailView
             productId={viewParam || products[0]?.id || ''}
             products={products}
+            currentUser={currentUser}
             onNavigate={handleNavigate}
             onAddToCart={handleAddToCart}
             onOpenQuoteModal={handleOpenQuoteModal}

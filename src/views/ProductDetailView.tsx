@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Product, ProductVariant, CartItem } from '../types';
+import { Product, ProductVariant, CartItem, UserProfile } from '../types';
 import { StorageService } from '../services/storage';
 import { ArtworkUpload } from '../components/ArtworkUpload';
 import { SEOHead } from '../components/SEOHead';
@@ -25,9 +25,12 @@ import {
   Info,
 } from 'lucide-react';
 
+import { FavoriteButton } from '../components/FavoriteButton';
+
 interface ProductDetailViewProps {
   productId: string;
   products: Product[];
+  currentUser?: UserProfile;
   onNavigate: (view: string, param?: string) => void;
   onAddToCart: (item: CartItem, openDrawer?: boolean) => void;
   onOpenQuoteModal: (initialItem?: { product: Product; variant?: ProductVariant; quantity: number }) => void;
@@ -36,6 +39,7 @@ interface ProductDetailViewProps {
 export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
   productId,
   products,
+  currentUser,
   onNavigate,
   onAddToCart,
   onOpenQuoteModal,
@@ -198,10 +202,18 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
               </span>
             )}
             {!product.show_price && (
-              <span className="absolute top-4 right-4 px-3 py-1 rounded-full text-xs font-bold bg-amber-500 text-white shadow-md">
+              <span className="absolute bottom-4 left-4 px-3 py-1 rounded-full text-xs font-bold bg-amber-500 text-white shadow-md">
                 Produto Sob Cotação
               </span>
             )}
+            <div className="absolute top-4 right-4 z-10">
+              <FavoriteButton
+                productId={product.id}
+                productName={product.name}
+                currentUser={currentUser}
+                size="md"
+              />
+            </div>
           </div>
 
           {/* Thumbnails */}

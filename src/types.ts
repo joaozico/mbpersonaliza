@@ -318,6 +318,7 @@ export interface UserProfile {
   stateRegistration?: string;
   customPermissions?: Partial<RolePermissions>;
   lastLogin?: string;
+  favoriteProductIds?: string[];
   address?: {
     street: string;
     number: string;

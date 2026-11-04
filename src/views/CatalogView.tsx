@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Product, ProductVariant, Category, Subcategory } from '../types';
+import { Product, ProductVariant, Category, Subcategory, UserProfile } from '../types';
 import { SEOHead } from '../components/SEOHead';
 import {
   Search,
@@ -18,11 +18,14 @@ import {
   FileSpreadsheet,
 } from 'lucide-react';
 
+import { FavoriteButton } from '../components/FavoriteButton';
+
 interface CatalogViewProps {
   products: Product[];
   categories: Category[];
   subcategories: Subcategory[];
   selectedCategoryId?: string;
+  currentUser?: UserProfile;
   onNavigate: (view: string, param?: string) => void;
   onOpenQuoteModal?: (initial?: { product: Product; variant?: ProductVariant; quantity: number }) => void;
 }
@@ -32,6 +35,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   categories,
   subcategories,
   selectedCategoryId,
+  currentUser,
   onNavigate,
   onOpenQuoteModal,
 }) => {
@@ -441,10 +445,18 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                     </span>
                   )}
                   {!product.show_price && (
-                    <span className="absolute top-2.5 right-2.5 px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500 text-white shadow-xs">
+                    <span className="absolute bottom-2.5 left-2.5 px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500 text-white shadow-xs">
                       Sob Orçamento
                     </span>
                   )}
+                  <div className="absolute top-2.5 right-2.5 z-10">
+                    <FavoriteButton
+                      productId={product.id}
+                      productName={product.name}
+                      currentUser={currentUser}
+                      size="sm"
+                    />
+                  </div>
                 </div>
 
                 {/* Details */}
@@ -517,12 +529,22 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               key={product.id}
               className="p-4 sm:p-5 flex flex-col sm:flex-row items-center gap-4 hover:bg-slate-50/70 transition-colors"
             >
-              <img
-                src={product.images[0]}
-                alt={product.name}
-                className="w-24 h-24 object-cover rounded-xl border border-slate-100 flex-shrink-0 cursor-pointer"
-                onClick={() => onNavigate('product-detail', product.id)}
-              />
+              <div className="relative flex-shrink-0">
+                <img
+                  src={product.images[0]}
+                  alt={product.name}
+                  className="w-24 h-24 object-cover rounded-xl border border-slate-100 cursor-pointer"
+                  onClick={() => onNavigate('product-detail', product.id)}
+                />
+                <div className="absolute top-1.5 right-1.5 z-10">
+                  <FavoriteButton
+                    productId={product.id}
+                    productName={product.name}
+                    currentUser={currentUser}
+                    size="sm"
+                  />
+                </div>
+              </div>
               <div className="flex-1 min-w-0 space-y-1 text-center sm:text-left">
                 <div className="flex items-center justify-center sm:justify-start gap-2 text-xs text-slate-400 font-mono">
                   <span>{product.code}</span>

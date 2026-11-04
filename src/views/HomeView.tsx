@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Product, Category, SystemLayoutSettings } from '../types';
+import { Product, Category, SystemLayoutSettings, UserProfile } from '../types';
 import { StorageService } from '../services/storage';
 import { SEOHead } from '../components/SEOHead';
 import { OffersBanner } from '../components/OffersBanner';
@@ -20,9 +20,12 @@ import {
   Send,
 } from 'lucide-react';
 
+import { FavoriteButton } from '../components/FavoriteButton';
+
 interface HomeViewProps {
   products: Product[];
   categories: Category[];
+  currentUser?: UserProfile;
   onNavigate: (view: string, param?: string) => void;
   onQuickAddToCart?: (product: Product) => void;
 }
@@ -30,6 +33,7 @@ interface HomeViewProps {
 export const HomeView: React.FC<HomeViewProps> = ({
   products,
   categories,
+  currentUser,
   onNavigate,
   onQuickAddToCart,
 }) => {
@@ -415,10 +419,18 @@ export const HomeView: React.FC<HomeViewProps> = ({
                           </span>
                         )}
                         {!product.show_price && (
-                          <span className="absolute top-3 right-3 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-500 text-white shadow-xs">
+                          <span className="absolute bottom-3 left-3 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-500 text-white shadow-xs">
                             Sob Orçamento
                           </span>
                         )}
+                        <div className="absolute top-3 right-3 z-10">
+                          <FavoriteButton
+                            productId={product.id}
+                            productName={product.name}
+                            currentUser={currentUser}
+                            size="sm"
+                          />
+                        </div>
                       </div>
 
                       {/* Content */}

@@ -120,6 +120,7 @@ const STORAGE_KEYS = {
   COUPON_USAGES: 'mb_personaliza_coupon_usages_v1',
   COUPON_SEND_HISTORY: 'mb_personaliza_coupon_send_history_v1',
   COUPON_AUDIT_LOGS: 'mb_personaliza_coupon_audit_logs_v1',
+  FAVORITES: 'mb_personaliza_user_favorites_v1',
 };
 
 function getStored<T>(key: string, fallback: T): T {
@@ -1998,6 +1999,90 @@ export const StorageService = {
       return found;
     }
     return null;
+  },
+
+  // ==========================================
+  // USER FAVORITES (WISHLIST)
+  // ==========================================
+  getUserFavorites(userId?: string): string[] {
+    const uid = userId || this.getCurrentUser()?.id;
+    if (!uid) return [];
+
+    // 1. Try from user profile object in USERS
+    const users = this.getUsers();
+    const user = users.find((u) => u.id === uid);
+    if (user?.favoriteProductIds && Array.isArray(user.favoriteProductIds)) {
+      return user.favoriteProductIds;
+    }
+
+    // 2. Fallback to FAVORITES storage map
+    const map = getStored<Record<string, string[]>>(STORAGE_KEYS.FAVORITES, {});
+    return Array.isArray(map[uid]) ? map[uid] : [];
+  },
+
+  isProductFavorite(productId: string, userId?: string): boolean {
+    if (!productId) return false;
+    const favorites = this.getUserFavorites(userId);
+    return favorites.includes(productId);
+  },
+
+  toggleProductFavorite(productId: string, userId?: string): { isFavorite: boolean; favorites: string[] } {
+    const uid = userId || this.getCurrentUser()?.id;
+    if (!uid) {
+      return { isFavorite: false, favorites: [] };
+    }
+
+    const currentFavorites = this.getUserFavorites(uid);
+    let updatedFavorites: string[];
+    let isFavorite: boolean;
+
+    if (currentFavorites.includes(productId)) {
+      updatedFavorites = currentFavorites.filter((id) => id !== productId);
+      isFavorite = false;
+    } else {
+      updatedFavorites = [...currentFavorites, productId];
+      isFavorite = true;
+    }
+
+    // Update user in USERS list
+    const users = this.getUsers();
+    const userIdx = users.findIndex((u) => u.id === uid);
+    if (userIdx >= 0) {
+      users[userIdx].favoriteProductIds = updatedFavorites;
+      setStored(STORAGE_KEYS.USERS, users);
+
+      const current = this.getCurrentUser();
+      if (current && current.id === uid) {
+        current.favoriteProductIds = updatedFavorites;
+        setStored(STORAGE_KEYS.CURRENT_USER, current);
+      }
+
+      syncToPostgres('users', 'POST', users[userIdx]);
+    }
+
+    // Persist in favorites storage map for guaranteed cross-session durability
+    const map = getStored<Record<string, string[]>>(STORAGE_KEYS.FAVORITES, {});
+    map[uid] = updatedFavorites;
+    setStored(STORAGE_KEYS.FAVORITES, map);
+
+    // Notify all tabs and components
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('mb_favorites_updated', {
+          detail: { productId, isFavorite, favorites: updatedFavorites, userId: uid },
+        })
+      );
+      window.dispatchEvent(new Event('mb_storage_updated'));
+    }
+
+    return { isFavorite, favorites: updatedFavorites };
+  },
+
+  getFavoriteProducts(userId?: string): Product[] {
+    const favIds = this.getUserFavorites(userId);
+    if (favIds.length === 0) return [];
+    const products = this.getProducts();
+    return products.filter((p) => favIds.includes(p.id));
   },
 
   // Cart
