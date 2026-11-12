@@ -23,8 +23,44 @@ import {
 
 export const databaseRouter = Router();
 
+function isPlaceholderConfig(val?: string): boolean {
+  if (!val || typeof val !== 'string') return false;
+  const lower = val.toLowerCase().trim();
+  return (
+    lower.includes('seu-postgresql-externo') ||
+    lower.includes('sua_senha_segura') ||
+    lower.includes('seu-host') ||
+    lower.includes('example.com') ||
+    lower.includes('placeholder')
+  );
+}
+
 // GET /api/db/status - Confirms database connectivity, engine, and counts
 databaseRouter.get('/status', async (req: Request, res: Response) => {
+  const rawDbUrl = process.env.DATABASE_URL;
+  const hasValidDbUrl = !!rawDbUrl && !isPlaceholderConfig(rawDbUrl) && (rawDbUrl.startsWith('postgres://') || rawDbUrl.startsWith('postgresql://'));
+  const rawHost = process.env.SQL_HOST;
+  const hasValidHost = !!rawHost && !isPlaceholderConfig(rawHost);
+
+  const hasDbConfig = hasValidDbUrl || (hasValidHost && (process.env.SQL_USER || process.env.SQL_ADMIN_USER));
+
+  if (!hasDbConfig) {
+    return res.json({
+      success: true,
+      database: 'PostgreSQL',
+      connected: false,
+      status: 'pending_configuration',
+      message: 'Aguardando inserção das variáveis de ambiente de conexão no .env (DATABASE_URL ou SQL_HOST/SQL_USER).',
+      counts: {
+        products: 0,
+        categories: 0,
+        orders: 0,
+        quotes: 0,
+        users: 0,
+      },
+    });
+  }
+
   try {
     await seedInitialDataIfEmpty();
     const products = (await getProductsFromDb()) || [];
@@ -35,10 +71,11 @@ databaseRouter.get('/status', async (req: Request, res: Response) => {
 
     res.json({
       success: true,
-      database: 'PostgreSQL (Cloud SQL)',
+      database: 'PostgreSQL (Cloud SQL / Hostinger VPS)',
       connected: true,
-      host: process.env.SQL_HOST ? 'Unix Socket / Cloud SQL Auth Proxy' : 'configured',
-      databaseName: process.env.SQL_DB_NAME,
+      status: 'online',
+      host: hasValidDbUrl ? 'Instância Gerenciada Externa (DATABASE_URL)' : (hasValidHost ? rawHost : 'configured'),
+      databaseName: process.env.SQL_DB_NAME || 'configured',
       counts: {
         products: products.length,
         categories: categories.length,
@@ -48,8 +85,22 @@ databaseRouter.get('/status', async (req: Request, res: Response) => {
       },
     });
   } catch (error: any) {
-    console.error('Failed to get database status:', error);
-    res.status(500).json({ success: false, error: error.message || 'Database connection error' });
+    console.warn('[PostgreSQL Status] Conexão pendente ou em inicialização:', error.message);
+    res.json({
+      success: true,
+      database: 'PostgreSQL',
+      connected: false,
+      status: 'offline_or_unreachable',
+      error: error.message || 'Falha ao conectar no banco',
+      message: 'O servidor está ativo. Conecte o banco PostgreSQL fornecendo as variáveis no arquivo .env.',
+      counts: {
+        products: 0,
+        categories: 0,
+        orders: 0,
+        quotes: 0,
+        users: 0,
+      },
+    });
   }
 });
 

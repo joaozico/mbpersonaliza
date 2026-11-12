@@ -1,0 +1,36 @@
+{
+  "metadata": {
+    "system": "MB Personaliza - Sistema Integrado de Gestão",
+    "appletId": "c2a4b442-9b4f-41b6-8554-96d40752f5a7",
+    "version": "2.0.0",
+    "exportTimestamp": "2026-11-12T03:40:56.604Z",
+    "exportType": "manual",
+    "schemaVersion": "1.0.0",
+    "counts": {
+      "products": 0,
+      "categories": 0,
+      "subcategories": 0,
+      "quotes": 0,
+      "orders": 0,
+      "stockMovements": 0,
+      "customers": 0
+    },
+    "security": {
+      "algorithm": "SHA-256",
+      "checksumSha256": "378aba3a973e18f312700b8cc523b43e205c8a81d9ab654fe667d8c5e981aa12",
+      "signature": "SIG-MB-378ABA3A973E18F3",
+      "encrypted": false,
+      "integrityVerified": true
+    },
+    "disasterRecoveryNote": "Cópia de segurança para recuperação de desastres. Contém catálogo, orçamentos e pedidos da MB Personaliza."
+  },
+  "data": {
+    "products": [],
+    "quotes": [],
+    "orders": [],
+    "categories": [],
+    "subcategories": [],
+    "stockMovements": [],
+    "customers": []
+  }
+}

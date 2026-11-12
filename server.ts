@@ -10,15 +10,23 @@ import { backupRouter } from "./src/server/backupRouter";
 import { backupSchedulerWorker } from "./src/server/backupSchedulerWorker";
 import { costPricingRouter } from "./src/server/costPricingRouter";
 import { couponRouter } from "./src/server/couponRouter";
+import { uploadRouter } from "./src/server/uploadRouter";
 
 import { databaseRouter } from "./src/server/databaseRouter";
 import { seedInitialDataIfEmpty } from "./src/db/repository";
+import { closePool } from "./src/db";
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 
-  app.use(express.json({ limit: "25mb" }));
+  // Aumentar limite de payload para suportar upload de artefatos/mockups de até 50MB
+  app.use(express.json({ limit: "50mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+  // Servir arquivos estáticos de uploads persistentes
+  const uploadsPath = path.join(process.cwd(), "uploads");
+  app.use("/uploads", express.static(uploadsPath));
 
   // Inicia worker de sincronização periódica Stricker em segundo plano
   strickerSyncWorker.start();
@@ -33,11 +41,21 @@ async function startServer() {
 
   // API Health
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", app: "MB Personaliza", version: "1.0.0" });
+    res.json({
+      status: "ok",
+      app: "MB Personaliza",
+      version: "1.0.0",
+      environment: process.env.NODE_ENV || "development",
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString()
+    });
   });
 
   // PostgreSQL Cloud SQL Database API Routes
   app.use("/api/db", databaseRouter);
+
+  // Módulo de Upload de Arquivos Persistentes
+  app.use("/api/upload", uploadRouter);
 
   // Modo de Manutenção & Configurações do Sistema
   app.use("/api/system", systemRouter);
@@ -83,9 +101,35 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`MB Personaliza Server running on http://localhost:${PORT}`);
   });
+
+  // Graceful Shutdown para garantir parada segura em containers Docker / KVM VPS
+  const gracefulShutdown = async (signal: string) => {
+    console.log(`[Server] Sinal ${signal} recebido. Encerrando processos e conexões...`);
+    try {
+      strickerSyncWorker.stop();
+      backupSchedulerWorker.stop();
+      await closePool();
+    } catch (err) {
+      console.error('[Server] Erro durante o encerramento gracioso:', err);
+    }
+
+    server.close(() => {
+      console.log('[Server] Servidor HTTP finalizado com sucesso.');
+      process.exit(0);
+    });
+
+    // Timeout de segurança caso algum socket fique preso
+    setTimeout(() => {
+      console.warn('[Server] Forçando encerramento após timeout de 10s.');
+      process.exit(1);
+    }, 10000).unref();
+  };
+
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 }
 
 startServer();

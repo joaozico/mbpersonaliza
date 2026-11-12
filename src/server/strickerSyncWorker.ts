@@ -98,6 +98,17 @@ class StrickerSyncWorker {
   }
 
   /**
+   * Encerra o agendador em segundo plano
+   */
+  public stop(): void {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    console.log('[Stricker Sync Worker] Serviço interrompido com sucesso.');
+  }
+
+  /**
    * Agenda a próxima execução periódica
    */
   private scheduleNextRun(): void {

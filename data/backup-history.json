@@ -1,0 +1,138 @@
+[
+  {
+    "id": "bkp-srv-1794454856604",
+    "filename": "mb_backup_recuperacao_2026-11-12_034056.json",
+    "timestamp": "2026-11-12T03:40:56.604Z",
+    "sizeBytes": 1015,
+    "sizeFormatted": "0.99 KB",
+    "checksum": "378aba3a973e18f312700b8cc523b43e205c8a81d9ab654fe667d8c5e981aa12",
+    "trigger": "manual",
+    "status": "success",
+    "counts": {
+      "products": 0,
+      "quotes": 0,
+      "orders": 0
+    },
+    "storedOnServer": true,
+    "downloadUrl": "/api/backup/download/mb_backup_recuperacao_2026-11-12_034056.json"
+  },
+  {
+    "id": "bkp-srv-1794454818641",
+    "filename": "mb_backup_agendado_2026-11-12_034018.json",
+    "timestamp": "2026-11-12T03:40:18.640Z",
+    "sizeBytes": 1018,
+    "sizeFormatted": "0.99 KB",
+    "checksum": "378aba3a973e18f312700b8cc523b43e205c8a81d9ab654fe667d8c5e981aa12",
+    "trigger": "scheduled",
+    "status": "success",
+    "counts": {
+      "products": 0,
+      "quotes": 0,
+      "orders": 0
+    },
+    "storedOnServer": true,
+    "downloadUrl": "/api/backup/download/mb_backup_agendado_2026-11-12_034018.json"
+  },
+  {
+    "id": "bkp-srv-1794454013400",
+    "filename": "mb_backup_agendado_2026-11-12_032653.json",
+    "timestamp": "2026-11-12T03:26:53.399Z",
+    "sizeBytes": 1018,
+    "sizeFormatted": "0.99 KB",
+    "checksum": "378aba3a973e18f312700b8cc523b43e205c8a81d9ab654fe667d8c5e981aa12",
+    "trigger": "scheduled",
+    "status": "success",
+    "counts": {
+      "products": 0,
+      "quotes": 0,
+      "orders": 0
+    },
+    "storedOnServer": true,
+    "downloadUrl": "/api/backup/download/mb_backup_agendado_2026-11-12_032653.json"
+  },
+  {
+    "id": "bkp-srv-1794452405056",
+    "filename": "mb_backup_agendado_2026-11-12_030005.json",
+    "timestamp": "2026-11-12T03:00:05.055Z",
+    "sizeBytes": 1018,
+    "sizeFormatted": "0.99 KB",
+    "checksum": "378aba3a973e18f312700b8cc523b43e205c8a81d9ab654fe667d8c5e981aa12",
+    "trigger": "scheduled",
+    "status": "success",
+    "counts": {
+      "products": 0,
+      "quotes": 0,
+      "orders": 0
+    },
+    "storedOnServer": true,
+    "downloadUrl": "/api/backup/download/mb_backup_agendado_2026-11-12_030005.json"
+  },
+  {
+    "id": "bkp-srv-1794451542425",
+    "filename": "mb_backup_agendado_2026-11-12_024542.json",
+    "timestamp": "2026-11-12T02:45:42.424Z",
+    "sizeBytes": 1018,
+    "sizeFormatted": "0.99 KB",
+    "checksum": "378aba3a973e18f312700b8cc523b43e205c8a81d9ab654fe667d8c5e981aa12",
+    "trigger": "scheduled",
+    "status": "success",
+    "counts": {
+      "products": 0,
+      "quotes": 0,
+      "orders": 0
+    },
+    "storedOnServer": true,
+    "downloadUrl": "/api/backup/download/mb_backup_agendado_2026-11-12_024542.json"
+  },
+  {
+    "id": "bkp-srv-1794450833639",
+    "filename": "mb_backup_agendado_2026-11-12_023353.json",
+    "timestamp": "2026-11-12T02:33:53.639Z",
+    "sizeBytes": 1018,
+    "sizeFormatted": "0.99 KB",
+    "checksum": "378aba3a973e18f312700b8cc523b43e205c8a81d9ab654fe667d8c5e981aa12",
+    "trigger": "scheduled",
+    "status": "success",
+    "counts": {
+      "products": 0,
+      "quotes": 0,
+      "orders": 0
+    },
+    "storedOnServer": true,
+    "downloadUrl": "/api/backup/download/mb_backup_agendado_2026-11-12_023353.json"
+  },
+  {
+    "id": "bkp-srv-1794450281540",
+    "filename": "mb_backup_agendado_2026-11-12_022441.json",
+    "timestamp": "2026-11-12T02:24:41.540Z",
+    "sizeBytes": 1018,
+    "sizeFormatted": "0.99 KB",
+    "checksum": "378aba3a973e18f312700b8cc523b43e205c8a81d9ab654fe667d8c5e981aa12",
+    "trigger": "scheduled",
+    "status": "success",
+    "counts": {
+      "products": 0,
+      "quotes": 0,
+      "orders": 0
+    },
+    "storedOnServer": true,
+    "downloadUrl": "/api/backup/download/mb_backup_agendado_2026-11-12_022441.json"
+  },
+  {
+    "id": "bkp-srv-1794448265212",
+    "filename": "mb_backup_agendado_2026-11-12_015105.json",
+    "timestamp": "2026-11-12T01:51:05.211Z",
+    "sizeBytes": 69439,
+    "sizeFormatted": "67.81 KB",
+    "checksum": "7ded824b296919cf6c8d4b98eb3a94fbd86171725b816c6ebd8cc9d5b5dc7a7e",
+    "trigger": "scheduled",
+    "status": "success",
+    "counts": {
+      "products": 14,
+      "quotes": 4,
+      "orders": 2
+    },
+    "storedOnServer": true,
+    "downloadUrl": "/api/backup/download/mb_backup_agendado_2026-11-12_015105.json"
+  }
+]

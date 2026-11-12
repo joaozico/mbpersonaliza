@@ -23,6 +23,9 @@
   "encryptPayload": false,
   "autoDownloadBrowser": false,
   "saveOnServer": true,
-  "nextRunAt": "2026-10-08T03:00:00.000Z",
-  "updatedAt": "2026-10-08T00:58:34.491Z"
+  "nextRunAt": "2026-11-13T03:00:00.000Z",
+  "updatedAt": "2026-11-12T03:40:56.604Z",
+  "lastRunAt": "2026-11-12T03:40:56.604Z",
+  "lastRunStatus": "success",
+  "lastRunMessage": "Backup manual concluído com sucesso (0 produtos, 0 orçamentos, 0 pedidos)."
 }
