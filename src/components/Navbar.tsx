@@ -119,7 +119,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             color: layoutSettings?.colors?.topBannerText || '#FFFFFF',
           }}
         >
-          <div className="w-full max-w-7xl mx-auto flex items-center justify-between gap-2 min-w-0">
+          <div className="w-full max-w-[1440px] mx-auto flex items-center justify-between gap-2 min-w-0">
             <div className="flex items-center gap-4 shrink min-w-0">
               <span className="flex items-center gap-1.5 text-xs font-medium truncate">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
@@ -195,8 +195,8 @@ export const Navbar: React.FC<NavbarProps> = ({
     )}
 
       {/* Main Navbar */}
-      <div className="w-full max-w-7xl mx-auto px-3 sm:px-6 py-2.5 sm:py-3">
-        <div className="flex items-center justify-between gap-2 sm:gap-4 min-w-0">
+      <div className="w-full max-w-[1440px] mx-auto px-3 sm:px-5 2xl:px-6 py-2.5 sm:py-3">
+        <div className="flex items-center justify-between gap-2 sm:gap-3 2xl:gap-4 min-w-0">
           {/* Logo */}
           <button
             onClick={() => onNavigate('home')}
@@ -210,24 +210,25 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             type="button"
             onClick={() => onOpenGlobalSearch?.()}
-            className="hidden lg:flex items-center justify-between w-52 xl:w-64 2xl:w-72 px-3 py-1.5 text-xs bg-slate-100 hover:bg-slate-200/70 text-slate-500 hover:text-slate-800 rounded-xl border border-slate-200/80 transition-all cursor-pointer group shadow-2xs"
+            className="hidden lg:flex items-center justify-between lg:w-60 xl:w-auto xl:flex-1 xl:min-w-[120px] xl:max-w-[165px] 2xl:max-w-[210px] px-2.5 py-1.5 text-xs bg-slate-100 hover:bg-slate-200/70 text-slate-500 hover:text-slate-800 rounded-xl border border-slate-200/80 transition-all cursor-pointer group shadow-2xs"
             title="Abrir Pesquisa Global (Ctrl + K)"
             id="nav-global-search-btn"
           >
-            <span className="flex items-center gap-2 truncate">
+            <span className="flex items-center gap-1.5 min-w-0 truncate">
               <Search className="w-3.5 h-3.5 text-slate-400 group-hover:text-[#00AEEF] transition-colors shrink-0" />
-              <span className="truncate">Pesquisar produtos, páginas...</span>
+              <span className="truncate xl:hidden 2xl:inline">Pesquisar produtos, páginas...</span>
+              <span className="truncate hidden xl:inline 2xl:hidden">Pesquisar...</span>
             </span>
-            <kbd className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-mono font-bold bg-white text-slate-400 rounded-md border border-slate-200 shadow-2xs group-hover:border-slate-300">
+            <kbd className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-mono font-bold bg-white text-slate-400 rounded-md border border-slate-200 shadow-2xs group-hover:border-slate-300 shrink-0 ml-1.5">
               <span className="text-[9px]">⌘</span>K
             </kbd>
           </button>
 
-          {/* Desktop Nav Links (Visible on >= 1280px with responsive spacing) */}
-          <nav className="hidden xl:flex items-center gap-1 2xl:gap-2.5 text-xs 2xl:text-sm font-semibold text-slate-700 shrink min-w-0">
+          {/* Desktop Nav Links (Visible on >= 1280px without shrinking or overlapping CTAs) */}
+          <nav className="hidden xl:flex items-center gap-0.5 2xl:gap-1.5 text-[12.5px] 2xl:text-sm font-semibold text-slate-700 shrink-0">
             <button
               onClick={() => onNavigate('home')}
-              className={`px-2 py-1.5 2xl:px-2.5 2xl:py-1.5 rounded-lg hover:text-[#E6007E] hover:bg-slate-50 transition-colors whitespace-nowrap cursor-pointer ${
+              className={`px-2 py-1.5 2xl:px-2.5 rounded-lg hover:text-[#E6007E] hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 currentView === 'home' ? 'text-[#E6007E] font-bold bg-pink-50/50' : ''
               }`}
             >
@@ -235,7 +236,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
             <button
               onClick={() => onNavigate('catalog')}
-              className={`px-2 py-1.5 2xl:px-2.5 2xl:py-1.5 rounded-lg hover:text-[#E6007E] hover:bg-slate-50 transition-colors whitespace-nowrap cursor-pointer ${
+              className={`px-2 py-1.5 2xl:px-2.5 rounded-lg hover:text-[#E6007E] hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 currentView === 'catalog' ? 'text-[#E6007E] font-bold bg-pink-50/50' : ''
               }`}
             >
@@ -244,7 +245,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             {layoutSettings?.header?.showCatalogPdfLink && (
               <button
                 onClick={() => onNavigate('digital-catalog')}
-                className={`flex items-center gap-1.5 px-2 py-1 2xl:px-2.5 2xl:py-1 rounded-md text-xs font-semibold bg-sky-50 text-[#00AEEF] hover:bg-sky-100 transition-colors whitespace-nowrap cursor-pointer ${
+                className={`flex items-center gap-1.5 px-2 py-1 2xl:px-2.5 rounded-md text-xs font-semibold bg-sky-50 text-[#00AEEF] hover:bg-sky-100 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   currentView === 'digital-catalog' ? 'ring-1 ring-[#00AEEF]' : ''
                 }`}
                 title="Catálogo PDF / Impressão pronto para clientes"
@@ -255,7 +256,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
             <button
               onClick={() => onNavigate('quote')}
-              className={`px-2 py-1.5 2xl:px-2.5 2xl:py-1.5 rounded-lg hover:text-[#E6007E] hover:bg-slate-50 transition-colors whitespace-nowrap cursor-pointer ${
+              className={`px-2 py-1.5 2xl:px-2.5 rounded-lg hover:text-[#E6007E] hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 currentView === 'quote' ? 'text-[#E6007E] font-bold bg-pink-50/50' : ''
               }`}
             >
@@ -264,7 +265,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             {layoutSettings?.header?.showAboutLink && (
               <button
                 onClick={() => onNavigate('about')}
-                className={`px-2 py-1.5 2xl:px-2.5 2xl:py-1.5 rounded-lg hover:text-[#E6007E] hover:bg-slate-50 transition-colors whitespace-nowrap cursor-pointer ${
+                className={`px-2 py-1.5 2xl:px-2.5 rounded-lg hover:text-[#E6007E] hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   currentView === 'about' ? 'text-[#E6007E] font-bold bg-pink-50/50' : ''
                 }`}
               >
@@ -273,7 +274,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
             <button
               onClick={() => onNavigate('contact')}
-              className={`px-2 py-1.5 2xl:px-2.5 2xl:py-1.5 rounded-lg hover:text-[#E6007E] hover:bg-slate-50 transition-colors whitespace-nowrap cursor-pointer ${
+              className={`px-2 py-1.5 2xl:px-2.5 rounded-lg hover:text-[#E6007E] hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 currentView === 'contact' ? 'text-[#E6007E] font-bold bg-pink-50/50' : ''
               }`}
             >
@@ -282,7 +283,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </nav>
 
           {/* Action CTAs (Always visible and never clipped) */}
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
             {/* Quick PDV Button for Employees */}
             {isAdminRole && (
               <button
