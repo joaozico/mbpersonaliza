@@ -6,6 +6,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 DOMAIN="mbpersonaliza.com.br"
 EMAIL="${1:-contato@mbpersonaliza.com.br}"
 
@@ -17,8 +21,8 @@ mkdir -p nginx/certbot/conf nginx/certbot/www
 
 # 2. Executar certbot via docker para emitir certificado
 docker run -it --rm --name certbot_init \
-    -v "$(pwd)/nginx/certbot/conf:/etc/letsencrypt" \
-    -v "$(pwd)/nginx/certbot/www:/var/www/certbot" \
+    -v "${PROJECT_ROOT}/nginx/certbot/conf:/etc/letsencrypt" \
+    -v "${PROJECT_ROOT}/nginx/certbot/www:/var/www/certbot" \
     certbot/certbot certonly --webroot \
     --webroot-path=/var/www/certbot \
     --email "$EMAIL" \
@@ -29,4 +33,4 @@ docker run -it --rm --name certbot_init \
 
 echo "=== Certificado emitido com sucesso! Recarregando Nginx... ==="
 docker compose exec nginx nginx -s reload || true
-echo "✓ HTTPS ativo em https://$DOMAIN e https://www.DOMAIN"
+echo "✓ HTTPS ativo em https://$DOMAIN e https://www.$DOMAIN"

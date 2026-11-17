@@ -6,6 +6,11 @@
 
 set -euo pipefail
 
+# Garantir execução a partir da raiz do projeto, mesmo se chamado de dentro de scripts/
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 COLOR_RESET="\033[0m"
 COLOR_GREEN="\033[1;32m"
 COLOR_YELLOW="\033[1;33m"
@@ -18,8 +23,9 @@ echo -e "${COLOR_CYAN}    Domínio: www.mbpersonaliza.com.br / mbpersonaliza.com
 echo -e "${COLOR_CYAN}================================================================${COLOR_RESET}"
 
 # 1. Checagem de Privilégios e Diretório
-if [ ! -f "docker-compose.yml" ]; then
-    echo -e "${COLOR_RED}Erro: Execute este script a partir da raiz do projeto (/var/www/mbpersonaliza).${COLOR_RESET}"
+if [ ! -f "${PROJECT_ROOT}/docker-compose.yml" ] || [ ! -f "${PROJECT_ROOT}/Dockerfile" ]; then
+    echo -e "${COLOR_RED}Erro: 'docker-compose.yml' ou 'Dockerfile' não encontrados em ${PROJECT_ROOT}.${COLOR_RESET}"
+    echo -e "${COLOR_YELLOW}Verifique se todos os arquivos do projeto foram enviados para a VPS.${COLOR_RESET}"
     exit 1
 fi
 
@@ -41,8 +47,8 @@ echo -e "${COLOR_GREEN}✓ Volumes persistentes estruturados (uploads e backups 
 
 # 4. Compilação e Lançamento dos Containers Docker
 echo -e "\n${COLOR_YELLOW}[3/5] Compilando e iniciando containers em modo de produção...${COLOR_RESET}"
-docker compose build --pull app
-docker compose up -d --remove-orphans
+docker compose -f "${PROJECT_ROOT}/docker-compose.yml" build --pull app
+docker compose -f "${PROJECT_ROOT}/docker-compose.yml" up -d --remove-orphans
 echo -e "${COLOR_GREEN}✓ Containers ativos e operacionais.${COLOR_RESET}"
 
 # 5. Verificação de Saúde da Aplicação

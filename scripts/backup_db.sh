@@ -7,7 +7,11 @@
 
 set -euo pipefail
 
-BACKUP_DIR="${BACKUP_DIR:-$(pwd)/data/backups}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "$PROJECT_ROOT"
+
+BACKUP_DIR="${BACKUP_DIR:-${PROJECT_ROOT}/data/backups}"
 mkdir -p "$BACKUP_DIR"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 BACKUP_FILE="${BACKUP_DIR}/mb_backup_${TIMESTAMP}.sql.gz"

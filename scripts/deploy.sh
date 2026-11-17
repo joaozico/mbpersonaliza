@@ -6,6 +6,11 @@
 
 set -euo pipefail
 
+# Garantir execução a partir da raiz do projeto, mesmo se chamado de dentro de scripts/
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 COLOR_RESET="\033[0m"
 COLOR_GREEN="\033[1;32m"
 COLOR_YELLOW="\033[1;33m"
@@ -14,7 +19,15 @@ COLOR_CYAN="\033[1;36m"
 
 echo -e "${COLOR_CYAN}================================================================${COLOR_RESET}"
 echo -e "${COLOR_CYAN}    MB PERSONALIZA - IMPLANTAÇÃO HOSTINGER VPS KVM 2            ${COLOR_RESET}"
+echo -e "${COLOR_CYAN}    Diretório raiz: ${PROJECT_ROOT}                             ${COLOR_RESET}"
 echo -e "${COLOR_CYAN}================================================================${COLOR_RESET}"
+
+# Validar presença dos arquivos Docker na raiz do projeto
+if [ ! -f "${PROJECT_ROOT}/Dockerfile" ] || [ ! -f "${PROJECT_ROOT}/docker-compose.yml" ]; then
+    echo -e "${COLOR_RED}Erro crítico: 'Dockerfile' ou 'docker-compose.yml' não encontrados em ${PROJECT_ROOT}!${COLOR_RESET}"
+    echo -e "${COLOR_YELLOW}Certifique-se de que todos os arquivos da raiz do projeto foram enviados para a VPS.${COLOR_RESET}"
+    exit 1
+fi
 
 # 1. Verificar se Docker e Docker Compose estão instalados
 echo -e "\n${COLOR_YELLOW}[1/6] Verificando dependências do host (Docker & Compose)...${COLOR_RESET}"
@@ -54,12 +67,12 @@ echo -e "${COLOR_GREEN}✓ Diretórios estruturados.${COLOR_RESET}"
 
 # 4. Construir imagens Docker
 echo -e "\n${COLOR_YELLOW}[4/6] Compilando container com Node 22 e React 19...${COLOR_RESET}"
-docker compose build --pull app
+docker compose -f "${PROJECT_ROOT}/docker-compose.yml" build --pull app
 echo -e "${COLOR_GREEN}✓ Imagem da aplicação compilada com sucesso.${COLOR_RESET}"
 
 # 5. Iniciar ou atualizar serviços
 echo -e "\n${COLOR_YELLOW}[5/6] Subindo containers em background...${COLOR_RESET}"
-docker compose up -d --remove-orphans
+docker compose -f "${PROJECT_ROOT}/docker-compose.yml" up -d --remove-orphans
 echo -e "${COLOR_GREEN}✓ Containers ativos.${COLOR_RESET}"
 
 # 6. Teste de Health Check
