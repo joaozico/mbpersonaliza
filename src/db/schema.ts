@@ -1,20 +1,32 @@
 import { pgTable, text, serial, integer, doublePrecision, boolean, timestamp, jsonb } from 'drizzle-orm/pg-core';
 
-// 1. Users Table (Linked to Firebase UID)
+// 1. Users Table (PostgreSQL Auth + Profile)
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
-  uid: text('uid').notNull().unique(), // Firebase Auth UID / MB User ID
+  uid: text('uid').notNull().unique(), // MB User ID / Auth UID
   name: text('name').notNull(),
   email: text('email').notNull(),
   phone: text('phone').default(''),
   company: text('company').default(''),
   cpfCnpj: text('cpf_cnpj').default(''),
   role: text('role').notNull().default('cliente'),
+  passwordHash: text('password_hash'),
   address: jsonb('address'),
   customPermissions: jsonb('custom_permissions'),
   isActive: boolean('is_active').default(true),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
+});
+
+// 1b. Auth Sessions Table (PostgreSQL Persistent Sessions)
+export const authSessions = pgTable('auth_sessions', {
+  tokenHash: text('token_hash').primaryKey(),
+  userUid: text('user_uid').notNull(),
+  role: text('role').notNull(),
+  expiresAt: timestamp('expires_at').notNull(),
+  userAgent: text('user_agent').default(''),
+  ip: text('ip').default(''),
+  createdAt: timestamp('created_at').defaultNow(),
 });
 
 // 2. Categories Table
@@ -249,3 +261,79 @@ export const backups = pgTable('backups', {
   payload: jsonb('payload'),
   createdAt: timestamp('created_at').defaultNow(),
 });
+
+// 14. Stock Movements Table (Additive migration from localStorage)
+export const stockMovements = pgTable('stock_movements', {
+  id: text('id').primaryKey(),
+  productId: text('product_id').notNull(),
+  productName: text('product_name').notNull(),
+  variantId: text('variant_id'),
+  variantColor: text('variant_color'),
+  type: text('type').notNull(), // 'entrada' | 'saida' | 'ajuste'
+  quantity: integer('quantity').notNull(),
+  previousStock: integer('previous_stock').notNull().default(0),
+  newStock: integer('new_stock').notNull().default(0),
+  reason: text('reason').default(''),
+  operatorName: text('operator_name').default('Sistema'),
+  createdAtText: text('created_at_text'),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+// 15. PDV Sales Table (Additive migration from localStorage)
+export const pdvSales = pgTable('pdv_sales', {
+  id: text('id').primaryKey(),
+  code: text('code').notNull(),
+  customerName: text('customer_name').default('Consumidor Final'),
+  customerCpfCnpj: text('customer_cpf_cnpj'),
+  operatorId: text('operator_id'),
+  operatorName: text('operator_name'),
+  cashRegisterNumber: integer('cash_register_number').default(1),
+  subtotal: doublePrecision('subtotal').notNull().default(0),
+  discount: doublePrecision('discount').default(0),
+  total: doublePrecision('total').notNull().default(0),
+  status: text('status').notNull().default('concluida'),
+  items: jsonb('items').notNull().default([]),
+  payments: jsonb('payments').notNull().default([]),
+  rawData: jsonb('raw_data'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+});
+
+// 16. Cash Register Sessions Table (Additive migration from localStorage)
+export const cashRegisterSessions = pgTable('cash_register_sessions', {
+  id: text('id').primaryKey(),
+  registerNumber: integer('register_number').notNull().default(1),
+  registerName: text('register_name').notNull().default('Caixa Balcão 01'),
+  operatorId: text('operator_id').notNull(),
+  operatorName: text('operator_name').notNull(),
+  status: text('status').notNull().default('aberto'), // 'aberto' | 'fechado'
+  initialFund: doublePrecision('initial_fund').notNull().default(0),
+  expectedCash: doublePrecision('expected_cash').notNull().default(0),
+  actualCash: doublePrecision('actual_cash'),
+  totalSalesAmount: doublePrecision('total_sales_amount').default(0),
+  rawData: jsonb('raw_data').notNull(),
+  openedAt: text('opened_at'),
+  closedAt: text('closed_at'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+});
+
+// 17. Payment Transactions Table (Additive migration from localStorage)
+export const paymentTransactions = pgTable('payment_transactions', {
+  id: text('id').primaryKey(),
+  saleId: text('sale_id'),
+  saleCode: text('sale_code'),
+  orderId: text('order_id'),
+  origin: text('origin').notNull().default('loja_online'),
+  gateway: text('gateway').notNull().default('mercadopago'),
+  gatewayTransactionId: text('gateway_transaction_id'),
+  method: text('method').notNull(),
+  grossAmount: doublePrecision('gross_amount').notNull().default(0),
+  feeAmount: doublePrecision('fee_amount').default(0),
+  netAmount: doublePrecision('net_amount').notNull().default(0),
+  status: text('status').notNull().default('pendente'),
+  rawData: jsonb('raw_data').notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+});
+

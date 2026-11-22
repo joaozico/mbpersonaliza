@@ -1,4 +1,14 @@
 import { Router, Request, Response, NextFunction } from 'express';
+import {
+  getPriceVisibilityFromDb,
+  savePriceVisibilityToDb,
+} from '../db/repository.ts';
+import {
+  hasServerPermission,
+  isStaffRole,
+  requirePermission,
+} from '../middleware/auth.ts';
+import { normalizePriceVisibilityMode } from './authUtils.ts';
 
 export interface ServerMaintenanceState {
   enabled: boolean;
@@ -35,8 +45,8 @@ let currentMaintenanceState: ServerMaintenanceState = {
 
 export const systemRouter = Router();
 
-// GET /api/system/maintenance - Obter status do modo de manutenção
-systemRouter.get('/maintenance', (req: Request, res: Response) => {
+// GET /api/system/maintenance - Public read of maintenance banner state
+systemRouter.get('/maintenance', (_req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.json({
     success: true,
@@ -45,63 +55,124 @@ systemRouter.get('/maintenance', (req: Request, res: Response) => {
   });
 });
 
-// POST /api/system/maintenance - Atualizar status do modo de manutenção (somente Admin)
-systemRouter.post('/maintenance', (req: Request, res: Response) => {
-  const adminRole = req.headers['x-admin-role'] as string;
-  
-  // Permite se header admin/gerente estiver presente ou se requisição vier do próprio servidor local
-  const isAuthorized =
-    adminRole === 'admin' ||
-    adminRole === 'gerente' ||
-    req.ip === '127.0.0.1' ||
-    req.ip === '::1';
+// POST /api/system/maintenance - Server-verified permission only (no header/IP bypass)
+systemRouter.post(
+  '/maintenance',
+  requirePermission('canManageMaintenanceMode'),
+  (req: Request, res: Response) => {
+    const payload = req.body;
+    if (typeof payload === 'object' && payload !== null) {
+      const actor = req.authUser!;
+      currentMaintenanceState = {
+        ...currentMaintenanceState,
+        ...payload,
+        enabled: Boolean(payload.enabled),
+        updatedAt: new Date().toISOString(),
+        updatedBy: {
+          id: actor.id,
+          name: actor.name,
+          email: actor.email,
+          role: actor.role,
+        },
+      };
+    }
 
-  if (!isAuthorized) {
-    return res.status(403).json({
-      success: false,
-      error: 'Acesso negado. Apenas administradores podem alterar o modo de manutenção.',
+    console.log(
+      `[SERVER MAINTENANCE] Modo de manutenção ${
+        currentMaintenanceState.enabled ? 'ATIVADO' : 'DESATIVADO'
+      } por ${req.authUser?.email} às ${currentMaintenanceState.updatedAt}`
+    );
+
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.json({
+      success: true,
+      maintenance: currentMaintenanceState,
+      message: currentMaintenanceState.enabled
+        ? 'Modo de manutenção ativado com sucesso no servidor.'
+        : 'Modo de manutenção desativado com sucesso no servidor.',
     });
   }
+);
 
-  const payload = req.body;
-  if (typeof payload === 'object' && payload !== null) {
-    currentMaintenanceState = {
-      ...currentMaintenanceState,
-      ...payload,
-      enabled: Boolean(payload.enabled),
-      updatedAt: new Date().toISOString(),
-    };
+// GET /api/system/price-visibility - Current product price visibility mode
+systemRouter.get('/price-visibility', async (_req: Request, res: Response) => {
+  try {
+    const mode = await getPriceVisibilityFromDb();
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    return res.json({
+      success: true,
+      mode,
+      priceVisibility: mode,
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: err?.message || 'Erro ao consultar visibilidade dos preços.',
+    });
   }
-
-  console.log(
-    `[SERVER MAINTENANCE] Modo de manutenção ${
-      currentMaintenanceState.enabled ? 'ATIVADO' : 'DESATIVADO'
-    } às ${currentMaintenanceState.updatedAt}`
-  );
-
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-  res.json({
-    success: true,
-    maintenance: currentMaintenanceState,
-    message: currentMaintenanceState.enabled
-      ? 'Modo de manutenção ativado com sucesso no servidor.'
-      : 'Modo de manutenção desativado com sucesso no servidor.',
-  });
 });
+
+// PUT & POST /api/system/price-visibility - Restricted to authorized admin/company settings manager
+const handleSavePriceVisibility = async (req: Request, res: Response) => {
+  try {
+    const rawMode = req.body?.mode ?? req.body?.priceVisibility;
+    if (rawMode !== 'registered_only' && rawMode !== 'all') {
+      return res.status(400).json({
+        success: false,
+        error: "Modo inválido. Utilize 'registered_only' ou 'all'.",
+      });
+    }
+
+    const mode = normalizePriceVisibilityMode(rawMode);
+    const actor = req.authUser!;
+    const saved = await savePriceVisibilityToDb(mode, {
+      id: actor.id,
+      name: actor.name,
+      email: actor.email,
+    });
+
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    return res.json({
+      success: true,
+      mode: saved.mode,
+      priceVisibility: saved.mode,
+      updatedAt: saved.updatedAt,
+      message:
+        saved.mode === 'registered_only'
+          ? 'Configuração salva: preços visíveis somente para clientes cadastrados.'
+          : 'Configuração salva: preços visíveis para todos os visitantes.',
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: err?.message || 'Erro ao salvar visibilidade dos preços.',
+    });
+  }
+};
+
+systemRouter.put(
+  '/price-visibility',
+  requirePermission('canManageCompanySettings'),
+  handleSavePriceVisibility
+);
+systemRouter.post(
+  '/price-visibility',
+  requirePermission('canManageCompanySettings'),
+  handleSavePriceVisibility
+);
 
 /**
  * Middleware para proteger APIs quando o Modo de Manutenção estiver ativo
- * Retorna status HTTP 503 (Service Unavailable) para requisições de clientes comuns.
+ * Usa exclusivamente a sessão autenticada no servidor (req.authUser).
  */
 export function maintenanceApiMiddleware(req: Request, res: Response, next: NextFunction) {
-  // Se a manutenção não estiver ativa, prossegue normalmente
   if (!currentMaintenanceState.enabled) {
     return next();
   }
 
-  // Rotas isentas que devem sempre responder mesmo em manutenção
   const isExemptRoute =
     req.path.startsWith('/api/system/maintenance') ||
+    req.path.startsWith('/api/system/price-visibility') ||
     req.path.startsWith('/api/health') ||
     req.path.startsWith('/api/auth');
 
@@ -109,17 +180,19 @@ export function maintenanceApiMiddleware(req: Request, res: Response, next: Next
     return next();
   }
 
-  // Verifica se o solicitante possui credencial de administrador
-  const adminRole = req.headers['x-admin-role'] as string;
-  const isAuthorizedAdmin = adminRole === 'admin' || adminRole === 'gerente';
+  const isAuthorizedAdmin =
+    req.authUser &&
+    (req.authUser.role === 'admin' ||
+      req.authUser.role === 'gerente' ||
+      hasServerPermission(req, 'canManageMaintenanceMode') ||
+      isStaffRole(req.authUser.role));
 
   if (isAuthorizedAdmin) {
     return next();
   }
 
-  // Se for uma chamada de API pública enquanto o sistema estiver em manutenção:
   if (req.path.startsWith('/api/')) {
-    res.setHeader('Retry-After', '300'); // 5 minutos
+    res.setHeader('Retry-After', '300');
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     return res.status(503).json({
       error: 'Sistema temporariamente em manutenção para atualizações.',

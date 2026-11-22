@@ -11,8 +11,10 @@ import {
   BACKUPS_DIR,
 } from './backupSchedulerWorker';
 import { BackupScheduleConfig } from '../types';
+import { requireAdminSession } from '../middleware/auth.ts';
 
 export const backupRouter = Router();
+backupRouter.use(requireAdminSession);
 
 // GET /api/backup/config
 backupRouter.get('/config', (req: Request, res: Response) => {

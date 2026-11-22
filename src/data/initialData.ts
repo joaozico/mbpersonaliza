@@ -241,6 +241,8 @@ export const INITIAL_COMPANY_SETTINGS: CompanySettings = {
   updatedAt: '2026-03-01T08:00:00Z',
 };
 
+export const INITIAL_PRICE_VISIBILITY_MODE = 'registered_only' as const;
+
 export const INITIAL_PERMISSIONS_MATRIX: Record<UserRole, RolePermissions> = {
   admin: {
     canViewDashboard: true,
@@ -314,6 +316,7 @@ export const INITIAL_PERMISSIONS_MATRIX: Record<UserRole, RolePermissions> = {
     canViewCouponUsageHistory: true,
     canViewCouponReports: true,
     canSendCouponsToCustomers: true,
+    canAccessCatalogPdf: true,
   },
   gerente: {
     canViewDashboard: true,
@@ -387,6 +390,7 @@ export const INITIAL_PERMISSIONS_MATRIX: Record<UserRole, RolePermissions> = {
     canViewCouponUsageHistory: true,
     canViewCouponReports: true,
     canSendCouponsToCustomers: true,
+    canAccessCatalogPdf: false,
   },
   vendedor: {
     canViewDashboard: true,
@@ -457,6 +461,7 @@ export const INITIAL_PERMISSIONS_MATRIX: Record<UserRole, RolePermissions> = {
     canViewCouponUsageHistory: true,
     canViewCouponReports: false,
     canSendCouponsToCustomers: true,
+    canAccessCatalogPdf: false,
   },
   estoquista: {
     canViewDashboard: true,
@@ -527,6 +532,7 @@ export const INITIAL_PERMISSIONS_MATRIX: Record<UserRole, RolePermissions> = {
     canViewCouponUsageHistory: false,
     canViewCouponReports: false,
     canSendCouponsToCustomers: false,
+    canAccessCatalogPdf: false,
   },
   cliente: {
     canViewDashboard: false,
@@ -597,6 +603,7 @@ export const INITIAL_PERMISSIONS_MATRIX: Record<UserRole, RolePermissions> = {
     canViewCouponUsageHistory: false,
     canViewCouponReports: false,
     canSendCouponsToCustomers: false,
+    canAccessCatalogPdf: false,
   },
   visitante: {
     canViewDashboard: false,
@@ -667,6 +674,7 @@ export const INITIAL_PERMISSIONS_MATRIX: Record<UserRole, RolePermissions> = {
     canViewCouponUsageHistory: false,
     canViewCouponReports: false,
     canSendCouponsToCustomers: false,
+    canAccessCatalogPdf: false,
   },
 };
 

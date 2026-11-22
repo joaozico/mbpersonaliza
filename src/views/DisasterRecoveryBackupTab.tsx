@@ -27,8 +27,11 @@ import {
   ShoppingBag,
   FileSpreadsheet,
   Package,
+  Server,
+  ArrowRightLeft,
 } from 'lucide-react';
 import { StorageService } from '../services/storage';
+import { authFetch } from '../services/authClient';
 import {
   UserProfile,
   BackupScheduleConfig,
@@ -72,7 +75,7 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
   const checkPostgresStatus = async () => {
     setPostgresInfo((prev) => ({ ...prev, loading: true }));
     try {
-      const res = await fetch('/api/db/status');
+      const res = await authFetch('/api/db/status');
       const data = await res.json();
       setPostgresInfo({
         loading: false,
@@ -94,8 +97,120 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
     }
   };
 
+  // Hostinger VPS Preflight & Controlled Migration State
+  const [vpsPreflight, setVpsPreflight] = useState<{
+    loading: boolean;
+    data: any;
+    error?: string;
+  }>({
+    loading: false,
+    data: null,
+  });
+
+  const [migrationState, setMigrationState] = useState<{
+    loading: boolean;
+    report: any;
+    confirmArmed: boolean;
+    error?: string;
+  }>({
+    loading: false,
+    report: null,
+    confirmArmed: false,
+  });
+
+  const loadVpsPreflight = async () => {
+    setVpsPreflight((prev) => ({ ...prev, loading: true, error: undefined }));
+    try {
+      const data = await StorageService.getVpsPreflightStatus();
+      setVpsPreflight({
+        loading: false,
+        data,
+        error: data?.success === false ? data?.error || 'Falha ao consultar diagnóstico VPS.' : undefined,
+      });
+    } catch (err: any) {
+      setVpsPreflight({
+        loading: false,
+        data: null,
+        error: err?.message || 'Erro ao consultar pré-voo VPS.',
+      });
+    }
+  };
+
+  const handleDryRunMigration = async () => {
+    setMigrationState((prev) => ({ ...prev, loading: true, error: undefined, confirmArmed: false }));
+    try {
+      const report = await StorageService.runControlledMigrationToPostgres(true);
+      if (!report?.success) {
+        setMigrationState({
+          loading: false,
+          report: null,
+          confirmArmed: false,
+          error: report?.error || 'Falha ao simular migração controlada.',
+        });
+        showNotification('error', report?.error || 'Falha na simulação da migração.');
+        return;
+      }
+      setMigrationState({
+        loading: false,
+        report,
+        confirmArmed: false,
+      });
+      showNotification(
+        'info',
+        `Auditoria concluída: ${report.totals?.localRecords ?? 0} registros locais analisados, ${report.totals?.missingInPostgres ?? 0} novos pendentes.`
+      );
+    } catch (err: any) {
+      setMigrationState({
+        loading: false,
+        report: null,
+        confirmArmed: false,
+        error: err?.message || 'Erro inesperado durante a simulação.',
+      });
+      showNotification('error', `Erro na simulação: ${err?.message || 'Erro desconhecido'}`);
+    }
+  };
+
+  const handleExecuteSafeMigration = async () => {
+    if (!migrationState.confirmArmed) {
+      showNotification('warning', 'Confirme o checklist de segurança antes de gravar no PostgreSQL.');
+      return;
+    }
+    setMigrationState((prev) => ({ ...prev, loading: true, error: undefined }));
+    try {
+      const report = await StorageService.runControlledMigrationToPostgres(false);
+      if (!report?.success) {
+        setMigrationState((prev) => ({
+          ...prev,
+          loading: false,
+          error: report?.error || 'Falha ao executar migração segura.',
+        }));
+        showNotification('error', report?.error || 'Falha na execução da migração.');
+        return;
+      }
+      setMigrationState({
+        loading: false,
+        report,
+        confirmArmed: false,
+      });
+      await checkPostgresStatus();
+      await loadVpsPreflight();
+      showNotification(
+        'success',
+        `Migração segura concluída! ${report.totals?.migratedNow ?? 0} novos registros inseridos; ${report.totals?.skippedExisting ?? 0} registros existentes preservados.`
+      );
+    } catch (err: any) {
+      setMigrationState((prev) => ({
+        ...prev,
+        loading: false,
+        error: err?.message || 'Erro ao executar migração.',
+      }));
+      showNotification('error', `Erro na migração: ${err?.message || 'Erro desconhecido'}`);
+    }
+  };
+
   useEffect(() => {
     checkPostgresStatus();
+    loadVpsPreflight();
   }, []);
 
   // UI state
@@ -182,7 +297,7 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
 
       // 4. Salva também cópia no servidor Express via API
       try {
-        await fetch('/api/backup/export', {
+        await authFetch('/api/backup/export', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -214,7 +329,7 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
 
       // Sincroniza com servidor Express
       try {
-        await fetch('/api/backup/config', {
+        await authFetch('/api/backup/config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(config),
@@ -1228,6 +1343,7 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
                   try {
                     await StorageService.initPostgresSync();
                     await checkPostgresStatus();
+                    await loadVpsPreflight();
                     showNotification('success', 'Sincronização bidirecional com PostgreSQL executada com sucesso!');
                   } catch (err: any) {
                     showNotification('error', `Falha na sincronização: ${err.message}`);
@@ -1239,6 +1355,249 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
                 <span>Forçar Sincronização em Tempo Real</span>
               </button>
             </div>
+          </div>
+
+          {/* Pré-Voo Hostinger VPS & Migração Controlada (localStorage -> PostgreSQL) */}
+          <div className="p-6 rounded-3xl bg-slate-50 border border-slate-200 space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200/80 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-slate-900 text-[#FFDD00]">
+                    Hostinger VPS • Produção Segura
+                  </span>
+                  <span className="text-[11px] font-semibold text-slate-500">
+                    Somente Aditivo (ON CONFLICT DO NOTHING)
+                  </span>
+                </div>
+                <h4 className="text-base sm:text-lg font-heading font-extrabold text-slate-900 uppercase mt-1 flex items-center gap-2">
+                  <Server className="w-5 h-5 text-[#E6007E]" />
+                  <span>Pré-Voo Hostinger VPS & Migração Controlada</span>
+                </h4>
+                <p className="text-xs text-slate-600 mt-0.5">
+                  Auditoria não-destrutiva da infraestrutura atual e migração incremental de registros pendentes do{' '}
+                  <code className="px-1 py-0.5 bg-white rounded border border-slate-200">localStorage</code> para o PostgreSQL, preservando integralmente dados e volumes existentes.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={loadVpsPreflight}
+                disabled={vpsPreflight.loading}
+                className="px-4 py-2 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-slate-800 text-xs font-bold flex items-center gap-2 shadow-xs transition-colors cursor-pointer shrink-0 self-start sm:self-auto"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${vpsPreflight.loading ? 'animate-spin' : ''}`} />
+                <span>Atualizar Pré-Voo</span>
+              </button>
+            </div>
+
+            {/* Diagnóstico Read-Only da VPS */}
+            {vpsPreflight.error && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 font-semibold">
+                {vpsPreflight.error}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 space-y-1">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Modo PostgreSQL</span>
+                <p className="text-xs sm:text-sm font-extrabold text-slate-900 font-mono truncate">
+                  {vpsPreflight.data?.database?.connectionMode || 'Verificando...'}
+                </p>
+                <span
+                  className={`text-[10px] font-bold block ${
+                    vpsPreflight.data?.database?.configured ? 'text-emerald-600' : 'text-amber-600'
+                  }`}
+                >
+                  {vpsPreflight.data?.database?.configured ? 'Credenciais Ativas' : 'Modo Fallback Local'}
+                </span>
+              </div>
+
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 space-y-1">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">SSL / TLS Banco</span>
+                <p className="text-xs sm:text-sm font-extrabold text-slate-900">
+                  {vpsPreflight.data?.database?.sslEnabled ? 'Habilitado (Seguro)' : 'Desativado / Local'}
+                </p>
+                <span className="text-[10px] text-slate-500 block">
+                  Env: {vpsPreflight.data?.environment || 'production'}
+                </span>
+              </div>
+
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 space-y-1">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Volume /uploads</span>
+                <p className="text-lg font-black text-slate-900 font-heading">
+                  {vpsPreflight.data?.persistence?.uploadsFileCount ?? 0}
+                </p>
+                <span className="text-[10px] text-emerald-600 font-bold block">
+                  {vpsPreflight.data?.persistence?.uploadsDirExists ? 'Diretório Preservado' : 'Aguardando criação'}
+                </span>
+              </div>
+
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 space-y-1">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Backups /data/backups</span>
+                <p className="text-lg font-black text-slate-900 font-heading">
+                  {vpsPreflight.data?.persistence?.backupFilesCount ?? 0}
+                </p>
+                <span className="text-[10px] text-slate-500 font-mono truncate block" title={vpsPreflight.data?.persistence?.latestBackupFile || ''}>
+                  {vpsPreflight.data?.persistence?.latestBackupFile || 'Nenhum snapshot local'}
+                </span>
+              </div>
+            </div>
+
+            {/* Botão de Dry-Run */}
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200">
+              <div className="space-y-0.5 max-w-xl">
+                <h5 className="text-xs sm:text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                  <ArrowRightLeft className="w-4 h-4 text-indigo-600" />
+                  <span>Etapa 1 — Auditoria & Simulação Não-Destrutiva (Dry-Run)</span>
+                </h5>
+                <p className="text-[11px] text-slate-500">
+                  Compara o inventário do navegador com as tabelas do PostgreSQL sem alterar nenhum registro.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleDryRunMigration}
+                disabled={migrationState.loading}
+                className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-[#E6007E] text-white text-xs font-bold flex items-center gap-2 transition-colors shadow-xs cursor-pointer disabled:opacity-50"
+              >
+                <Play className="w-3.5 h-3.5 text-[#FFDD00]" />
+                <span>{migrationState.loading ? 'Analisando...' : 'Simular & Validar Migração (Dry-Run)'}</span>
+              </button>
+            </div>
+
+            {migrationState.error && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 font-semibold">
+                {migrationState.error}
+              </div>
+            )}
+
+            {/* Resultado da Auditoria / Migração */}
+            {migrationState.report && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                  <div>
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                        migrationState.report.dryRun
+                          ? 'bg-amber-100 text-amber-800'
+                          : 'bg-emerald-100 text-emerald-800'
+                      }`}
+                    >
+                      {migrationState.report.dryRun
+                        ? 'Modo Simulação (Somente Leitura)'
+                        : 'Migração Segura Executada'}
+                    </span>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Executado em {new Date(migrationState.report.timestamp).toLocaleString('pt-BR')} • Banco:{' '}
+                      <strong>
+                        {migrationState.report.databaseConnected ? 'PostgreSQL Conectado' : 'Offline / Fallback Local'}
+                      </strong>
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                    <div className="px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">Locais</span>
+                      <span className="text-sm font-black text-slate-900">
+                        {migrationState.report.totals?.localRecords ?? 0}
+                      </span>
+                    </div>
+                    <div className="px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200">
+                      <span className="text-[10px] uppercase font-bold text-amber-700 block">Pendentes</span>
+                      <span className="text-sm font-black text-amber-900">
+                        {migrationState.report.totals?.missingInPostgres ?? 0}
+                      </span>
+                    </div>
+                    <div className="px-3 py-1.5 rounded-xl bg-sky-50 border border-sky-200">
+                      <span className="text-[10px] uppercase font-bold text-sky-700 block">Preservados</span>
+                      <span className="text-sm font-black text-sky-900">
+                        {migrationState.report.totals?.skippedExisting ?? 0}
+                      </span>
+                    </div>
+                    <div className="px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200">
+                      <span className="text-[10px] uppercase font-bold text-emerald-700 block">Inseridos</span>
+                      <span className="text-sm font-black text-emerald-900">
+                        {migrationState.report.totals?.migratedNow ?? 0}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tabela por entidade */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-500 uppercase text-[10px]">
+                        <th className="py-2 pr-3 font-bold">Entidade</th>
+                        <th className="py-2 px-3 font-bold">Tabela PostgreSQL</th>
+                        <th className="py-2 px-3 font-bold text-right">Local</th>
+                        <th className="py-2 px-3 font-bold text-right">No PostgreSQL</th>
+                        <th className="py-2 px-3 font-bold text-right">Faltantes</th>
+                        <th className="py-2 px-3 font-bold text-right">Preservados</th>
+                        <th className="py-2 pl-3 font-bold text-right">Migrados</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {(migrationState.report.entities || []).map((row: any) => (
+                        <tr key={row.entity} className="hover:bg-slate-50/70">
+                          <td className="py-2 pr-3 font-bold text-slate-800">{row.entity}</td>
+                          <td className="py-2 px-3 font-mono text-[11px] text-slate-600">{row.tableName}</td>
+                          <td className="py-2 px-3 text-right font-semibold">{row.localCount}</td>
+                          <td className="py-2 px-3 text-right font-semibold">{row.postgresBeforeCount}</td>
+                          <td className="py-2 px-3 text-right font-bold text-amber-700">{row.missingInPostgresCount}</td>
+                          <td className="py-2 px-3 text-right text-sky-700">{row.skippedExistingCount}</td>
+                          <td className="py-2 pl-3 text-right font-bold text-emerald-700">{row.migratedCount}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Etapa 2: Execução Segura com Confirmação Explícita */}
+                {migrationState.report.dryRun && (
+                  <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200 space-y-3">
+                    {!migrationState.report.databaseConnected ? (
+                      <p className="text-xs text-amber-800 font-semibold">
+                        PostgreSQL externo não conectado neste ambiente de pré-visualização. Execute este procedimento na VPS Hostinger com o <code className="px-1 bg-white rounded border border-amber-200">.env</code> de produção ativo para gravar os registros pendentes.
+                      </p>
+                    ) : (
+                      <>
+                        <label className="flex items-start gap-2.5 cursor-pointer text-xs text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={migrationState.confirmArmed}
+                            onChange={(e) =>
+                              setMigrationState((prev) => ({ ...prev, confirmArmed: e.target.checked }))
+                            }
+                            className="mt-0.5 w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                          />
+                          <span>
+                            <strong>Etapa 2 — Confirmação de Segurança:</strong> Confirmo que o backup prévio do PostgreSQL foi gerado (<code className="px-1 bg-white rounded border border-slate-200">./scripts/backup_db.sh</code>) e autorizo inserir <strong>apenas os registros ausentes</strong> (registros já existentes no PostgreSQL serão preservados via <code className="px-1 bg-white rounded border border-slate-200">ON CONFLICT DO NOTHING</code>).
+                          </span>
+                        </label>
+
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            onClick={handleExecuteSafeMigration}
+                            disabled={!migrationState.confirmArmed || migrationState.loading}
+                            className="px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-300 disabled:text-slate-500 text-white text-xs font-bold flex items-center gap-2 transition-colors shadow-xs cursor-pointer disabled:cursor-not-allowed"
+                          >
+                            <Database className="w-4 h-4 text-[#FFDD00]" />
+                            <span>
+                              {migrationState.loading
+                                ? 'Executando Migração Segura...'
+                                : 'Executar Migração Segura (Apenas Novos Registros)'}
+                            </span>
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

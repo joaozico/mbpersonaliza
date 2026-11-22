@@ -88,8 +88,8 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
     setEditingUser(null);
     setFormName('');
     setFormEmail('');
-    setFormPassword('123456');
-    setFormPhone('(11) 98888-7777');
+    setFormPassword('');
+    setFormPhone('');
     setFormRole('vendedor');
     setFormDepartment('Comercial');
     setFormStatus('ativo');
@@ -101,7 +101,7 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
     setEditingUser(user);
     setFormName(user.name);
     setFormEmail(user.email);
-    setFormPassword(user.password || '');
+    setFormPassword('');
     setFormPhone(user.phone || '');
     setFormRole(user.role);
     setFormDepartment(user.department || '');
@@ -118,11 +118,21 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
       return;
     }
 
+    if (!editingUser && formPassword.trim().length < 6) {
+      showNotification('error', 'Informe uma senha inicial com pelo menos 6 caracteres.');
+      return;
+    }
+
+    if (editingUser && formPassword.trim() && formPassword.trim().length < 6) {
+      showNotification('error', 'A nova senha deve conter pelo menos 6 caracteres.');
+      return;
+    }
+
     const userData: UserProfile = {
       id: editingUser ? editingUser.id : `emp-${Date.now()}`,
       name: formName.trim(),
       email: formEmail.trim().toLowerCase(),
-      password: formPassword.trim() || '123456',
+      ...(formPassword.trim() ? { password: formPassword.trim() } : {}),
       phone: formPhone.trim(),
       role: formRole,
       department: formDepartment.trim(),
@@ -436,6 +446,7 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
     { key: 'canManageStock', label: 'Controle de Estoque', desc: 'Lançamentos de entrada, saída e inventário', category: 'Operacional & Catálogo' },
     { key: 'canManageQuotes', label: 'Gestão de Orçamentos', desc: 'Precificar e responder cotações comerciais', category: 'Operacional & Catálogo' },
     { key: 'canManageOrders', label: 'Gestão de Pedidos', desc: 'Alterar status de produção, separação e envio', category: 'Operacional & Catálogo' },
+    { key: 'canAccessCatalogPdf', label: 'Acesso ao Catálogo Digital (PDF)', desc: 'Visualizar e gerar catálogo PDF', category: 'Operacional & Catálogo' },
     { key: 'canViewReports', label: 'Relatórios & Exportações', desc: 'Exportar dados analíticos e pedidos', category: 'Operacional & Catálogo' },
     { key: 'canDeleteData', label: 'Exclusão de Registros', desc: 'Apagar pedidos, orçamentos ou itens', category: 'Operacional & Catálogo' },
 
@@ -1421,14 +1432,17 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({ currentUse
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Senha de Acesso</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    {editingUser ? 'Nova Senha (deixe em branco para manter)' : 'Senha de Acesso *'}
+                  </label>
                   <input
-                    type="text"
-                    required
+                    type="password"
+                    required={!editingUser}
+                    minLength={6}
                     value={formPassword}
                     onChange={(e) => setFormPassword(e.target.value)}
                     className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:border-[#E6007E] font-mono"
-                    placeholder="••••••"
+                    placeholder={editingUser ? 'Manter senha atual' : 'Mínimo 6 caracteres'}
                   />
                 </div>
               </div>

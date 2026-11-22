@@ -17,6 +17,7 @@ import {
   ChevronUp,
 } from 'lucide-react';
 import { StrickerConfig } from '../../types/stricker';
+import { authFetch } from '../../services/authClient';
 
 interface TestCaseResult {
   id: string;
@@ -53,7 +54,7 @@ export const StrickerTestSuiteSection: React.FC<StrickerTestSuiteSectionProps> =
   const runAllTests = async () => {
     setIsRunning(true);
     try {
-      const response = await fetch('/api/stricker/test-suite/run', {
+      const response = await authFetch('/api/stricker/test-suite/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });

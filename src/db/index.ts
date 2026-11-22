@@ -20,6 +20,18 @@ function isPlaceholderConfig(val?: string): boolean {
   );
 }
 
+// Helper to check if a real PostgreSQL connection is configured
+export function isDatabaseConfigured(): boolean {
+  const rawDbUrl = process.env.DATABASE_URL;
+  const hasValidDatabaseUrl =
+    !!rawDbUrl &&
+    !isPlaceholderConfig(rawDbUrl) &&
+    (rawDbUrl.startsWith('postgres://') || rawDbUrl.startsWith('postgresql://'));
+  const rawHost = process.env.SQL_HOST;
+  const hasValidHost = !!rawHost && !isPlaceholderConfig(rawHost);
+  return hasValidDatabaseUrl || (hasValidHost && !!(process.env.SQL_USER || process.env.SQL_ADMIN_USER));
+}
+
 // Function to create or retrieve the connection pool.
 export const createPool = () => {
   if (!global._postgresPool) {
@@ -105,5 +117,48 @@ const poolProxy = new Proxy({} as Pool, {
   },
 });
 
-// Initialize Drizzle with the dynamic pool and schema.
-export const db = drizzle(poolProxy, { schema });
+function createChainableMock(defaultResult: any = []): any {
+  const fn: any = () => createChainableMock(defaultResult);
+  return new Proxy(fn, {
+    get(_target, prop) {
+      if (prop === 'then') {
+        return (resolve: any, reject: any) => Promise.resolve(defaultResult).then(resolve, reject);
+      }
+      if (prop === 'catch') {
+        return (reject: any) => Promise.resolve(defaultResult).catch(reject);
+      }
+      if (prop === 'finally') {
+        return (cb: any) => Promise.resolve(defaultResult).finally(cb);
+      }
+      if (prop === 'query') {
+        const noOp = {
+          findMany: async () => [],
+          findFirst: async () => null,
+          findUnique: async () => null,
+          create: async (d: any) => d?.data ?? {},
+          update: async (d: any) => d?.data ?? {},
+          delete: async () => ({}),
+        };
+        return new Proxy({}, { get: () => noOp });
+      }
+      return createChainableMock(defaultResult);
+    },
+    apply() {
+      return createChainableMock(defaultResult);
+    },
+  });
+}
+
+// Initialize Drizzle with the dynamic pool and schema, falling back to mock when offline/unconfigured.
+let db: ReturnType<typeof drizzle<typeof schema>>;
+try {
+  if (!isDatabaseConfigured()) {
+    throw new Error('Database connection environment variables not configured');
+  }
+  db = drizzle(poolProxy, { schema });
+} catch {
+  console.warn('[AI Studio] Database not connected — using mock');
+  db = createChainableMock([]);
+}
+
+export { db };

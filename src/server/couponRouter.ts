@@ -5,8 +5,8 @@ import {
   CouponSendHistoryEntry,
   CouponAuditLog,
   CouponValidationResult,
+  PermissionKey,
   RolePermissions,
-  UserRole,
 } from '../types';
 import {
   INITIAL_COUPONS,
@@ -14,6 +14,7 @@ import {
   INITIAL_COUPON_SEND_HISTORY,
   INITIAL_COUPON_AUDIT_LOGS,
 } from '../data/initialData';
+import { hasServerPermission, requireAuthSession, requireStaffSession } from '../middleware/auth.ts';
 
 export const couponRouter = Router();
 
@@ -38,59 +39,40 @@ function logCouponServerAudit(entry: Omit<CouponAuditLog, 'id' | 'timestamp'>): 
 }
 
 /**
- * Middleware de Autorização Granular para Cupons de Desconto
+ * Middleware de Autorização Granular para Cupons de Desconto (PostgreSQL Session)
  */
 export function requireCouponPermission(requiredPermission: keyof RolePermissions) {
   return (req: Request, res: Response, next: NextFunction) => {
-    const userId = (req.headers['x-user-id'] as string) || '';
-    const userRole = (req.headers['x-user-role'] as UserRole) || 'visitante';
-    const userName = (req.headers['x-user-name'] as string) || 'Usuário Desconhecido';
-
-    // Parse custom permissions passed in header if available
-    let customPerms: Partial<RolePermissions> = {};
-    const permsHeader = req.headers['x-user-permissions'];
-    if (permsHeader && typeof permsHeader === 'string') {
-      try {
-        customPerms = JSON.parse(permsHeader);
-      } catch {
-        // ignore JSON parse error
-      }
+    const authUser = req.authUser || null;
+    if (!authUser) {
+      logCouponServerAudit({
+        action: 'apply_cart',
+        userId: 'anonymous',
+        userName: 'Não autenticado',
+        userRole: 'visitante',
+        details: `ACESSO NEGADO (401): Tentativa não autenticada exigindo permissão "${String(requiredPermission)}"`,
+      });
+      return res.status(401).json({
+        success: false,
+        error: 'Acesso negado. Usuário não autenticado.',
+      });
     }
 
-    // Admins e Gerentes possuem acesso total por padrão
-    if (userRole === 'admin' || userRole === 'gerente') {
-      return next();
+    if (authUser.status === 'inativo' || !hasServerPermission(req, requiredPermission as PermissionKey)) {
+      logCouponServerAudit({
+        action: 'apply_cart',
+        userId: authUser.id,
+        userName: authUser.name,
+        userRole: authUser.role,
+        details: `ACESSO NEGADO (403): Tentativa de executar operação exigindo permissão "${String(requiredPermission)}"`,
+      });
+      return res.status(403).json({
+        success: false,
+        error: `Acesso negado. Seu perfil de usuário (${authUser.role}) não possui permissão para executar esta ação (${String(requiredPermission)}).`,
+      });
     }
 
-    // Checar se a permissão foi concedida explicitamente
-    if (customPerms[requiredPermission] === true) {
-      return next();
-    }
-
-    // Regras padrão para Vendedor
-    if (userRole === 'vendedor') {
-      const allowedVendedor: Array<keyof RolePermissions> = [
-        'canViewCoupons',
-        'canViewCouponUsageHistory',
-        'canSendCouponsToCustomers',
-      ];
-      if (allowedVendedor.includes(requiredPermission)) {
-        return next();
-      }
-    }
-
-    logCouponServerAudit({
-      action: 'apply_cart',
-      userId: userId || 'anonymous',
-      userName,
-      userRole,
-      details: `ACESSO NEGADO: Tentativa de executar operação exigindo permissão "${String(requiredPermission)}"`,
-    });
-
-    return res.status(403).json({
-      success: false,
-      error: `Acesso negado. Seu perfil de usuário (${userRole}) não possui permissão para executar esta ação (${String(requiredPermission)}).`,
-    });
+    return next();
   };
 }
 
@@ -311,9 +293,9 @@ couponRouter.get('/:id', requireCouponPermission('canViewCoupons'), (req: Reques
  */
 couponRouter.post('/', requireCouponPermission('canCreateCoupons'), (req: Request, res: Response) => {
   const data = req.body;
-  const userId = (req.headers['x-user-id'] as string) || 'admin';
-  const userName = (req.headers['x-user-name'] as string) || 'Administrador MB';
-  const userRole = (req.headers['x-user-role'] as string) || 'admin';
+  const userId = req.authUser!.id;
+  const userName = req.authUser!.name;
+  const userRole = req.authUser!.role;
 
   const cleanCode = (data.code || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
 
@@ -389,9 +371,9 @@ couponRouter.post('/', requireCouponPermission('canCreateCoupons'), (req: Reques
 couponRouter.put('/:id', requireCouponPermission('canEditCoupons'), (req: Request, res: Response) => {
   const { id } = req.params;
   const data = req.body;
-  const userId = (req.headers['x-user-id'] as string) || 'admin';
-  const userName = (req.headers['x-user-name'] as string) || 'Administrador MB';
-  const userRole = (req.headers['x-user-role'] as string) || 'admin';
+  const userId = req.authUser!.id;
+  const userName = req.authUser!.name;
+  const userRole = req.authUser!.role;
 
   const idx = serverCoupons.findIndex((c) => c.id === id);
   if (idx < 0) {
@@ -436,9 +418,9 @@ couponRouter.patch('/:id/status', (req: Request, res: Response, next: NextFuncti
   const perm = newStatus === 'cancelled' ? 'canCancelCoupons' : 'canToggleCoupons';
   return requireCouponPermission(perm)(req, res, () => {
     const { id } = req.params;
-    const userId = (req.headers['x-user-id'] as string) || 'admin';
-    const userName = (req.headers['x-user-name'] as string) || 'Administrador MB';
-    const userRole = (req.headers['x-user-role'] as string) || 'admin';
+    const userId = req.authUser!.id;
+    const userName = req.authUser!.name;
+    const userRole = req.authUser!.role;
 
     const coupon = serverCoupons.find((c) => c.id === id);
     if (!coupon) {
@@ -468,9 +450,9 @@ couponRouter.patch('/:id/status', (req: Request, res: Response, next: NextFuncti
  */
 couponRouter.delete('/:id', requireCouponPermission('canCancelCoupons'), (req: Request, res: Response) => {
   const { id } = req.params;
-  const userId = (req.headers['x-user-id'] as string) || 'admin';
-  const userName = (req.headers['x-user-name'] as string) || 'Administrador MB';
-  const userRole = (req.headers['x-user-role'] as string) || 'admin';
+  const userId = req.authUser!.id;
+  const userName = req.authUser!.name;
+  const userRole = req.authUser!.role;
 
   const idx = serverCoupons.findIndex((c) => c.id === id);
   if (idx < 0) {
@@ -519,8 +501,8 @@ couponRouter.delete('/:id', requireCouponPermission('canCancelCoupons'), (req: R
 couponRouter.post('/:id/send', requireCouponPermission('canSendCouponsToCustomers'), (req: Request, res: Response) => {
   const { id } = req.params;
   const { customerName, customerPhone, customerEmail, customerId, channel, customMessage } = req.body;
-  const userId = (req.headers['x-user-id'] as string) || 'usr-admin-001';
-  const userName = (req.headers['x-user-name'] as string) || 'Operador MB';
+  const userId = req.authUser!.id;
+  const userName = req.authUser!.name;
 
   const coupon = serverCoupons.find((c) => c.id === id);
   if (!coupon) {
@@ -612,7 +594,7 @@ couponRouter.post('/:id/send', requireCouponPermission('canSendCouponsToCustomer
 /**
  * Confirmar uso do cupom no pedido (chamado no Checkout / API)
  */
-couponRouter.post('/confirm-usage', (req: Request, res: Response) => {
+couponRouter.post('/confirm-usage', requireAuthSession, (req: Request, res: Response) => {
   const {
     couponCode,
     orderId,
@@ -646,9 +628,9 @@ couponRouter.post('/confirm-usage', (req: Request, res: Response) => {
     couponCode: coupon.code,
     orderId: orderId || `ord-${Date.now()}`,
     orderCode: orderCode || `PED-${Date.now()}`,
-    customerId,
-    customerName: customerName || 'Cliente Online',
-    customerEmail: customerEmail || 'cliente@online.com',
+    customerId: req.authUser?.id || customerId,
+    customerName: customerName || req.authUser?.name || 'Cliente Online',
+    customerEmail: customerEmail || req.authUser?.email || 'cliente@online.com',
     customerPhone,
     customerCpfCnpj,
     subtotalOriginal: Number(subtotalOriginal || 0),
@@ -672,9 +654,9 @@ couponRouter.post('/confirm-usage', (req: Request, res: Response) => {
     couponId: coupon.id,
     couponCode: coupon.code,
     action: 'confirm_order',
-    userId: customerId || 'checkout_online',
-    userName: customerName || 'Cliente',
-    userRole: 'cliente',
+    userId: req.authUser?.id || customerId || 'checkout_online',
+    userName: req.authUser?.name || customerName || 'Cliente',
+    userRole: req.authUser?.role || 'cliente',
     details: `Utilização confirmada no pedido ${orderCode} (Desconto R$ ${usageEntry.discountApplied.toFixed(2)})`,
   });
 
@@ -684,10 +666,10 @@ couponRouter.post('/confirm-usage', (req: Request, res: Response) => {
 /**
  * Reverter / liberar cota do cupom quando pedido é cancelado
  */
-couponRouter.post('/release-usage', (req: Request, res: Response) => {
+couponRouter.post('/release-usage', requireStaffSession, (req: Request, res: Response) => {
   const { orderId, reason } = req.body;
-  const userId = (req.headers['x-user-id'] as string) || 'system';
-  const userName = (req.headers['x-user-name'] as string) || 'Sistema MB';
+  const userId = req.authUser!.id;
+  const userName = req.authUser!.name;
 
   const usage = serverUsages.find((u) => u.orderId === orderId && u.status === 'confirmed');
   if (!usage) {

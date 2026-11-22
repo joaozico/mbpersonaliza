@@ -71,6 +71,7 @@ import {
   Info,
   AlertCircle,
   Ticket,
+  Lock,
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -125,45 +126,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setTimeout(() => setActionToast(null), 4000);
   };
 
-  const handleSelectTab = (newTab: typeof activeTab) => {
-    setActiveTab(newTab);
-    if (['dashboard', 'products', 'quotes', 'orders', 'stock', 'deliveries', 'delivery_orders'].includes(newTab)) {
-      if (tabCategoryFilter !== 'all') setTabCategoryFilter('operacional');
-    } else if (['financial', 'transactions', 'gateways', 'cash_register', 'boletos', 'cost_pricing'].includes(newTab)) {
-      if (tabCategoryFilter !== 'all') setTabCategoryFilter('vendas_caixa');
-    } else if (['stricker', 'offers_banner', 'layout', 'metrics', 'users', 'company', 'delivery_settings', 'backup'].includes(newTab)) {
-      if (tabCategoryFilter !== 'all') setTabCategoryFilter('configuracoes');
-    }
-  };
-
-  const scrollTabs = (direction: 'left' | 'right') => {
-    if (tabsContainerRef.current) {
-      const scrollAmount = direction === 'left' ? -300 : 300;
-      tabsContainerRef.current.scrollBy({ left: scrollAmount, behavior: 'smooth' });
-    }
-  };
-
-  // Quotes and Orders from storage
-  const [quotes, setQuotes] = useState<Quote[]>(() => StorageService.getQuotes());
-  const [orders, setOrders] = useState<Order[]>(() => StorageService.getOrders());
-  const [stockMovements, setStockMovements] = useState<StockMovement[]>(() => StorageService.getStockMovements());
-
   // Permissions checks for current logged in employee
+  const canViewDashboard = StorageService.hasUserPermission(currentUser, 'canViewDashboard');
   const canViewFinancialModule = StorageService.hasUserPermission(currentUser, 'canViewFinancialModule');
-  const canViewCostPricingModule =
-    currentUser.role === 'admin' ||
-    StorageService.hasUserPermission(currentUser, 'canViewCostPricingModule');
-  const canViewCoupons =
-    currentUser.role === 'admin' ||
-    currentUser.role === 'gerente' ||
-    StorageService.hasUserPermission(currentUser, 'canViewCoupons');
+  const canViewCostPricingModule = StorageService.hasUserPermission(currentUser, 'canViewCostPricingModule');
+  const canViewCoupons = StorageService.hasUserPermission(currentUser, 'canViewCoupons');
   const canViewSiteMetrics = StorageService.hasUserPermission(currentUser, 'canViewSiteMetrics');
-  const canManageUsers =
-    currentUser.role === 'admin' ||
-    currentUser.role === 'gerente' ||
-    StorageService.hasUserPermission(currentUser, 'canManageUsers');
+  const canManageUsers = StorageService.hasUserPermission(currentUser, 'canManageUsers');
   const canManageCompany = StorageService.hasUserPermission(currentUser, 'canManageCompanySettings');
-  const canManageDelivery = StorageService.hasUserPermission(currentUser, 'canManageDeliverySettings') || StorageService.hasUserPermission(currentUser, 'canManageCompanySettings');
+  const canManageDelivery =
+    StorageService.hasUserPermission(currentUser, 'canManageDeliverySettings') ||
+    StorageService.hasUserPermission(currentUser, 'canManageCompanySettings');
   const canCustomizeLayout = StorageService.hasUserPermission(currentUser, 'canCustomizeLayout');
   const canManageProducts = StorageService.hasUserPermission(currentUser, 'canManageProducts');
   const canManageQuotes = StorageService.hasUserPermission(currentUser, 'canManageQuotes');
@@ -172,6 +145,125 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const canManageGateways = StorageService.hasUserPermission(currentUser, 'canManagePaymentGateways');
   const canViewTransactions = StorageService.hasUserPermission(currentUser, 'canViewFinancialTransactions');
   const canAccessPDV = StorageService.hasUserPermission(currentUser, 'canAccessPDV');
+  const canAccessCashRegister =
+    StorageService.hasUserPermission(currentUser, 'canOpenCloseCashRegister') ||
+    StorageService.hasUserPermission(currentUser, 'canAccessPDV');
+  const canManageBoletos =
+    StorageService.hasUserPermission(currentUser, 'canConfigureBoletoRules') ||
+    StorageService.hasUserPermission(currentUser, 'canViewFinancialModule') ||
+    StorageService.hasUserPermission(currentUser, 'canManageOrders');
+  const canManageStricker =
+    currentUser.role === 'admin' ||
+    StorageService.hasUserPermission(currentUser, 'canManageProducts');
+  const canManageBackup =
+    currentUser.role === 'admin' ||
+    StorageService.hasUserPermission(currentUser, 'canManageMaintenanceMode');
+
+  const isTabAllowed = (tab: typeof activeTab): boolean => {
+    switch (tab) {
+      case 'dashboard':
+        return canViewDashboard;
+      case 'products':
+        return canManageProducts;
+      case 'quotes':
+        return canManageQuotes;
+      case 'orders':
+      case 'delivery_orders':
+        return canManageOrders;
+      case 'stock':
+        return canManageStock;
+      case 'financial':
+        return canViewFinancialModule;
+      case 'cost_pricing':
+        return canViewCostPricingModule;
+      case 'transactions':
+        return canViewTransactions;
+      case 'gateways':
+        return canManageGateways;
+      case 'cash_register':
+        return canAccessCashRegister;
+      case 'boletos':
+        return canManageBoletos;
+      case 'coupons':
+        return canViewCoupons;
+      case 'stricker':
+        return canManageStricker;
+      case 'offers_banner':
+      case 'layout':
+        return canCustomizeLayout;
+      case 'metrics':
+        return canViewSiteMetrics;
+      case 'users':
+        return canManageUsers;
+      case 'company':
+        return canManageCompany;
+      case 'delivery_settings':
+        return canManageDelivery;
+      case 'backup':
+        return canManageBackup;
+      default:
+        return false;
+    }
+  };
+
+  const tabPriorityOrder: (typeof activeTab)[] = [
+    'dashboard',
+    'products',
+    'quotes',
+    'orders',
+    'delivery_orders',
+    'stock',
+    'transactions',
+    'cash_register',
+    'boletos',
+    'financial',
+    'cost_pricing',
+    'coupons',
+    'gateways',
+    'stricker',
+    'offers_banner',
+    'layout',
+    'metrics',
+    'users',
+    'company',
+    'delivery_settings',
+    'backup',
+  ];
+
+  useEffect(() => {
+    if (!isTabAllowed(activeTab)) {
+      const firstPermitted = tabPriorityOrder.find((t) => isTabAllowed(t));
+      if (firstPermitted) {
+        setActiveTab(firstPermitted);
+      } else {
+        onNavigate('home');
+      }
+    }
+  }, [currentUser.id, currentUser.role, activeTab]);
+
+  const handleSelectTab = (newTab: typeof activeTab) => {
+    if (!isTabAllowed(newTab)) return;
+    setActiveTab(newTab);
+    if (['dashboard', 'products', 'quotes', 'orders', 'stock', 'delivery_orders'].includes(newTab)) {
+      if (tabCategoryFilter !== 'all') setTabCategoryFilter('operacional');
+    } else if (['financial', 'transactions', 'gateways', 'cash_register', 'boletos', 'cost_pricing', 'coupons'].includes(newTab)) {
+      if (tabCategoryFilter !== 'all') setTabCategoryFilter('vendas_caixa');
+    } else if (['stricker', 'offers_banner', 'layout', 'metrics', 'users', 'company', 'delivery_settings', 'backup'].includes(newTab)) {
+      if (tabCategoryFilter !== 'all') setTabCategoryFilter('configuracoes');
+    }
+  };
+
+  const scrollTabs = (direction: 'left' | 'right') => {
+    if (!tabsContainerRef.current) return;
+    tabsContainerRef.current.scrollBy({
+      left: direction === 'left' ? -240 : 240,
+      behavior: 'smooth',
+    });
+  };
+
+  const [quotes, setQuotes] = useState<Quote[]>(() => StorageService.getQuotes());
+  const [orders, setOrders] = useState<Order[]>(() => StorageService.getOrders());
+  const [stockMovements, setStockMovements] = useState<StockMovement[]>(() => StorageService.getStockMovements());
 
   // Product Modal State
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -539,32 +631,37 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </button>
           )}
 
-          <button
-            onClick={handleOpenNewProduct}
-            className="px-4 py-2.5 bg-[#E6007E] hover:bg-[#c9006e] text-white text-xs font-bold rounded-xl transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Cadastrar Produto</span>
-          </button>
+          {canManageProducts && (
+            <button
+              onClick={handleOpenNewProduct}
+              className="px-4 py-2.5 bg-[#E6007E] hover:bg-[#c9006e] text-white text-xs font-bold rounded-xl transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Cadastrar Produto</span>
+            </button>
+          )}
+
+          {canManageStock && (
+            <button
+              onClick={() => setIsStockModalOpen(true)}
+              className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+            >
+              <Boxes className="w-4 h-4 text-[#FFDD00]" />
+              <span>Movimentar Estoque</span>
+            </button>
+          )}
 
           <button
-            onClick={() => setIsStockModalOpen(true)}
-            className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
-          >
-            <Boxes className="w-4 h-4 text-[#FFDD00]" />
-            <span>Movimentar Estoque</span>
-          </button>
-
-          <button
-            onClick={() => {
-              const client = StorageService.switchRole('cliente');
+            onClick={async () => {
+              await StorageService.logout();
+              onRefreshData();
               onNavigate('admin-login');
             }}
             className="p-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-xl transition-all border border-rose-200 flex items-center gap-1.5 cursor-pointer"
-            title="Encerrar sessão de administrador"
+            title="Encerrar sessão administrativa"
           >
             <LogOut className="w-4 h-4" />
-            <span className="hidden sm:inline">Sair Admin</span>
+            <span className="hidden sm:inline">Sair</span>
           </button>
         </div>
       </div>
@@ -586,56 +683,98 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
-              Todas as Abas (15)
+              Todas as Abas
             </button>
-            <button
-              onClick={() => {
-                setTabCategoryFilter('operacional');
-                if (!['dashboard', 'products', 'quotes', 'orders', 'stock', 'deliveries'].includes(activeTab)) {
-                  setActiveTab('dashboard');
-                }
-              }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                tabCategoryFilter === 'operacional'
-                  ? 'bg-slate-900 text-white shadow-xs'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              <Package className="w-3.5 h-3.5 text-blue-500" />
-              <span>Operacional & Estoque</span>
-            </button>
-            <button
-              onClick={() => {
-                setTabCategoryFilter('vendas_caixa');
-                if (!['financial', 'transactions', 'gateways', 'cash_register', 'boletos', 'cost_pricing'].includes(activeTab)) {
-                  setActiveTab('transactions');
-                }
-              }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                tabCategoryFilter === 'vendas_caixa'
-                  ? 'bg-emerald-700 text-white shadow-xs'
-                  : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/60'
-              }`}
-            >
-              <Store className="w-3.5 h-3.5 text-emerald-500" />
-              <span>Vendas, PDV & Caixa</span>
-            </button>
-            <button
-              onClick={() => {
-                setTabCategoryFilter('configuracoes');
-                if (!['stricker', 'metrics', 'users', 'company', 'offers_banner', 'layout', 'delivery_settings', 'backup'].includes(activeTab)) {
-                  setActiveTab('stricker');
-                }
-              }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                tabCategoryFilter === 'configuracoes'
-                  ? 'bg-[#E6007E] text-white shadow-xs'
-                  : 'bg-pink-50 text-[#E6007E] hover:bg-pink-100 border border-pink-200/60'
-              }`}
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5 text-pink-500" />
-              <span>Configurações & Loja</span>
-            </button>
+            {(['dashboard', 'products', 'quotes', 'orders', 'delivery_orders', 'stock'] as const).some((t) =>
+              isTabAllowed(t)
+            ) && (
+              <button
+                onClick={() => {
+                  setTabCategoryFilter('operacional');
+                  const opTabs: (typeof activeTab)[] = [
+                    'dashboard',
+                    'products',
+                    'quotes',
+                    'orders',
+                    'delivery_orders',
+                    'stock',
+                  ];
+                  if (!opTabs.includes(activeTab)) {
+                    const nextTab = opTabs.find((t) => isTabAllowed(t));
+                    if (nextTab) handleSelectTab(nextTab);
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  tabCategoryFilter === 'operacional'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <Package className="w-3.5 h-3.5 text-blue-500" />
+                <span>Operacional & Estoque</span>
+              </button>
+            )}
+            {(
+              ['financial', 'transactions', 'gateways', 'cash_register', 'boletos', 'cost_pricing', 'coupons'] as const
+            ).some((t) => isTabAllowed(t)) && (
+              <button
+                onClick={() => {
+                  setTabCategoryFilter('vendas_caixa');
+                  const salesTabs: (typeof activeTab)[] = [
+                    'financial',
+                    'transactions',
+                    'gateways',
+                    'cash_register',
+                    'boletos',
+                    'cost_pricing',
+                    'coupons',
+                  ];
+                  if (!salesTabs.includes(activeTab)) {
+                    const nextTab = salesTabs.find((t) => isTabAllowed(t));
+                    if (nextTab) handleSelectTab(nextTab);
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  tabCategoryFilter === 'vendas_caixa'
+                    ? 'bg-emerald-700 text-white shadow-xs'
+                    : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/60'
+                }`}
+              >
+                <Store className="w-3.5 h-3.5 text-emerald-500" />
+                <span>Vendas, PDV & Caixa</span>
+              </button>
+            )}
+            {(
+              ['stricker', 'metrics', 'users', 'company', 'offers_banner', 'layout', 'delivery_settings', 'backup'] as const
+            ).some((t) => isTabAllowed(t)) && (
+              <button
+                onClick={() => {
+                  setTabCategoryFilter('configuracoes');
+                  const cfgTabs: (typeof activeTab)[] = [
+                    'stricker',
+                    'offers_banner',
+                    'layout',
+                    'metrics',
+                    'users',
+                    'company',
+                    'delivery_settings',
+                    'backup',
+                  ];
+                  if (!cfgTabs.includes(activeTab)) {
+                    const nextTab = cfgTabs.find((t) => isTabAllowed(t));
+                    if (nextTab) handleSelectTab(nextTab);
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  tabCategoryFilter === 'configuracoes'
+                    ? 'bg-[#E6007E] text-white shadow-xs'
+                    : 'bg-pink-50 text-[#E6007E] hover:bg-pink-100 border border-pink-200/60'
+                }`}
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5 text-pink-500" />
+                <span>Configurações & Loja</span>
+              </button>
+            )}
           </div>
 
           {/* Scroll Navigation Arrows for Horizontal Tab Bar */}
@@ -667,52 +806,56 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </label>
           <select
             value={activeTab}
-            onChange={(e) => {
-              const newTab = e.target.value as any;
-              setActiveTab(newTab);
-              if (['dashboard', 'products', 'quotes', 'orders', 'stock', 'deliveries'].includes(newTab)) {
-                setTabCategoryFilter('operacional');
-              } else if (['financial', 'transactions', 'gateways', 'cash_register', 'boletos', 'cost_pricing'].includes(newTab)) {
-                setTabCategoryFilter('vendas_caixa');
-              } else if (['stricker', 'offers_banner', 'layout', 'metrics', 'users', 'company', 'delivery_settings', 'backup'].includes(newTab)) {
-                setTabCategoryFilter('configuracoes');
-              }
-            }}
+            onChange={(e) => handleSelectTab(e.target.value as any)}
             className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#00AEEF]"
           >
-            <optgroup label="Operacional & Estoque">
-              <option value="dashboard">Visão Geral</option>
-              <option value="products">Produtos ({products.length})</option>
-              <option value="quotes">Orçamentos ({quotes.length})</option>
-              <option value="orders">Pedidos & Produção ({orders.length})</option>
-              <option value="stock">Estoque & Inventário</option>
-              <option value="deliveries">Expedição & Entregas</option>
-            </optgroup>
-            <optgroup label="Vendas & Caixa">
-              {canViewFinancialModule && (
-                <option value="financial">Módulo Financeiro (Restrito)</option>
-              )}
-              {canViewCostPricingModule && (
-                <option value="cost_pricing">Custos & Precificação (Novo)</option>
-              )}
-              <option value="transactions">Transações & Pagamentos</option>
-              <option value="gateways">Gateways de Pagamento (Mercado Pago / PagBank)</option>
-              <option value="cash_register">Controle de Caixa</option>
-              <option value="boletos">Boletos & Faturamento a Prazo (FEBRABAN)</option>
-              {canViewCoupons && (
-                <option value="coupons">Cupons de Desconto & Promoções</option>
-              )}
-            </optgroup>
-            <optgroup label="Configurações & Integrações">
-              <option value="stricker">Integração Stricker / SPOT</option>
-              <option value="offers_banner">Banner de Ofertas</option>
-              <option value="layout">Personalização do Layout</option>
-              <option value="metrics">Métricas do Site</option>
-              <option value="users">Usuários & Permissões</option>
-              <option value="company">Dados da Empresa</option>
-              <option value="delivery_settings">Região & Fretes</option>
-              <option value="backup">Backup & Recuperação (DRP)</option>
-            </optgroup>
+            {(['dashboard', 'products', 'quotes', 'orders', 'stock', 'delivery_orders'] as const).some((t) =>
+              isTabAllowed(t)
+            ) && (
+              <optgroup label="Operacional & Estoque">
+                {canViewDashboard && <option value="dashboard">Visão Geral</option>}
+                {canManageProducts && <option value="products">Produtos ({products.length})</option>}
+                {canManageQuotes && <option value="quotes">Orçamentos ({quotes.length})</option>}
+                {canManageOrders && <option value="orders">Pedidos & Produção ({orders.length})</option>}
+                {canManageStock && <option value="stock">Estoque & Inventário</option>}
+                {canManageOrders && <option value="delivery_orders">Expedição & Entregas</option>}
+              </optgroup>
+            )}
+            {(
+              ['financial', 'cost_pricing', 'transactions', 'gateways', 'cash_register', 'boletos', 'coupons'] as const
+            ).some((t) => isTabAllowed(t)) && (
+              <optgroup label="Vendas & Caixa">
+                {canViewFinancialModule && (
+                  <option value="financial">Módulo Financeiro (Restrito)</option>
+                )}
+                {canViewCostPricingModule && (
+                  <option value="cost_pricing">Custos & Precificação</option>
+                )}
+                {canViewTransactions && <option value="transactions">Transações & Pagamentos</option>}
+                {canManageGateways && (
+                  <option value="gateways">Gateways de Pagamento (Mercado Pago / PagBank)</option>
+                )}
+                {canAccessCashRegister && <option value="cash_register">Controle de Caixa</option>}
+                {canManageBoletos && <option value="boletos">Boletos & Faturamento a Prazo (FEBRABAN)</option>}
+                {canViewCoupons && (
+                  <option value="coupons">Cupons de Desconto & Promoções</option>
+                )}
+              </optgroup>
+            )}
+            {(
+              ['stricker', 'offers_banner', 'layout', 'metrics', 'users', 'company', 'delivery_settings', 'backup'] as const
+            ).some((t) => isTabAllowed(t)) && (
+              <optgroup label="Configurações & Integrações">
+                {canManageStricker && <option value="stricker">Integração Stricker / SPOT</option>}
+                {canCustomizeLayout && <option value="offers_banner">Banner de Ofertas</option>}
+                {canCustomizeLayout && <option value="layout">Personalização do Layout</option>}
+                {canViewSiteMetrics && <option value="metrics">Métricas do Site</option>}
+                {canManageUsers && <option value="users">Usuários & Permissões</option>}
+                {canManageCompany && <option value="company">Dados da Empresa</option>}
+                {canManageDelivery && <option value="delivery_settings">Região & Fretes</option>}
+                {canManageBackup && <option value="backup">Backup & Recuperação (DRP)</option>}
+              </optgroup>
+            )}
           </select>
         </div>
 
@@ -724,100 +867,112 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           {/* Operacional Tabs */}
           {(tabCategoryFilter === 'all' || tabCategoryFilter === 'operacional') && (
             <>
-              <button
-                onClick={() => setActiveTab('dashboard')}
-                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
-                  activeTab === 'dashboard' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                <LayoutDashboard className="w-4 h-4 text-[#00AEEF]" />
-                <span>Visão Geral</span>
-              </button>
+              {canViewDashboard && (
+                <button
+                  onClick={() => handleSelectTab('dashboard')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'dashboard' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <LayoutDashboard className="w-4 h-4 text-[#00AEEF]" />
+                  <span>Visão Geral</span>
+                </button>
+              )}
 
-              <button
-                onClick={() => setActiveTab('products')}
-                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
-                  activeTab === 'products' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                <Package className="w-4 h-4 text-emerald-400" />
-                <span>Produtos ({products.length})</span>
-                {lowStockProducts.length > 0 && (
-                  <span
-                    className="px-1.5 py-0.5 rounded-full bg-rose-600 text-white text-[10px] flex items-center gap-0.5 font-bold animate-pulse"
-                    title={`${lowStockProducts.length} produto(s) abaixo do estoque mínimo`}
-                  >
-                    <AlertTriangle className="w-2.5 h-2.5" />
-                    <span>{lowStockProducts.length}</span>
-                  </span>
-                )}
-              </button>
+              {canManageProducts && (
+                <button
+                  onClick={() => handleSelectTab('products')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'products' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <Package className="w-4 h-4 text-emerald-400" />
+                  <span>Produtos ({products.length})</span>
+                  {lowStockProducts.length > 0 && (
+                    <span
+                      className="px-1.5 py-0.5 rounded-full bg-rose-600 text-white text-[10px] flex items-center gap-0.5 font-bold animate-pulse"
+                      title={`${lowStockProducts.length} produto(s) abaixo do estoque mínimo`}
+                    >
+                      <AlertTriangle className="w-2.5 h-2.5" />
+                      <span>{lowStockProducts.length}</span>
+                    </span>
+                  )}
+                </button>
+              )}
 
-              <button
-                onClick={() => setActiveTab('quotes')}
-                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
-                  activeTab === 'quotes' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                <FileSpreadsheet className="w-4 h-4 text-pink-400" />
-                <span>Orçamentos ({quotes.length})</span>
-                {pendingQuotes > 0 && (
-                  <span className="w-5 h-5 rounded-full bg-[#E6007E] text-white text-[10px] flex items-center justify-center font-bold">
-                    {pendingQuotes}
-                  </span>
-                )}
-              </button>
+              {canManageQuotes && (
+                <button
+                  onClick={() => handleSelectTab('quotes')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'quotes' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <FileSpreadsheet className="w-4 h-4 text-pink-400" />
+                  <span>Orçamentos ({quotes.length})</span>
+                  {pendingQuotes > 0 && (
+                    <span className="w-5 h-5 rounded-full bg-[#E6007E] text-white text-[10px] flex items-center justify-center font-bold">
+                      {pendingQuotes}
+                    </span>
+                  )}
+                </button>
+              )}
 
-              <button
-                onClick={() => setActiveTab('orders')}
-                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
-                  activeTab === 'orders' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                <ShoppingBag className="w-4 h-4 text-blue-400" />
-                <span>Pedidos ({orders.length})</span>
-                {inProductionOrders > 0 && (
-                  <span className="w-5 h-5 rounded-full bg-[#00AEEF] text-white text-[10px] flex items-center justify-center font-bold">
-                    {inProductionOrders}
-                  </span>
-                )}
-              </button>
+              {canManageOrders && (
+                <button
+                  onClick={() => handleSelectTab('orders')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'orders' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <ShoppingBag className="w-4 h-4 text-blue-400" />
+                  <span>Pedidos ({orders.length})</span>
+                  {inProductionOrders > 0 && (
+                    <span className="w-5 h-5 rounded-full bg-[#00AEEF] text-white text-[10px] flex items-center justify-center font-bold">
+                      {inProductionOrders}
+                    </span>
+                  )}
+                </button>
+              )}
 
-              <button
-                onClick={() => setActiveTab('delivery_orders')}
-                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
-                  activeTab === 'delivery_orders'
-                    ? 'bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                <Truck className="w-4 h-4 text-emerald-400" />
-                <span>Entregas & Fretes</span>
-                {orders.filter((o) => o.shippingInfo?.freightStatus === 'aguardando_cotacao').length > 0 && (
-                  <span className="w-5 h-5 rounded-full bg-blue-500 text-white text-[10px] flex items-center justify-center font-bold">
-                    {orders.filter((o) => o.shippingInfo?.freightStatus === 'aguardando_cotacao').length}
-                  </span>
-                )}
-              </button>
+              {canManageOrders && (
+                <button
+                  onClick={() => handleSelectTab('delivery_orders')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'delivery_orders'
+                      ? 'bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-xs'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <Truck className="w-4 h-4 text-emerald-400" />
+                  <span>Entregas & Fretes</span>
+                  {orders.filter((o) => o.shippingInfo?.freightStatus === 'aguardando_cotacao').length > 0 && (
+                    <span className="w-5 h-5 rounded-full bg-blue-500 text-white text-[10px] flex items-center justify-center font-bold">
+                      {orders.filter((o) => o.shippingInfo?.freightStatus === 'aguardando_cotacao').length}
+                    </span>
+                  )}
+                </button>
+              )}
 
-              <button
-                onClick={() => setActiveTab('stock')}
-                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
-                  activeTab === 'stock' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                <Boxes className="w-4 h-4 text-amber-400" />
-                <span>Estoque & Inventário</span>
-                {lowStockProducts.length > 0 && (
-                  <span
-                    className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-[10px] flex items-center gap-1 font-bold shadow-xs"
-                    title={`${lowStockProducts.length} produto(s) com estoque baixo ou zerado`}
-                  >
-                    <AlertTriangle className="w-3 h-3" />
-                    <span>{lowStockProducts.length}</span>
-                  </span>
-                )}
-              </button>
+              {canManageStock && (
+                <button
+                  onClick={() => handleSelectTab('stock')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'stock' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <Boxes className="w-4 h-4 text-amber-400" />
+                  <span>Estoque & Inventário</span>
+                  {lowStockProducts.length > 0 && (
+                    <span
+                      className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-[10px] flex items-center gap-1 font-bold shadow-xs"
+                      title={`${lowStockProducts.length} produto(s) com estoque baixo ou zerado`}
+                    >
+                      <AlertTriangle className="w-3 h-3" />
+                      <span>{lowStockProducts.length}</span>
+                    </span>
+                  )}
+                </button>
+              )}
             </>
           )}
 
@@ -826,7 +981,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <>
               {canViewFinancialModule && (
                 <button
-                  onClick={() => setActiveTab('financial')}
+                  onClick={() => handleSelectTab('financial')}
                   className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
                     activeTab === 'financial'
                       ? 'bg-gradient-to-r from-[#E6007E] to-rose-600 text-white shadow-md ring-2 ring-pink-300'
@@ -844,7 +999,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
               {canViewTransactions && (
                 <button
-                  onClick={() => setActiveTab('transactions')}
+                  onClick={() => handleSelectTab('transactions')}
                   className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
                     activeTab === 'transactions'
                       ? 'bg-slate-900 text-white shadow-xs'
@@ -858,7 +1013,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
               {canManageGateways && (
                 <button
-                  onClick={() => setActiveTab('gateways')}
+                  onClick={() => handleSelectTab('gateways')}
                   className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
                     activeTab === 'gateways'
                       ? 'bg-gradient-to-r from-[#00AEEF] to-sky-700 text-white shadow-xs'
@@ -870,37 +1025,41 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </button>
               )}
 
-              <button
-                onClick={() => setActiveTab('cash_register')}
-                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
-                  activeTab === 'cash_register'
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                <Store className="w-4 h-4 text-amber-500" />
-                <span>Controle de Caixa</span>
-              </button>
+              {canAccessCashRegister && (
+                <button
+                  onClick={() => handleSelectTab('cash_register')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'cash_register'
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <Store className="w-4 h-4 text-amber-500" />
+                  <span>Controle de Caixa</span>
+                </button>
+              )}
 
-              <button
-                onClick={() => setActiveTab('boletos')}
-                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
-                  activeTab === 'boletos'
-                    ? 'bg-gradient-to-r from-indigo-700 to-indigo-900 text-white shadow-sm ring-2 ring-indigo-400/40'
-                    : 'text-indigo-950 bg-indigo-50/70 hover:bg-indigo-100 border border-indigo-200/70'
-                }`}
-                title="Boletos Bancários & Faturamento a Prazo (Regras FEBRABAN)"
-              >
-                <FileText className={`w-4 h-4 ${activeTab === 'boletos' ? 'text-[#FFDD00]' : 'text-indigo-600'}`} />
-                <span>Boletos & Faturamento</span>
-                <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase bg-indigo-600 text-white tracking-wider">
-                  FEBRABAN
-                </span>
-              </button>
+              {canManageBoletos && (
+                <button
+                  onClick={() => handleSelectTab('boletos')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'boletos'
+                      ? 'bg-gradient-to-r from-indigo-700 to-indigo-900 text-white shadow-sm ring-2 ring-indigo-400/40'
+                      : 'text-indigo-950 bg-indigo-50/70 hover:bg-indigo-100 border border-indigo-200/70'
+                  }`}
+                  title="Boletos Bancários & Faturamento a Prazo (Regras FEBRABAN)"
+                >
+                  <FileText className={`w-4 h-4 ${activeTab === 'boletos' ? 'text-[#FFDD00]' : 'text-indigo-600'}`} />
+                  <span>Boletos & Faturamento</span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase bg-indigo-600 text-white tracking-wider">
+                    FEBRABAN
+                  </span>
+                </button>
+              )}
 
               {canViewCostPricingModule && (
                 <button
-                  onClick={() => setActiveTab('cost_pricing')}
+                  onClick={() => handleSelectTab('cost_pricing')}
                   className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
                     activeTab === 'cost_pricing'
                       ? 'bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white shadow-md ring-2 ring-pink-400/50'
@@ -918,7 +1077,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
               {canViewCoupons && (
                 <button
-                  onClick={() => setActiveTab('coupons')}
+                  onClick={() => handleSelectTab('coupons')}
                   className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
                     activeTab === 'coupons'
                       ? 'bg-gradient-to-r from-[#E6007E] to-rose-700 text-white shadow-md ring-2 ring-pink-400/50'
@@ -939,24 +1098,26 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           {/* Configurações & Loja Tabs */}
           {(tabCategoryFilter === 'all' || tabCategoryFilter === 'configuracoes') && (
             <>
-              <button
-                onClick={() => setActiveTab('stricker')}
-                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
-                  activeTab === 'stricker'
-                    ? 'bg-gradient-to-r from-blue-700 to-indigo-700 text-white shadow-sm ring-2 ring-blue-400/30'
-                    : 'text-slate-700 bg-blue-50/50 hover:bg-blue-100/70 border border-blue-200/60'
-                }`}
-              >
-                <Globe2 className={`w-4 h-4 ${activeTab === 'stricker' ? 'text-white' : 'text-blue-600'}`} />
-                <span>Integração Stricker</span>
-                <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase bg-blue-500 text-white tracking-wider">
-                  API
-                </span>
-              </button>
+              {canManageStricker && (
+                <button
+                  onClick={() => handleSelectTab('stricker')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'stricker'
+                      ? 'bg-gradient-to-r from-blue-700 to-indigo-700 text-white shadow-sm ring-2 ring-blue-400/30'
+                      : 'text-slate-700 bg-blue-50/50 hover:bg-blue-100/70 border border-blue-200/60'
+                  }`}
+                >
+                  <Globe2 className={`w-4 h-4 ${activeTab === 'stricker' ? 'text-white' : 'text-blue-600'}`} />
+                  <span>Integração Stricker</span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase bg-blue-500 text-white tracking-wider">
+                    API
+                  </span>
+                </button>
+              )}
 
               {canCustomizeLayout && (
                 <button
-                  onClick={() => setActiveTab('offers_banner')}
+                  onClick={() => handleSelectTab('offers_banner')}
                   className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
                     activeTab === 'offers_banner'
                       ? 'bg-gradient-to-r from-[#E6007E] to-rose-600 text-white shadow-xs'
@@ -970,7 +1131,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
               {canCustomizeLayout && (
                 <button
-                  onClick={() => setActiveTab('layout')}
+                  onClick={() => handleSelectTab('layout')}
                   className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
                     activeTab === 'layout'
                       ? 'bg-gradient-to-r from-[#E6007E] to-[#00AEEF] text-white shadow-xs'
@@ -984,7 +1145,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
               {canViewSiteMetrics && (
                 <button
-                  onClick={() => setActiveTab('metrics')}
+                  onClick={() => handleSelectTab('metrics')}
                   className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
                     activeTab === 'metrics'
                       ? 'bg-gradient-to-r from-[#E6007E] to-[#00AEEF] text-white shadow-xs'
@@ -996,19 +1157,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </button>
               )}
 
-              <button
-                onClick={() => handleSelectTab('users')}
-                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
-                  activeTab === 'users' ? 'bg-[#E6007E] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                <Users className="w-4 h-4 text-purple-400" />
-                <span>Usuários & Permissões</span>
-              </button>
+              {canManageUsers && (
+                <button
+                  onClick={() => handleSelectTab('users')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'users' ? 'bg-[#E6007E] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <Users className="w-4 h-4 text-purple-400" />
+                  <span>Usuários & Permissões</span>
+                </button>
+              )}
 
               {canManageCompany && (
                 <button
-                  onClick={() => setActiveTab('company')}
+                  onClick={() => handleSelectTab('company')}
                   className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
                     activeTab === 'company' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
                   }`}
@@ -1020,7 +1183,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
               {canManageDelivery && (
                 <button
-                  onClick={() => setActiveTab('delivery_settings')}
+                  onClick={() => handleSelectTab('delivery_settings')}
                   className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
                     activeTab === 'delivery_settings'
                       ? 'bg-gradient-to-r from-sky-600 to-blue-700 text-white shadow-xs'
@@ -1032,28 +1195,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </button>
               )}
 
-              <button
-                onClick={() => setActiveTab('backup')}
-                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
-                  activeTab === 'backup'
-                    ? 'bg-gradient-to-r from-slate-900 via-indigo-950 to-indigo-900 text-white shadow-sm ring-2 ring-indigo-400/30'
-                    : 'text-indigo-950 bg-indigo-50/70 hover:bg-indigo-100 border border-indigo-200/70'
-                }`}
-                title="Backup Agendado & Recuperação de Desastres (JSON Seguro)"
-              >
-                <HardDriveDownload className={`w-4 h-4 ${activeTab === 'backup' ? 'text-[#FFDD00]' : 'text-indigo-600'}`} />
-                <span>Backup & Recuperação</span>
-                <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase bg-indigo-600 text-white tracking-wider">
-                  DRP
-                </span>
-              </button>
+              {canManageBackup && (
+                <button
+                  onClick={() => handleSelectTab('backup')}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    activeTab === 'backup'
+                      ? 'bg-gradient-to-r from-slate-900 via-indigo-950 to-indigo-900 text-white shadow-sm ring-2 ring-indigo-400/30'
+                      : 'text-indigo-950 bg-indigo-50/70 hover:bg-indigo-100 border border-indigo-200/70'
+                  }`}
+                  title="Backup Agendado & Recuperação de Desastres (JSON Seguro)"
+                >
+                  <HardDriveDownload className={`w-4 h-4 ${activeTab === 'backup' ? 'text-[#FFDD00]' : 'text-indigo-600'}`} />
+                  <span>Backup & Recuperação</span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase bg-indigo-600 text-white tracking-wider">
+                    DRP
+                  </span>
+                </button>
+              )}
             </>
           )}
         </div>
       </div>
 
       {/* AUTOMATIC LOW STOCK AUDIT ALERT BANNER */}
-      {lowStockProducts.length > 0 && !dismissLowStockBanner && (
+      {(canManageProducts || canManageStock) && lowStockProducts.length > 0 && !dismissLowStockBanner && (
         <div className="bg-gradient-to-r from-rose-50 via-amber-50 to-rose-50 border border-rose-200 rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xs">
           <div className="flex items-start sm:items-center gap-3.5">
             <div className="w-10 h-10 rounded-xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow-sm">
@@ -1075,26 +1240,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </div>
 
           <div className="flex items-center gap-2.5 shrink-0 self-end sm:self-auto">
-            <button
-              onClick={() => {
-                setActiveTab('products');
-                setProductStockFilter('low_stock');
-              }}
-              className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-            >
-              <Filter className="w-3.5 h-3.5" />
-              <span>Ver Produtos em Alerta ({lowStockProducts.length})</span>
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab('stock');
-                setStockTableFilter('low_stock');
-              }}
-              className="px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-            >
-              <Boxes className="w-3.5 h-3.5 text-rose-600" />
-              <span>Painel de Reposição</span>
-            </button>
+            {canManageProducts && (
+              <button
+                onClick={() => {
+                  handleSelectTab('products');
+                  setProductStockFilter('low_stock');
+                }}
+                className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                <Filter className="w-3.5 h-3.5" />
+                <span>Ver Produtos em Alerta ({lowStockProducts.length})</span>
+              </button>
+            )}
+            {canManageStock && (
+              <button
+                onClick={() => {
+                  handleSelectTab('stock');
+                  setStockTableFilter('low_stock');
+                }}
+                className="px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                <Boxes className="w-3.5 h-3.5 text-rose-600" />
+                <span>Painel de Reposição</span>
+              </button>
+            )}
             <button
               onClick={() => setDismissLowStockBanner(true)}
               className="p-2 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
@@ -1107,7 +1276,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       )}
 
       {/* TAB 1: DASHBOARD OVERVIEW */}
-      {activeTab === 'dashboard' && (
+      {activeTab === 'dashboard' && canViewDashboard && (
         <div className="space-y-8">
           {/* Quick Stat Metric Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -1407,7 +1576,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       )}
 
       {/* TAB 2: PRODUCTS MANAGEMENT */}
-      {activeTab === 'products' && (
+      {activeTab === 'products' && canManageProducts && (
         <div className="space-y-4">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
             <div className="relative flex-1 max-w-md w-full">
@@ -1495,14 +1664,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={() => setActiveTab('financial')}
-                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-200"
-                title="Cadastrar, editar e excluir categorias, centros de custo e parâmetros"
-              >
-                <Tags className="w-3.5 h-3.5 text-pink-500" />
-                <span>Gerenciar Categorias & Cadastros</span>
-              </button>
+              {canViewFinancialModule && (
+                <button
+                  onClick={() => handleSelectTab('financial')}
+                  className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-200"
+                  title="Cadastrar, editar e excluir categorias, centros de custo e parâmetros"
+                >
+                  <Tags className="w-3.5 h-3.5 text-pink-500" />
+                  <span>Gerenciar Categorias & Cadastros</span>
+                </button>
+              )}
               <button
                 onClick={handleOpenNewProduct}
                 className="px-4 py-2 bg-slate-900 hover:bg-[#E6007E] text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
@@ -1716,7 +1887,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       )}
 
       {/* TAB 3: QUOTES MANAGEMENT */}
-      {activeTab === 'quotes' && (
+      {activeTab === 'quotes' && canManageQuotes && (
         <div className="space-y-4">
           <div className="flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
             <h3 className="font-heading text-base font-bold text-slate-900 uppercase">
@@ -1836,7 +2007,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       )}
 
       {/* TAB 4: ORDERS & PRODUCTION MANAGEMENT */}
-      {activeTab === 'orders' && (
+      {activeTab === 'orders' && canManageOrders && (
         <div className="space-y-4">
           <div className="flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
             <h3 className="font-heading text-base font-bold text-slate-900 uppercase">
@@ -1976,7 +2147,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       )}
 
       {/* TAB 5: STOCK & INVENTORY */}
-      {activeTab === 'stock' && (
+      {activeTab === 'stock' && canManageStock && (
         <div className="space-y-6">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
             <div>
@@ -2158,7 +2329,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       )}
 
       {/* TAB: GESTÃO DE ENTREGAS & FRETES */}
-      {activeTab === 'delivery_orders' && (
+      {activeTab === 'delivery_orders' && canManageOrders && (
         <DeliveryOrdersTab
           orders={orders}
           onRefreshData={refreshAll}
@@ -2182,22 +2353,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               O seu perfil atual (<strong className="capitalize text-slate-900">{currentUser.role}</strong>) não possui permissão de gestão de usuários (<code className="text-rose-600 font-mono font-bold">canManageUsers</code>).
             </p>
             <p className="text-xs text-slate-500 mt-2">
-              Para acessar esta área, solicite permissão a um Administrador ou alterne para a conta de Administrador no seletor de perfil (RoleSwitcher).
+              Para acessar esta área, faça login com uma conta de Administrador Geral autorizada.
             </p>
-            <div className="pt-3">
-              <button
-                type="button"
-                onClick={() => {
-                  StorageService.switchRole('admin');
-                  window.dispatchEvent(new CustomEvent('mb_storage_updated'));
-                  refreshAll();
-                }}
-                className="px-5 py-2.5 bg-slate-900 hover:bg-[#E6007E] text-white text-xs font-bold rounded-xl shadow-md transition-all cursor-pointer inline-flex items-center gap-2"
-              >
-                <Shield className="w-4 h-4 text-[#FFDD00]" />
-                <span>Alternar para Administrador Geral</span>
-              </button>
-            </div>
           </div>
         </div>
       )}
@@ -2228,7 +2385,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       )}
 
       {/* TAB 9: STRICKER BRASIL / SPOT WEBSERVICE INTEGRATION */}
-      {activeTab === 'stricker' && (
+      {activeTab === 'stricker' && canManageStricker && (
         <StrickerIntegrationTab onRefreshData={refreshAll} />
       )}
 
@@ -2243,12 +2400,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       )}
 
       {/* TAB 12: CASH REGISTER SESSIONS & CONTROL */}
-      {activeTab === 'cash_register' && (
+      {activeTab === 'cash_register' && canAccessCashRegister && (
         <CashRegisterTab />
       )}
 
       {/* TAB 13: MÓDULO FINANCEIRO (CONTROLE DE ACESSO RESTRITO) */}
-      {activeTab === 'financial' && (
+      {activeTab === 'financial' && canViewFinancialModule && (
         <FinancialModuleView
           currentUser={currentUser}
           onNavigate={onNavigate}
@@ -2256,12 +2413,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       )}
 
       {/* TAB: BOLETOS BANCÁRIOS & FATURAMENTO A PRAZO (FEBRABAN) */}
-      {activeTab === 'boletos' && (
+      {activeTab === 'boletos' && canManageBoletos && (
         <BoletoBillingManagementTab currentUser={currentUser} />
       )}
 
       {/* TAB: MÓDULO DE ORÇAMENTO DE CUSTOS & PRECIFICAÇÃO (14 SUBMÓDULOS) */}
-      {activeTab === 'cost_pricing' && (
+      {activeTab === 'cost_pricing' && canViewCostPricingModule && (
         <CostPricingModuleView currentUser={currentUser} />
       )}
 
@@ -2271,7 +2428,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       )}
 
       {/* TAB 14: BACKUP AGENDADO & RECUPERAÇÃO DE DESASTRES (JSON SEGURO) */}
-      {activeTab === 'backup' && (
+      {activeTab === 'backup' && canManageBackup && (
         <DisasterRecoveryBackupTab
           currentUser={currentUser}
           onNavigate={onNavigate}

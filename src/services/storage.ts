@@ -45,15 +45,12 @@ import {
   CouponAuditLog,
   CouponValidationResult,
   OrderCouponInfo,
+  PriceVisibilityMode,
 } from '../types';
 import {
   INITIAL_PRODUCTS,
   INITIAL_CATEGORIES,
   INITIAL_SUBCATEGORIES,
-  INITIAL_QUOTES,
-  INITIAL_ORDERS,
-  INITIAL_STOCK_MOVEMENTS,
-  INITIAL_USERS,
   INITIAL_COMPANY_SETTINGS,
   INITIAL_DELIVERY_SETTINGS,
   INITIAL_PERMISSIONS_MATRIX,
@@ -82,6 +79,29 @@ import {
 } from '../data/initialData';
 import { calculateSha256Sync, formatBytes, generateBackupFilename } from '../utils/cryptoUtils';
 import { criarBoletoTitulo, calcularDataVencimento } from '../utils/boletoGenerator';
+import {
+  authFetch,
+  logoutSession,
+  savePriceVisibility as savePriceVisibilityApi,
+  updateMyProfile,
+} from './authClient';
+
+export const VISITOR_PROFILE: UserProfile = {
+  id: 'visitante',
+  name: 'Visitante',
+  email: '',
+  phone: '',
+  role: 'visitante',
+  status: 'ativo',
+  createdAt: '2026-01-01T00:00:00.000Z',
+};
+
+let memoryCurrentUser: UserProfile = { ...VISITOR_PROFILE };
+let memoryUsers: UserProfile[] = [];
+let memoryPermissionsMatrix: Record<UserRole, RolePermissions> = {
+  ...INITIAL_PERMISSIONS_MATRIX,
+};
+let memoryPriceVisibilityMode: PriceVisibilityMode = 'registered_only';
 
 const STORAGE_KEYS = {
   PRODUCTS: 'mb_personaliza_products_v1',
@@ -90,11 +110,8 @@ const STORAGE_KEYS = {
   QUOTES: 'mb_personaliza_quotes_v1',
   ORDERS: 'mb_personaliza_orders_v1',
   STOCK_MOVEMENTS: 'mb_personaliza_stock_movements_v1',
-  USERS: 'mb_personaliza_users_v1',
-  CURRENT_USER: 'mb_personaliza_current_user_v1',
   CART: 'mb_personaliza_cart_v1',
   COMPANY_SETTINGS: 'mb_personaliza_company_settings_v1',
-  PERMISSIONS_MATRIX: 'mb_personaliza_permissions_matrix_v1',
   LAYOUT_SETTINGS: 'mb_personaliza_layout_settings_v1',
   LAYOUT_DRAFT: 'mb_personaliza_layout_draft_v1',
   PAYMENT_GATEWAYS: 'mb_personaliza_payment_gateways_v1',
@@ -122,6 +139,20 @@ const STORAGE_KEYS = {
   COUPON_AUDIT_LOGS: 'mb_personaliza_coupon_audit_logs_v1',
   FAVORITES: 'mb_personaliza_user_favorites_v1',
 };
+
+function purgeLegacySensitiveBrowserStorage(): void {
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
+  try {
+    localStorage.removeItem('mb_personaliza_current_user_v1');
+    localStorage.removeItem('mb_personaliza_users_v1');
+    localStorage.removeItem('mb_personaliza_permissions_matrix_v1');
+    localStorage.removeItem('mb_personaliza_price_visibility_v1');
+  } catch {
+    // ignore storage cleanup errors
+  }
+}
+
+purgeLegacySensitiveBrowserStorage();
 
 function getStored<T>(key: string, fallback: T): T {
   try {
@@ -153,7 +184,7 @@ function setStored<T>(key: string, data: T): boolean {
 function syncToPostgres(endpoint: string, method: string = 'POST', data?: any) {
   try {
     if (typeof fetch === 'undefined') return;
-    fetch(`/api/db/${endpoint}`, {
+    authFetch(`/api/db/${endpoint}`, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: data ? JSON.stringify(data) : undefined,
@@ -166,17 +197,74 @@ function syncToPostgres(endpoint: string, method: string = 'POST', data?: any) {
 }
 
 export const StorageService = {
+  // Price Visibility Control (persisted in PostgreSQL, cached strictly in memory)
+  getPriceVisibilityMode(): PriceVisibilityMode {
+    return memoryPriceVisibilityMode;
+  },
+  setPriceVisibilityModeMemory(mode: PriceVisibilityMode): void {
+    memoryPriceVisibilityMode = mode === 'all' ? 'all' : 'registered_only';
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('mb_price_visibility_updated', { detail: { mode: memoryPriceVisibilityMode } })
+      );
+      window.dispatchEvent(new Event('mb_storage_updated'));
+    }
+  },
+  async savePriceVisibilityMode(
+    mode: PriceVisibilityMode
+  ): Promise<{ success: boolean; mode?: PriceVisibilityMode; error?: string }> {
+    try {
+      const res = await savePriceVisibilityApi(mode);
+      if (res.success) {
+        const nextMode = res.mode || res.priceVisibility || mode;
+        this.setPriceVisibilityModeMemory(nextMode);
+        await this.initPostgresSync();
+        return { success: true, mode: nextMode };
+      }
+      return { success: false, error: res.error || 'Falha ao salvar visibilidade dos preços.' };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Erro de comunicação ao salvar visibilidade dos preços.' };
+    }
+  },
+  canViewPrices(user?: UserProfile | null): boolean {
+    const target = user !== undefined ? user : memoryCurrentUser;
+    if (memoryPriceVisibilityMode === 'all') return true;
+    return Boolean(target && target.role !== 'visitante' && target.status !== 'inativo');
+  },
+
   // PostgreSQL Database Initialization & Real-time Synchronization
   async initPostgresSync(): Promise<boolean> {
     try {
-      const res = await fetch('/api/db/init');
+      purgeLegacySensitiveBrowserStorage();
+      const res = await authFetch('/api/db/init', { cache: 'no-store' });
       if (!res.ok) return false;
       const json = await res.json();
       if (!json.success || !json.data) return false;
 
-      const { products, categories, subcategories, quotes, orders, users, coupons, settings } = json.data;
+      const {
+        products,
+        categories,
+        subcategories,
+        quotes,
+        orders,
+        users,
+        coupons,
+        stockMovements,
+        boletos,
+        financialAccounts,
+        pdvSales,
+        cashSessions,
+        paymentTransactions,
+        settings,
+      } = json.data;
 
-      if (Array.isArray(products) && products.length > 0) {
+      const resolvedMode: PriceVisibilityMode =
+        json.priceVisibility === 'all' || settings?.price_visibility?.mode === 'all'
+          ? 'all'
+          : 'registered_only';
+      memoryPriceVisibilityMode = resolvedMode;
+
+      if (Array.isArray(products)) {
         const mappedProducts: Product[] = products.map((p: any) => ({
           id: p.id,
           code: p.code || 'PRD-001',
@@ -185,26 +273,33 @@ export const StorageService = {
           categoryId: p.categoryId,
           subcategoryId: p.subcategoryId,
           description: p.description || p.shortDescription || '',
-          base_price: Number(p.basePrice) || 0,
-          promo_price: p.promoPrice ? Number(p.promoPrice) : undefined,
-          cost_price: Number(p.costPrice) || 0,
-          profit_margin: Number(p.profitMargin) || 60,
-          stock_qty: Number(p.stockQty) || 0,
-          min_stock_alert: Number(p.minStockAlert) || 5,
-          min_order_qty: Number(p.minOrderQty) || 1,
-          is_active: p.isActive ?? true,
-          is_featured: p.isFeatured ?? false,
+          base_price: Number(p.basePrice ?? p.base_price) || 0,
+          promo_price:
+            p.promoPrice !== undefined && p.promoPrice !== null
+              ? Number(p.promoPrice)
+              : p.promo_price !== undefined
+              ? Number(p.promo_price)
+              : undefined,
+          cost_price: Number(p.costPrice ?? p.cost_price) || 0,
+          profit_margin: Number(p.profitMargin ?? p.profit_margin) || 0,
+          stock_qty: Number(p.stockQty ?? p.stock_qty) || 0,
+          min_stock_alert: Number(p.minStockAlert ?? p.min_stock_alert) || 5,
+          min_order_qty: Number(p.minOrderQty ?? p.min_order_qty) || 1,
+          is_active: p.isActive ?? p.is_active ?? true,
+          is_featured: p.isFeatured ?? p.is_featured ?? false,
           images: Array.isArray(p.images) ? p.images : [],
           badge: p.badge,
-          show_price: p.showPrice ?? true,
-          price_tiers: Array.isArray(p.priceTiers) ? p.priceTiers : [],
+          show_price: p.showPrice ?? p.show_price ?? true,
+          price_tiers: Array.isArray(p.priceTiers ?? p.price_tiers) ? (p.priceTiers ?? p.price_tiers) : [],
           variants: Array.isArray(p.variants) ? p.variants : [],
           details: p.details || { customTechniques: ['Laser', 'UV'] },
           barcode: p.barcode,
           qrCode: p.qrCode,
           createdAt: p.createdAt ? new Date(p.createdAt).toISOString() : new Date().toISOString(),
         }));
-        setStored(STORAGE_KEYS.PRODUCTS, mappedProducts);
+        if (mappedProducts.length > 0) {
+          setStored(STORAGE_KEYS.PRODUCTS, mappedProducts);
+        }
       }
 
       if (Array.isArray(categories) && categories.length > 0) {
@@ -213,17 +308,52 @@ export const StorageService = {
       if (Array.isArray(subcategories) && subcategories.length > 0) {
         setStored(STORAGE_KEYS.SUBCATEGORIES, subcategories);
       }
-      if (Array.isArray(quotes) && quotes.length > 0) {
+      if (Array.isArray(quotes)) {
         setStored(STORAGE_KEYS.QUOTES, quotes);
       }
-      if (Array.isArray(orders) && orders.length > 0) {
+      if (Array.isArray(orders)) {
         setStored(STORAGE_KEYS.ORDERS, orders);
       }
-      if (Array.isArray(users) && users.length > 0) {
-        setStored(STORAGE_KEYS.USERS, users);
+      if (Array.isArray(users)) {
+        memoryUsers = users;
+      } else {
+        memoryUsers = [];
       }
-      if (Array.isArray(coupons) && coupons.length > 0) {
+      if (Array.isArray(coupons)) {
         setStored(STORAGE_KEYS.COUPONS, coupons);
+      }
+      if (Array.isArray(stockMovements)) {
+        const mappedMovements: StockMovement[] = stockMovements.map((m: any) => ({
+          id: m.id,
+          productId: m.productId,
+          productName: m.productName,
+          productSku: m.productSku || m.product_sku || '',
+          variantId: m.variantId,
+          variantName: m.variantName || m.variantColor || undefined,
+          type: (m.type || 'ajuste') as StockMovement['type'],
+          quantity: Number(m.quantity) || 0,
+          previous_stock: Number(m.previousStock ?? m.previous_stock ?? 0),
+          new_stock: Number(m.newStock ?? m.new_stock ?? 0),
+          reason: m.reason || '',
+          operator_name: m.operatorName || m.operator_name || 'Sistema',
+          created_at: m.createdAtText || m.created_at || new Date().toISOString(),
+        }));
+        setStored(STORAGE_KEYS.STOCK_MOVEMENTS, mappedMovements);
+      }
+      if (Array.isArray(boletos)) {
+        setStored(STORAGE_KEYS.BOLETOS, boletos);
+      }
+      if (Array.isArray(financialAccounts)) {
+        setStored(STORAGE_KEYS.FINANCIAL_ACCOUNTS, financialAccounts);
+      }
+      if (Array.isArray(pdvSales)) {
+        setStored(STORAGE_KEYS.PDV_SALES, pdvSales);
+      }
+      if (Array.isArray(cashSessions)) {
+        setStored(STORAGE_KEYS.CASH_REGISTER_SESSIONS, cashSessions);
+      }
+      if (Array.isArray(paymentTransactions)) {
+        setStored(STORAGE_KEYS.PAYMENT_TRANSACTIONS, paymentTransactions);
       }
       if (settings?.company) {
         setStored(STORAGE_KEYS.COMPANY_SETTINGS, settings.company);
@@ -240,6 +370,30 @@ export const StorageService = {
       if (settings?.maintenance) {
         setStored(STORAGE_KEYS.MAINTENANCE_SETTINGS, settings.maintenance);
       }
+      if (settings?.permissions) {
+        this.setPermissionsMatrixMemory(settings.permissions);
+      }
+      if (settings?.gateways) {
+        setStored(STORAGE_KEYS.PAYMENT_GATEWAYS, settings.gateways);
+      }
+      if (settings?.pdv) {
+        setStored(STORAGE_KEYS.PDV_SETTINGS, settings.pdv);
+      }
+      if (settings?.financial_settings) {
+        setStored(STORAGE_KEYS.FINANCIAL_SETTINGS, settings.financial_settings);
+      }
+      if (settings?.financial_categories) {
+        setStored(STORAGE_KEYS.FINANCIAL_CATEGORIES, settings.financial_categories);
+      }
+      if (settings?.cost_centers) {
+        setStored(STORAGE_KEYS.COST_CENTERS, settings.cost_centers);
+      }
+      if (settings?.bank_accounts) {
+        setStored(STORAGE_KEYS.BANK_ACCOUNTS, settings.bank_accounts);
+      }
+      if (settings?.financial_payment_methods) {
+        setStored(STORAGE_KEYS.FINANCIAL_PAYMENT_METHODS, settings.financial_payment_methods);
+      }
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('mb_storage_updated'));
@@ -254,11 +408,65 @@ export const StorageService = {
 
   async getPostgresStatus(): Promise<any> {
     try {
-      const res = await fetch('/api/db/status');
+      const res = await authFetch('/api/db/status');
       return await res.json();
     } catch (err: any) {
       return { success: false, error: err.message };
     }
+  },
+
+  async getVpsPreflightStatus(): Promise<any> {
+    try {
+      const res = await authFetch('/api/db/vps-preflight');
+      return await res.json();
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  },
+
+  collectLocalStorageSnapshot(): Record<string, any> {
+    return {
+      products: this.getProducts(),
+      categories: this.getCategories(),
+      subcategories: this.getSubcategories(),
+      quotes: this.getQuotes(),
+      orders: this.getOrders(),
+      users: this.getUsers(),
+      coupons: this.getCoupons(),
+      stockMovements: this.getStockMovements(),
+      boletos: this.getBoletos(),
+      financialAccounts: getStored<FinancialAccount[]>(STORAGE_KEYS.FINANCIAL_ACCOUNTS, INITIAL_FINANCIAL_ACCOUNTS),
+      pdvSales: this.getPDVSales(),
+      cashSessions: this.getCashRegisterSessions(),
+      paymentTransactions: this.getPaymentTransactions(),
+      settings: {
+        company: this.getCompanySettings(),
+        delivery: this.getDeliverySettings(),
+        boleto: this.getBoletoSettings(),
+        layout: this.getLayoutSettings(),
+        maintenance: this.getMaintenanceSettings(),
+        permissions: this.getPermissionsMatrix(),
+        gateways: this.getPaymentGateways(),
+        pdv: this.getPDVSettings(),
+        financial_settings: this.getFinancialSettings(),
+        financial_categories: getStored<FinancialCategory[]>(STORAGE_KEYS.FINANCIAL_CATEGORIES, INITIAL_FINANCIAL_CATEGORIES),
+        cost_centers: getStored<CostCenter[]>(STORAGE_KEYS.COST_CENTERS, INITIAL_COST_CENTERS),
+        bank_accounts: getStored<BankAccount[]>(STORAGE_KEYS.BANK_ACCOUNTS, INITIAL_BANK_ACCOUNTS),
+        financial_payment_methods: getStored<FinancialPaymentMethod[]>(STORAGE_KEYS.FINANCIAL_PAYMENT_METHODS, INITIAL_FINANCIAL_PAYMENT_METHODS),
+      },
+    };
+  },
+
+  async runControlledMigrationToPostgres(dryRun = true): Promise<any> {
+    const snapshot = this.collectLocalStorageSnapshot();
+    const res = await authFetch('/api/db/migrate-local-storage', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ snapshot, dryRun }),
+    });
+    return await res.json();
   },
   // Products
   getProducts(): Product[] {
@@ -268,6 +476,7 @@ export const StorageService = {
     const existingIds = new Set(list.map((item) => item.id));
     const missing = INITIAL_PRODUCTS.filter((initProd) => !existingIds.has(initProd.id));
     const merged = missing.length > 0 ? [...list, ...missing] : list;
+    const allowedPrices = this.canViewPrices();
 
     // Sanitiza cada produto garantindo que details, customTechniques, images e variants existam
     return merged.map((prod) => {
@@ -276,7 +485,7 @@ export const StorageService = {
           ? prod.details.customTechniques
           : ['Gravação a Laser', 'Silk Screen', 'Transfer DTF'];
 
-      return {
+      const baseSanitized: Product = {
         ...prod,
         details: {
           materials: 'Materiais de Alto Padrão',
@@ -292,6 +501,19 @@ export const StorageService = {
         price_tiers: Array.isArray(prod.price_tiers) ? prod.price_tiers : [],
         variants: Array.isArray(prod.variants) ? prod.variants : [],
       };
+
+      if (!allowedPrices) {
+        return {
+          ...baseSanitized,
+          base_price: 0,
+          promo_price: undefined,
+          cost_price: 0,
+          profit_margin: 0,
+          price_tiers: [],
+        };
+      }
+
+      return baseSanitized;
     });
   },
   saveProducts(products: Product[]): void {
@@ -368,6 +590,7 @@ export const StorageService = {
       list.push(subcategory);
     }
     this.saveSubcategories(list);
+    syncToPostgres('subcategories', 'POST', subcategory);
     return { success: true };
   },
   deleteSubcategory(id: string): { success: boolean; error?: string } {
@@ -386,8 +609,8 @@ export const StorageService = {
 
   // Quotes
   getQuotes(): Quote[] {
-    const q = getStored<Quote[]>(STORAGE_KEYS.QUOTES, INITIAL_QUOTES);
-    return Array.isArray(q) ? q : INITIAL_QUOTES;
+    const q = getStored<Quote[]>(STORAGE_KEYS.QUOTES, []);
+    return Array.isArray(q) ? q : [];
   },
   saveQuotes(quotes: Quote[]): void {
     setStored(STORAGE_KEYS.QUOTES, quotes);
@@ -411,8 +634,8 @@ export const StorageService = {
 
   // Orders
   getOrders(): Order[] {
-    const o = getStored<Order[]>(STORAGE_KEYS.ORDERS, INITIAL_ORDERS);
-    return Array.isArray(o) ? o : INITIAL_ORDERS;
+    const o = getStored<Order[]>(STORAGE_KEYS.ORDERS, []);
+    return Array.isArray(o) ? o : [];
   },
   saveOrders(orders: Order[]): void {
     setStored(STORAGE_KEYS.ORDERS, orders);
@@ -682,8 +905,8 @@ export const StorageService = {
 
   // Stock movements
   getStockMovements(): StockMovement[] {
-    const s = getStored<StockMovement[]>(STORAGE_KEYS.STOCK_MOVEMENTS, INITIAL_STOCK_MOVEMENTS);
-    return Array.isArray(s) ? s : INITIAL_STOCK_MOVEMENTS;
+    const s = getStored<StockMovement[]>(STORAGE_KEYS.STOCK_MOVEMENTS, []);
+    return Array.isArray(s) ? s : [];
   },
   recordStockMovement(params: {
     productId: string;
@@ -737,6 +960,7 @@ export const StorageService = {
     };
     movements.unshift(movement);
     setStored(STORAGE_KEYS.STOCK_MOVEMENTS, movements);
+    syncToPostgres('stock-movements', 'POST', movement);
   },
 
   // Company Settings
@@ -845,19 +1069,20 @@ export const StorageService = {
 
       // Save to dedicated key and company settings
       setStored(STORAGE_KEYS.MAINTENANCE_SETTINGS, finalSettings);
+      syncToPostgres('settings/maintenance', 'POST', { value: finalSettings });
 
       const company = this.getCompanySettings();
       company.maintenance = finalSettings;
       company.updatedAt = updatedTimestamp;
       setStored(STORAGE_KEYS.COMPANY_SETTINGS, company);
+      syncToPostgres('settings/company', 'POST', { value: company });
 
-      // Background sync to backend Express API server
+      // Background sync to backend Express API server (uses authenticated session token)
       if (typeof fetch !== 'undefined') {
-        fetch('/api/system/maintenance', {
+        authFetch('/api/system/maintenance', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-admin-role': user?.role || 'admin',
           },
           body: JSON.stringify(finalSettings),
         }).catch((err) => {
@@ -1396,6 +1621,7 @@ export const StorageService = {
 
     // Salva boletos atualizados
     this.saveBoletos([...boletosGerados, ...existingBoletos]);
+    boletosGerados.forEach((b) => syncToPostgres('boletos', 'POST', b));
 
     // Anexa boletos ao pedido
     order.boletos = boletosGerados;
@@ -1446,6 +1672,7 @@ export const StorageService = {
 
     boletos[index] = boleto;
     this.saveBoletos(boletos);
+    syncToPostgres('boletos', 'POST', boleto);
 
     // Baixa automática no Contas a Receber (se houver lançamento vinculado)
     if (boleto.financialAccountId) {
@@ -1460,6 +1687,7 @@ export const StorageService = {
           updatedAt: liquidadoEm,
         };
         setStored(STORAGE_KEYS.FINANCIAL_ACCOUNTS, allFinAccounts);
+        syncToPostgres('financial-accounts', 'POST', allFinAccounts[finIdx]);
         if (typeof window !== 'undefined') {
           setTimeout(() => {
             window.dispatchEvent(new CustomEvent('mb_financial_accounts_updated', { detail: allFinAccounts }));
@@ -1524,6 +1752,7 @@ export const StorageService = {
     boleto.updatedAt = new Date().toISOString();
     boletos[index] = boleto;
     this.saveBoletos(boletos);
+    syncToPostgres('boletos', 'POST', boleto);
 
     // Cancela no Contas a Receber se vinculado
     if (boleto.financialAccountId) {
@@ -1689,6 +1918,7 @@ export const StorageService = {
       }
       // Clean draft upon publish
       localStorage.removeItem(STORAGE_KEYS.LAYOUT_DRAFT);
+      syncToPostgres('settings/layout', 'POST', { value: settings });
 
       if (typeof window !== 'undefined') {
         setTimeout(() => {
@@ -1813,23 +2043,34 @@ export const StorageService = {
     this.saveLayoutSettings(layout);
   },
 
-  // Permissions Matrix
+  // Permissions Matrix (Memory-only synced from PostgreSQL)
   getPermissionsMatrix(): Record<UserRole, RolePermissions> {
-    const stored = getStored<Record<UserRole, RolePermissions>>(
-      STORAGE_KEYS.PERMISSIONS_MATRIX,
-      INITIAL_PERMISSIONS_MATRIX
-    );
-    // Ensure all roles and keys exist even if older version was stored
     const merged = { ...INITIAL_PERMISSIONS_MATRIX };
     for (const r of Object.keys(INITIAL_PERMISSIONS_MATRIX) as UserRole[]) {
-      if (stored && stored[r]) {
-        merged[r] = { ...INITIAL_PERMISSIONS_MATRIX[r], ...stored[r] };
+      if (memoryPermissionsMatrix && memoryPermissionsMatrix[r]) {
+        merged[r] = { ...INITIAL_PERMISSIONS_MATRIX[r], ...memoryPermissionsMatrix[r] };
       }
     }
     return merged;
   },
+  setPermissionsMatrixMemory(matrix: Partial<Record<UserRole, RolePermissions>>): void {
+    const next = { ...INITIAL_PERMISSIONS_MATRIX };
+    for (const r of Object.keys(INITIAL_PERMISSIONS_MATRIX) as UserRole[]) {
+      if (matrix && matrix[r]) {
+        next[r] = { ...INITIAL_PERMISSIONS_MATRIX[r], ...matrix[r] };
+      } else if (memoryPermissionsMatrix[r]) {
+        next[r] = { ...INITIAL_PERMISSIONS_MATRIX[r], ...memoryPermissionsMatrix[r] };
+      }
+    }
+    memoryPermissionsMatrix = next;
+    purgeLegacySensitiveBrowserStorage();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('mb_storage_updated'));
+    }
+  },
   savePermissionsMatrix(matrix: Record<UserRole, RolePermissions>): void {
-    setStored(STORAGE_KEYS.PERMISSIONS_MATRIX, matrix);
+    this.setPermissionsMatrixMemory(matrix);
+    syncToPostgres('settings/permissions', 'POST', { value: matrix });
   },
   getRolePermissions(role: UserRole): RolePermissions {
     const matrix = this.getPermissionsMatrix();
@@ -1837,23 +2078,24 @@ export const StorageService = {
   },
   hasUserPermission(user?: UserProfile | null, permission?: keyof RolePermissions): boolean {
     if (!user || !permission) return false;
-    // Usuário inativo não possui nenhuma permissão no sistema
     if (user.status === 'inativo') return false;
-    // Administrador possui acesso total e irrestrito
     if (user.role === 'admin') return true;
-    // Permissão individual concedida diretamente ao colaborador
     if (user.customPermissions && user.customPermissions[permission] !== undefined) {
       return Boolean(user.customPermissions[permission]);
     }
-    // Permissão padrão da função/cargo
     const rolePerms = this.getRolePermissions(user.role);
     return Boolean(rolePerms[permission]);
   },
 
-  // Auth / Users
+  // Auth / Users (Memory-only synced from PostgreSQL)
+  setUsersMemory(users: UserProfile[]): void {
+    memoryUsers = Array.isArray(users) ? users : [];
+    purgeLegacySensitiveBrowserStorage();
+  },
   getUsers(): UserProfile[] {
-    const u = getStored<UserProfile[]>(STORAGE_KEYS.USERS, INITIAL_USERS);
-    return Array.isArray(u) ? u : INITIAL_USERS;
+    if (memoryUsers.length > 0) return memoryUsers;
+    if (memoryCurrentUser.role !== 'visitante') return [memoryCurrentUser];
+    return [];
   },
   getEmployees(): UserProfile[] {
     return this.getUsers().filter((u) => u.role !== 'cliente' && u.role !== 'visitante');
@@ -1862,160 +2104,107 @@ export const StorageService = {
     return this.getUsers().filter((u) => u.role === 'cliente');
   },
   saveUser(user: UserProfile): void {
-    const users = this.getUsers();
+    const users = [...this.getUsers()];
     const idx = users.findIndex((u) => u.id === user.id);
+    const { password: rawPassword, ...cleanUser } = user as UserProfile & { password?: string };
     if (idx >= 0) {
-      users[idx] = user;
+      users[idx] = cleanUser;
     } else {
-      users.push(user);
+      users.push(cleanUser);
     }
-    setStored(STORAGE_KEYS.USERS, users);
-    
-    // If saving the currently logged in user, update current user too
-    const current = this.getCurrentUser();
-    if (current && current.id === user.id) {
-      this.setCurrentUser(user);
+    memoryUsers = users;
+    purgeLegacySensitiveBrowserStorage();
+
+    if (memoryCurrentUser && memoryCurrentUser.id === user.id) {
+      memoryCurrentUser = cleanUser;
+    }
+
+    syncToPostgres('users', 'POST', rawPassword ? { ...cleanUser, password: rawPassword } : cleanUser);
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('mb_storage_updated'));
     }
   },
   deleteUser(userId: string): void {
-    const users = this.getUsers().filter((u) => u.id !== userId);
-    setStored(STORAGE_KEYS.USERS, users);
+    memoryUsers = this.getUsers().filter((u) => u.id !== userId);
+    purgeLegacySensitiveBrowserStorage();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('mb_storage_updated'));
+    }
   },
   toggleUserStatus(userId: string): UserProfile | undefined {
-    const users = this.getUsers();
+    const users = [...this.getUsers()];
     const target = users.find((u) => u.id === userId);
     if (target) {
       target.status = target.status === 'inativo' ? 'ativo' : 'inativo';
-      setStored(STORAGE_KEYS.USERS, users);
+      memoryUsers = users;
+      syncToPostgres('users', 'POST', target);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('mb_storage_updated'));
+      }
       return target;
     }
     return undefined;
   },
   getCurrentUser(): UserProfile {
-    return getStored<UserProfile>(STORAGE_KEYS.CURRENT_USER, INITIAL_USERS[0]); // Default admin for smooth testing
+    return memoryCurrentUser || VISITOR_PROFILE;
   },
-  setCurrentUser(user: UserProfile): void {
-    setStored(STORAGE_KEYS.CURRENT_USER, user);
+  setCurrentUser(user: UserProfile | null): void {
+    memoryCurrentUser = user ? { ...user } : { ...VISITOR_PROFILE };
+    purgeLegacySensitiveBrowserStorage();
+    if (memoryCurrentUser.role === 'visitante') {
+      memoryUsers = [];
+    } else if (memoryUsers.length === 0) {
+      memoryUsers = [memoryCurrentUser];
+    } else {
+      const idx = memoryUsers.findIndex((u) => u.id === memoryCurrentUser.id);
+      if (idx >= 0) memoryUsers[idx] = memoryCurrentUser;
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('mb_storage_updated'));
+    }
   },
-  switchRole(role: UserRole): UserProfile {
-    const users = this.getUsers();
-    let target = users.find((u) => u.role === role);
-    if (!target) {
-      target = {
-        id: `user_${role}`,
-        name: `Usuário ${role.toUpperCase()}`,
-        email: `${role}@mbpersonaliza.com.br`,
-        phone: '(11) 98000-0000',
-        company: 'MB Personaliza',
-        role,
-        department: role === 'admin' ? 'Diretoria' : role === 'gerente' ? 'Gerência' : role === 'vendedor' ? 'Vendas' : 'Almoxarifado',
-        status: 'ativo',
-        createdAt: new Date().toISOString(),
-      };
+  async logout(): Promise<void> {
+    await logoutSession();
+    memoryCurrentUser = { ...VISITOR_PROFILE };
+    memoryUsers = [];
+    memoryPermissionsMatrix = { ...INITIAL_PERMISSIONS_MATRIX };
+    purgeLegacySensitiveBrowserStorage();
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.removeItem(STORAGE_KEYS.QUOTES);
+        localStorage.removeItem(STORAGE_KEYS.ORDERS);
+        localStorage.removeItem(STORAGE_KEYS.BOLETOS);
+        localStorage.removeItem(STORAGE_KEYS.FINANCIAL_ACCOUNTS);
+        localStorage.removeItem(STORAGE_KEYS.PDV_SALES);
+        localStorage.removeItem(STORAGE_KEYS.CASH_REGISTER_SESSIONS);
+        localStorage.removeItem(STORAGE_KEYS.PAYMENT_TRANSACTIONS);
+        localStorage.removeItem(STORAGE_KEYS.COUPONS);
+        localStorage.removeItem(STORAGE_KEYS.STOCK_MOVEMENTS);
+      } catch {
+        // ignore
+      }
     }
-    this.setCurrentUser(target);
-    return target;
-  },
-
-  // Specialized Login & Register
-  loginEmployee(email: string, password?: string): { success: boolean; user?: UserProfile; message?: string } {
-    const users = this.getUsers();
-    const cleanEmail = email.trim().toLowerCase();
-    const found = users.find(
-      (u) => u.email.toLowerCase() === cleanEmail && u.role !== 'cliente'
-    );
-
-    if (!found) {
-      return {
-        success: false,
-        message: 'E-mail corporativo não encontrado ou usuário não é colaborador da empresa.',
-      };
+    await this.initPostgresSync();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('mb_storage_updated'));
     }
-
-    if (found.status === 'inativo') {
-      return {
-        success: false,
-        message: 'Este acesso corporativo está desativado. Entre em contato com a Diretoria.',
-      };
-    }
-
-    // In demo environment, if password provided check or accept
-    if (password && found.password && found.password !== password) {
-      return {
-        success: false,
-        message: 'Senha incorreta para esta conta corporativa.',
-      };
-    }
-
-    found.lastLogin = new Date().toISOString();
-    this.saveUser(found);
-    this.setCurrentUser(found);
-    return { success: true, user: found };
-  },
-
-  loginCustomer(email: string, _password?: string): { success: boolean; user?: UserProfile; message?: string } {
-    const users = this.getUsers();
-    const cleanEmail = email.trim().toLowerCase();
-    let found = users.find((u) => u.email.toLowerCase() === cleanEmail);
-
-    if (!found) {
-      // Auto register demo customer if not found
-      const newCustomer: UserProfile = {
-        id: `cust-${Date.now()}`,
-        name: cleanEmail.split('@')[0].toUpperCase(),
-        email: cleanEmail,
-        phone: '(11) 98888-7777',
-        role: 'cliente',
-        status: 'ativo',
-        createdAt: new Date().toISOString(),
-        lastLogin: new Date().toISOString(),
-      };
-      this.saveUser(newCustomer);
-      this.setCurrentUser(newCustomer);
-      return { success: true, user: newCustomer };
-    }
-
-    if (found.status === 'inativo') {
-      return {
-        success: false,
-        message: 'Esta conta de cliente está suspensa temporariamente.',
-      };
-    }
-
-    found.lastLogin = new Date().toISOString();
-    this.saveUser(found);
-    this.setCurrentUser(found);
-    return { success: true, user: found };
-  },
-
-  // Auth / Login fallback helper
-  login(email: string, password?: string): UserProfile | null {
-    const users = this.getUsers();
-    const found = users.find((u) => u.email.toLowerCase() === email.trim().toLowerCase());
-    if (found) {
-      found.lastLogin = new Date().toISOString();
-      this.saveUser(found);
-      this.setCurrentUser(found);
-      return found;
-    }
-    return null;
   },
 
   // ==========================================
   // USER FAVORITES (WISHLIST)
   // ==========================================
   getUserFavorites(userId?: string): string[] {
-    const uid = userId || this.getCurrentUser()?.id;
-    if (!uid) return [];
+    const current = this.getCurrentUser();
+    const uid = userId || current?.id;
+    if (!uid || uid === 'visitante' || (!userId && current?.role === 'visitante')) return [];
 
-    // 1. Try from user profile object in USERS
     const users = this.getUsers();
-    const user = users.find((u) => u.id === uid);
+    const user = users.find((u) => u.id === uid) || (current.id === uid ? current : undefined);
     if (user?.favoriteProductIds && Array.isArray(user.favoriteProductIds)) {
       return user.favoriteProductIds;
     }
 
-    // 2. Fallback to FAVORITES storage map
     const map = getStored<Record<string, string[]>>(STORAGE_KEYS.FAVORITES, {});
     return Array.isArray(map[uid]) ? map[uid] : [];
   },
@@ -2027,8 +2216,9 @@ export const StorageService = {
   },
 
   toggleProductFavorite(productId: string, userId?: string): { isFavorite: boolean; favorites: string[] } {
-    const uid = userId || this.getCurrentUser()?.id;
-    if (!uid) {
+    const current = this.getCurrentUser();
+    const uid = userId || current?.id;
+    if (!uid || uid === 'visitante' || (!userId && current?.role === 'visitante')) {
       return { isFavorite: false, favorites: [] };
     }
 
@@ -2044,28 +2234,26 @@ export const StorageService = {
       isFavorite = true;
     }
 
-    // Update user in USERS list
-    const users = this.getUsers();
+    if (current && current.id === uid) {
+      memoryCurrentUser = { ...current, favoriteProductIds: updatedFavorites };
+    }
+    const users = [...this.getUsers()];
     const userIdx = users.findIndex((u) => u.id === uid);
     if (userIdx >= 0) {
-      users[userIdx].favoriteProductIds = updatedFavorites;
-      setStored(STORAGE_KEYS.USERS, users);
-
-      const current = this.getCurrentUser();
-      if (current && current.id === uid) {
-        current.favoriteProductIds = updatedFavorites;
-        setStored(STORAGE_KEYS.CURRENT_USER, current);
-      }
-
-      syncToPostgres('users', 'POST', users[userIdx]);
+      users[userIdx] = { ...users[userIdx], favoriteProductIds: updatedFavorites };
+      memoryUsers = users;
     }
 
-    // Persist in favorites storage map for guaranteed cross-session durability
     const map = getStored<Record<string, string[]>>(STORAGE_KEYS.FAVORITES, {});
     map[uid] = updatedFavorites;
     setStored(STORAGE_KEYS.FAVORITES, map);
 
-    // Notify all tabs and components
+    if (current && current.id === uid) {
+      void updateMyProfile({ favoriteProductIds: updatedFavorites }).catch((err) => {
+        console.warn('[Favorites] Falha ao sincronizar favoritos:', err);
+      });
+    }
+
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
         new CustomEvent('mb_favorites_updated', {
@@ -2160,7 +2348,7 @@ export const StorageService = {
 
   // Pricing Helpers
   calculateUnitPrice(product: Product, quantity: number): number {
-    if (!product.show_price) return 0;
+    if (!this.canViewPrices() || !product.show_price) return 0;
     if (product.price_tiers && product.price_tiers.length > 0) {
       // Find tier that matches
       const sortedTiers = [...product.price_tiers].sort((a, b) => b.min_qty - a.min_qty);
@@ -2183,6 +2371,7 @@ export const StorageService = {
   },
   savePaymentGateways(gateways: PaymentGatewayConfig[]): void {
     setStored(STORAGE_KEYS.PAYMENT_GATEWAYS, gateways);
+    syncToPostgres('settings/gateways', 'POST', { value: gateways });
   },
   getPaymentGateway(provider: PaymentGatewayProvider): PaymentGatewayConfig | undefined {
     return this.getPaymentGateways().find((gw) => gw.provider === provider);
@@ -2212,6 +2401,7 @@ export const StorageService = {
     const txs = this.getPaymentTransactions();
     txs.unshift(transaction);
     this.savePaymentTransactions(txs);
+    syncToPostgres('payment-transactions', 'POST', transaction);
     return transaction;
   },
   updatePaymentTransactionStatus(
@@ -2233,6 +2423,7 @@ export const StorageService = {
         operator,
       });
       this.savePaymentTransactions(txs);
+      syncToPostgres('payment-transactions', 'POST', tx);
     }
   },
   refundPaymentTransaction(
@@ -2258,6 +2449,7 @@ export const StorageService = {
       operator: operatorName,
     });
     this.savePaymentTransactions(txs);
+    syncToPostgres('payment-transactions', 'POST', tx);
 
     // Se a transação for de uma venda PDV, atualiza a venda também
     if (tx.origin === 'pdv') {
@@ -2288,6 +2480,7 @@ export const StorageService = {
     const sales = this.getPDVSales();
     sales.unshift(sale);
     this.savePDVSales(sales);
+    syncToPostgres('pdv-sales', 'POST', sale);
 
     // 1. Baixa imediata de estoque de cada item vendido no PDV
     sale.items.forEach((item) => {
@@ -2414,6 +2607,7 @@ export const StorageService = {
     sale.cancelledAt = new Date().toISOString();
     sale.cancelledBy = operatorName;
     this.savePDVSales(sales);
+    syncToPostgres('pdv-sales', 'POST', sale);
 
     // Devolve os itens ao estoque
     sale.items.forEach((item) => {
@@ -2476,6 +2670,7 @@ export const StorageService = {
         allSessions.unshift(session);
       }
       this.saveCashRegisterSessions(allSessions);
+      syncToPostgres('cash-sessions', 'POST', session);
     }
   },
   openCashRegister(
@@ -2600,6 +2795,7 @@ export const StorageService = {
   },
   savePDVSettings(settings: PDVSettings): void {
     setStored(STORAGE_KEYS.PDV_SETTINGS, settings);
+    syncToPostgres('settings/pdv', 'POST', { value: settings });
   },
 
   // ============================================================================
@@ -2687,6 +2883,7 @@ export const StorageService = {
     };
 
     setStored(STORAGE_KEYS.FINANCIAL_SETTINGS, updated);
+    syncToPostgres('settings/financial_settings', 'POST', { value: updated });
 
     this.addFinancialAuditEntry({
       userId: currentUser.id,
@@ -3155,6 +3352,7 @@ export const StorageService = {
 
     const updatedList = [newAccount, ...allAccounts];
     setStored(STORAGE_KEYS.FINANCIAL_ACCOUNTS, updatedList);
+    syncToPostgres('financial-accounts', 'POST', newAccount);
 
     this.addFinancialAuditEntry({
       userId: currentUser.id,
@@ -3216,6 +3414,7 @@ export const StorageService = {
 
     allAccounts[idx] = updatedAccount;
     setStored(STORAGE_KEYS.FINANCIAL_ACCOUNTS, allAccounts);
+    syncToPostgres('financial-accounts', 'POST', updatedAccount);
 
     this.addFinancialAuditEntry({
       userId: currentUser.id,
@@ -3534,8 +3733,7 @@ export const StorageService = {
     };
 
     targetUser.customPermissions = updatedPerms;
-    users[targetIdx] = targetUser;
-    setStored(STORAGE_KEYS.USERS, users);
+    this.saveUser(targetUser);
 
     // Se o usuário alterado for o usuário logado atualmente, atualiza a sessão
     const current = this.getCurrentUser();
@@ -3590,8 +3788,7 @@ export const StorageService = {
     };
 
     targetUser.customPermissions = updatedPerms;
-    users[targetIdx] = targetUser;
-    setStored(STORAGE_KEYS.USERS, users);
+    this.saveUser(targetUser);
 
     // Se o usuário alterado for o usuário logado atualmente, atualiza a sessão
     const current = this.getCurrentUser();
@@ -4233,6 +4430,7 @@ export const StorageService = {
     }
 
     this.saveCoupons(coupons);
+    syncToPostgres('coupons', 'POST', savedCoupon);
 
     this.logCouponAudit({
       couponId: savedCoupon.id,
@@ -4301,6 +4499,7 @@ export const StorageService = {
     coupon.status = newStatus;
     coupon.updatedAt = new Date().toISOString();
     this.saveCoupons(coupons);
+    syncToPostgres('coupons', 'POST', coupon);
 
     this.logCouponAudit({
       couponId: coupon.id,
@@ -4614,22 +4813,23 @@ export const StorageService = {
     };
   },
 
-  // Reset to initial demo data
+  // Reset local cache without any automatic admin login
   resetAllData(): void {
     localStorage.clear();
+    memoryCurrentUser = { ...VISITOR_PROFILE };
+    memoryUsers = [];
+    memoryPermissionsMatrix = { ...INITIAL_PERMISSIONS_MATRIX };
+    memoryPriceVisibilityMode = 'registered_only';
     setStored(STORAGE_KEYS.PRODUCTS, INITIAL_PRODUCTS);
     setStored(STORAGE_KEYS.CATEGORIES, INITIAL_CATEGORIES);
     setStored(STORAGE_KEYS.SUBCATEGORIES, INITIAL_SUBCATEGORIES);
-    setStored(STORAGE_KEYS.QUOTES, INITIAL_QUOTES);
-    setStored(STORAGE_KEYS.ORDERS, INITIAL_ORDERS);
-    setStored(STORAGE_KEYS.STOCK_MOVEMENTS, INITIAL_STOCK_MOVEMENTS);
-    setStored(STORAGE_KEYS.USERS, INITIAL_USERS);
-    setStored(STORAGE_KEYS.CURRENT_USER, INITIAL_USERS[0]);
+    setStored(STORAGE_KEYS.QUOTES, []);
+    setStored(STORAGE_KEYS.ORDERS, []);
+    setStored(STORAGE_KEYS.STOCK_MOVEMENTS, []);
     setStored(STORAGE_KEYS.CART, []);
     setStored(STORAGE_KEYS.COMPANY_SETTINGS, INITIAL_COMPANY_SETTINGS);
     setStored(STORAGE_KEYS.LAYOUT_SETTINGS, INITIAL_LAYOUT_SETTINGS);
     setStored(STORAGE_KEYS.DELIVERY_SETTINGS, INITIAL_DELIVERY_SETTINGS);
-    setStored(STORAGE_KEYS.PERMISSIONS_MATRIX, INITIAL_PERMISSIONS_MATRIX);
     setStored(STORAGE_KEYS.PAYMENT_GATEWAYS, INITIAL_PAYMENT_GATEWAYS);
     setStored(STORAGE_KEYS.MAINTENANCE_SETTINGS, INITIAL_MAINTENANCE_SETTINGS);
     setStored(STORAGE_KEYS.COUPONS, INITIAL_COUPONS);

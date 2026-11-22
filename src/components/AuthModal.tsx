@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { UserProfile, UserRole } from '../types';
+import React, { useEffect, useState } from 'react';
+import { UserProfile } from '../types';
 import { StorageService } from '../services/storage';
+import { loginWithCredentials, registerCustomer } from '../services/authClient';
 import { Logo } from './Logo';
 import {
   X,
@@ -13,9 +14,10 @@ import {
   ShieldCheck,
   Briefcase,
   ShoppingBag,
-  Sparkles,
   AlertCircle,
   CheckCircle2,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 interface AuthModalProps {
@@ -23,6 +25,7 @@ interface AuthModalProps {
   onClose: () => void;
   onLoginSuccess: (user: UserProfile) => void;
   initialPortal?: 'customer' | 'employee';
+  initialCustomerMode?: 'login' | 'signup';
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
@@ -30,126 +33,185 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onClose,
   onLoginSuccess,
   initialPortal = 'customer',
+  initialCustomerMode = 'login',
 }) => {
   const [portalType, setPortalType] = useState<'customer' | 'employee'>(initialPortal);
-  const [customerMode, setCustomerMode] = useState<'login' | 'signup'>('login');
+  const [customerMode, setCustomerMode] = useState<'login' | 'signup'>(initialCustomerMode);
 
   // Customer form fields
   const [custEmail, setCustEmail] = useState('');
   const [custPassword, setCustPassword] = useState('');
+  const [custConfirmPassword, setCustConfirmPassword] = useState('');
   const [custName, setCustName] = useState('');
   const [custPhone, setCustPhone] = useState('');
   const [custCompany, setCustCompany] = useState('');
   const [custCpfCnpj, setCustCpfCnpj] = useState('');
 
   // Employee form fields
-  const [empEmail, setEmpEmail] = useState('admin@mbpersonaliza.com.br');
-  const [empPassword, setEmpPassword] = useState('123');
+  const [empEmail, setEmpEmail] = useState('');
+  const [empPassword, setEmpPassword] = useState('');
 
+  const [showCustPassword, setShowCustPassword] = useState(false);
+  const [showEmpPassword, setShowEmpPassword] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
+  useEffect(() => {
+    if (isOpen) {
+      setPortalType(initialPortal);
+      setCustomerMode(initialCustomerMode);
+      setErrorMessage('');
+      setSuccessMessage('');
+      setCustPassword('');
+      setCustConfirmPassword('');
+      setEmpPassword('');
+    }
+  }, [isOpen, initialPortal, initialCustomerMode]);
+
   if (!isOpen) return null;
 
+  const hydrateAfterAuth = async (result: {
+    user?: UserProfile | null;
+    rolePermissions?: any;
+    priceVisibility?: any;
+  }) => {
+    if (!result.user) return;
+    StorageService.setCurrentUser(result.user);
+    if (result.rolePermissions) {
+      StorageService.setPermissionsMatrixMemory(result.rolePermissions);
+    }
+    if (result.priceVisibility) {
+      StorageService.setPriceVisibilityModeMemory(result.priceVisibility);
+    }
+    await StorageService.initPostgresSync();
+    onLoginSuccess(result.user);
+    onClose();
+  };
+
   // Handle customer login or registration
-  const handleCustomerSubmit = (e: React.FormEvent) => {
+  const handleCustomerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessMessage('');
 
     if (customerMode === 'login') {
-      const res = StorageService.loginCustomer(custEmail, custPassword);
-      if (res.success && res.user) {
-        setSuccessMessage(`Bem-vindo(a), ${res.user.name}!`);
-        setTimeout(() => {
-          onLoginSuccess(res.user!);
-          onClose();
-        }, 500);
-      } else {
-        setErrorMessage(res.message || 'Erro ao efetuar login de cliente.');
+      if (!custEmail.trim() || !custPassword) {
+        setErrorMessage('Informe seu e-mail cadastrado e senha.');
+        return;
       }
-    } else {
-      // Register new customer
-      const newCustomer: UserProfile = {
-        id: `cust-${Date.now()}`,
-        name: custName.trim() || 'Cliente Corporativo',
+
+      setIsSubmitting(true);
+      try {
+        const res = await loginWithCredentials({
+          email: custEmail.trim(),
+          password: custPassword,
+          portal: 'customer',
+        });
+
+        if (res.success && res.user) {
+          setSuccessMessage(`Bem-vindo(a), ${res.user.name}!`);
+          await hydrateAfterAuth(res);
+        } else {
+          setErrorMessage(res.error || res.message || 'E-mail ou senha inválidos.');
+        }
+      } catch (err: any) {
+        setErrorMessage(err?.message || 'Erro de comunicação ao efetuar login.');
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
+    // Customer registration validation
+    if (!custName.trim()) {
+      setErrorMessage('Informe seu nome completo ou razão social.');
+      return;
+    }
+    if (!custEmail.trim()) {
+      setErrorMessage('Informe um endereço de e-mail válido.');
+      return;
+    }
+    if (!custPhone.trim() || custPhone.replace(/\D/g, '').length < 8) {
+      setErrorMessage('Informe um telefone/WhatsApp válido.');
+      return;
+    }
+    if (custPassword.length < 6) {
+      setErrorMessage('A senha deve conter pelo menos 6 caracteres.');
+      return;
+    }
+    if (custPassword !== custConfirmPassword) {
+      setErrorMessage('A confirmação de senha não confere.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const res = await registerCustomer({
+        name: custName.trim(),
         email: custEmail.trim().toLowerCase(),
-        phone: custPhone.trim() || '(11) 98888-7777',
-        company: custCompany.trim(),
-        cpfCnpj: custCpfCnpj.trim(),
-        role: 'cliente',
-        status: 'ativo',
-        createdAt: new Date().toISOString(),
-        lastLogin: new Date().toISOString(),
-      };
-      StorageService.saveUser(newCustomer);
-      StorageService.setCurrentUser(newCustomer);
-      setSuccessMessage('Conta de cliente criada com sucesso!');
-      setTimeout(() => {
-        onLoginSuccess(newCustomer);
-        onClose();
-      }, 500);
+        phone: custPhone.trim(),
+        cpfCnpj: custCpfCnpj.trim() || undefined,
+        company: custCompany.trim() || undefined,
+        password: custPassword,
+        confirmPassword: custConfirmPassword,
+      });
+
+      if (res.success && res.user) {
+        setSuccessMessage('Conta criada com sucesso! Entrando...');
+        await hydrateAfterAuth(res);
+      } else {
+        setErrorMessage(
+          res.error || res.message || 'Não foi possível concluir seu cadastro. Verifique os dados.'
+        );
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Erro de comunicação ao concluir cadastro.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   // Handle employee login
-  const handleEmployeeSubmit = (e: React.FormEvent) => {
+  const handleEmployeeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessMessage('');
 
-    const res = StorageService.loginEmployee(empEmail, empPassword);
-    if (res.success && res.user) {
-      setSuccessMessage(`Acesso corporativo validado como ${res.user.role.toUpperCase()}!`);
-      setTimeout(() => {
-        onLoginSuccess(res.user!);
-        onClose();
-      }, 500);
-    } else {
-      setErrorMessage(res.message || 'Credenciais corporativas inválidas.');
+    if (!empEmail.trim() || !empPassword) {
+      setErrorMessage('Informe seu e-mail corporativo e senha.');
+      return;
     }
-  };
 
-  // Quick Switch for testing roles
-  const handleQuickEmployeeLogin = (role: UserRole) => {
-    const user = StorageService.switchRole(role);
-    onLoginSuccess(user);
-    onClose();
-  };
+    setIsSubmitting(true);
+    try {
+      const res = await loginWithCredentials({
+        email: empEmail.trim(),
+        password: empPassword,
+        portal: 'staff',
+      });
 
-  const handleQuickCustomerDemo = () => {
-    const res = StorageService.loginCustomer('juliana.mendes@techsolutions.com.br');
-    if (res.user) {
-      onLoginSuccess(res.user);
-      onClose();
+      if (res.success && res.user) {
+        setSuccessMessage(`Acesso corporativo validado como ${res.user.role.toUpperCase()}!`);
+        await hydrateAfterAuth(res);
+      } else {
+        setErrorMessage(res.error || res.message || 'Credenciais corporativas inválidas.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Erro de comunicação ao validar acesso corporativo.');
+    } finally {
+      setIsSubmitting(false);
     }
-  };
-
-  const handleGoogleLogin = () => {
-    const googleUser: UserProfile = {
-      id: 'usr-google-demo',
-      name: 'Camila Rodrigues (Google)',
-      email: 'camila.rodrigues@empresa.com.br',
-      phone: '(11) 97777-6666',
-      company: 'Tech Inovações Ltda',
-      cpfCnpj: '45.123.890/0001-55',
-      role: 'cliente',
-      status: 'ativo',
-      createdAt: new Date().toISOString(),
-      lastLogin: new Date().toISOString(),
-    };
-    StorageService.saveUser(googleUser);
-    StorageService.setCurrentUser(googleUser);
-    onLoginSuccess(googleUser);
-    onClose();
   };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl border border-slate-200 max-w-lg w-full p-6 sm:p-8 space-y-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-3xl border border-slate-200 max-w-lg w-full p-6 sm:p-8 space-y-5 shadow-2xl relative max-h-[90vh] overflow-y-auto">
         <button
+          type="button"
           onClick={onClose}
           className="absolute top-5 right-5 p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+          aria-label="Fechar janela de autenticação"
         >
           <X className="w-5 h-5" />
         </button>
@@ -160,10 +222,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <Logo size="md" />
           </div>
           <h3 className="font-heading text-xl font-extrabold uppercase text-slate-900">
-            Acesso ao Sistema
+            {portalType === 'customer'
+              ? customerMode === 'login'
+                ? 'Entrar na Sua Conta'
+                : 'Cadastre-se na Loja'
+              : 'Acesso Corporativo'}
           </h3>
           <p className="text-xs text-slate-500">
-            Selecione seu perfil de acesso para continuar
+            {portalType === 'customer'
+              ? customerMode === 'login'
+                ? 'Acesse sua conta para consultar preços, acompanhar pedidos e orçamentos'
+                : 'Crie seu cadastro para visualizar todos os preços e solicitar pedidos'
+              : 'Portal exclusivo para colaboradores e administradores da MB Personaliza'}
           </p>
         </div>
 
@@ -221,64 +291,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         {/* TAB 1: CUSTOMER LOGIN & REGISTER */}
         {portalType === 'customer' && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-              <span className="text-xs font-bold text-slate-700">
-                {customerMode === 'login' ? 'Acessar com E-mail' : 'Cadastro de Novo Cliente'}
-              </span>
-              <button
-                type="button"
-                onClick={() => setCustomerMode(customerMode === 'login' ? 'signup' : 'login')}
-                className="text-xs font-bold text-[#E6007E] hover:underline"
-              >
-                {customerMode === 'login' ? 'Criar Conta Grátis' : 'Já possuo conta'}
-              </button>
-            </div>
-
-            {/* Google One-Click mockup for customer */}
-            <button
-              onClick={handleGoogleLogin}
-              type="button"
-              className="w-full py-2.5 px-4 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-xs"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24">
-                <path
-                  fill="#4285F4"
-                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                />
-                <path
-                  fill="#EA4335"
-                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                />
-              </svg>
-              <span>Entrar com Conta Google</span>
-            </button>
-
-            <div className="flex items-center gap-3">
-              <div className="flex-1 h-px bg-slate-200" />
-              <span className="text-[10px] text-slate-400 uppercase font-semibold">ou com formulário</span>
-              <div className="flex-1 h-px bg-slate-200" />
-            </div>
-
             <form onSubmit={handleCustomerSubmit} className="space-y-3.5">
               {customerMode === 'signup' && (
                 <>
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Nome Completo / Contato</label>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Nome Completo ou Razão Social *
+                    </label>
                     <div className="relative">
                       <input
                         type="text"
                         required
                         value={custName}
                         onChange={(e) => setCustName(e.target.value)}
-                        placeholder="Ex: Juliana Mendes"
+                        placeholder="Ex: Juliana Mendes ou Empresa Ltda"
                         className="w-full pl-9 pr-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:border-[#00AEEF]"
                       />
                       <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
@@ -287,50 +313,56 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">Empresa / Razão Social</label>
-                      <div className="relative">
-                        <input
-                          type="text"
-                          value={custCompany}
-                          onChange={(e) => setCustCompany(e.target.value)}
-                          placeholder="TechSolutions Ltda"
-                          className="w-full pl-9 pr-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:border-[#00AEEF]"
-                        />
-                        <Building className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">CNPJ / CPF</label>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        CPF ou CNPJ
+                      </label>
                       <input
                         type="text"
                         value={custCpfCnpj}
                         onChange={(e) => setCustCpfCnpj(e.target.value)}
-                        placeholder="00.000.000/0001-00"
+                        placeholder="000.000.000-00 ou CNPJ"
                         className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:border-[#00AEEF]"
                       />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Telefone / WhatsApp *
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="tel"
+                          required
+                          value={custPhone}
+                          onChange={(e) => setCustPhone(e.target.value)}
+                          placeholder="(11) 99888-7766"
+                          className="w-full pl-9 pr-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:border-[#00AEEF]"
+                        />
+                        <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                      </div>
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Telefone / WhatsApp</label>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Empresa / Nome Fantasia (Opcional)
+                    </label>
                     <div className="relative">
                       <input
-                        type="tel"
-                        required
-                        value={custPhone}
-                        onChange={(e) => setCustPhone(e.target.value)}
-                        placeholder="(11) 99888-7766"
+                        type="text"
+                        value={custCompany}
+                        onChange={(e) => setCustCompany(e.target.value)}
+                        placeholder="Ex: TechSolutions Brasil"
                         className="w-full pl-9 pr-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:border-[#00AEEF]"
                       />
-                      <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                      <Building className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                     </div>
                   </div>
                 </>
               )}
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">E-mail de Acesso</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">E-mail *</label>
                 <div className="relative">
                   <input
                     type="email"
@@ -345,41 +377,77 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Senha</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Senha *</label>
                 <div className="relative">
                   <input
-                    type="password"
+                    type={showCustPassword ? 'text' : 'password'}
                     required
+                    minLength={customerMode === 'signup' ? 6 : undefined}
                     value={custPassword}
                     onChange={(e) => setCustPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full pl-9 pr-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:border-[#00AEEF]"
+                    placeholder={customerMode === 'signup' ? 'Mínimo 6 caracteres' : '••••••••'}
+                    className="w-full pl-9 pr-9 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:border-[#00AEEF]"
                   />
                   <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <button
+                    type="button"
+                    onClick={() => setShowCustPassword((v) => !v)}
+                    className="absolute right-2.5 top-2 p-0.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    {showCustPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
 
+              {customerMode === 'signup' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Confirmação de Senha *
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showCustPassword ? 'text' : 'password'}
+                      required
+                      minLength={6}
+                      value={custConfirmPassword}
+                      onChange={(e) => setCustConfirmPassword(e.target.value)}
+                      placeholder="Repita sua senha"
+                      className="w-full pl-9 pr-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:border-[#00AEEF]"
+                    />
+                    <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  </div>
+                </div>
+              )}
+
               <button
                 type="submit"
-                className="w-full py-3 bg-[#E6007E] hover:bg-[#c9006e] text-white font-extrabold text-xs rounded-xl shadow-md transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                disabled={isSubmitting}
+                className="w-full py-3 bg-[#E6007E] hover:bg-[#c9006e] text-white font-extrabold text-xs uppercase rounded-xl shadow-md transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
               >
-                <span>{customerMode === 'login' ? 'Entrar na Minha Conta' : 'Concluir Cadastro'}</span>
+                <span>
+                  {isSubmitting
+                    ? 'Processando...'
+                    : customerMode === 'login'
+                    ? 'ENTRAR'
+                    : 'CONCLUIR CADASTRO'}
+                </span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
 
-            {/* Quick Demo Customer Button */}
-            <div className="p-3 bg-pink-50/60 rounded-xl border border-pink-100 flex items-center justify-between">
-              <div>
-                <p className="text-[11px] font-bold text-slate-800">Conta Demo: Juliana Mendes</p>
-                <p className="text-[10px] text-slate-500">TechSolutions Brasil Ltda (Histórico e Orçamentos)</p>
-              </div>
+            <div className="pt-3 border-t border-slate-100 text-center">
               <button
                 type="button"
-                onClick={handleQuickCustomerDemo}
-                className="px-3 py-1.5 bg-white hover:bg-pink-100 text-[#E6007E] border border-pink-200 text-xs font-extrabold rounded-lg shadow-xs transition-colors cursor-pointer"
+                onClick={() => {
+                  setCustomerMode(customerMode === 'login' ? 'signup' : 'login');
+                  setErrorMessage('');
+                  setSuccessMessage('');
+                }}
+                className="text-xs font-extrabold text-[#E6007E] hover:underline cursor-pointer uppercase tracking-wide"
               >
-                Acessar Demo
+                {customerMode === 'login'
+                  ? 'NÃO TEM UMA CONTA? CADASTRE-SE'
+                  : 'Já possui uma conta? Entrar'}
               </button>
             </div>
           </div>
@@ -393,21 +461,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <ShieldCheck className="w-6 h-6 text-[#FFDD00]" />
               </div>
               <div>
-                <p className="text-xs font-bold text-white uppercase tracking-wider">Acesso Corporativo MB Personaliza</p>
-                <p className="text-[11px] text-slate-400">Área exclusiva para diretoria, gerência, vendas e estoque</p>
+                <p className="text-xs font-bold text-white uppercase tracking-wider">
+                  Acesso Corporativo MB Personaliza
+                </p>
+                <p className="text-[11px] text-slate-400">
+                  Área exclusiva para diretoria, gerência, vendas e estoque
+                </p>
               </div>
             </div>
 
             <form onSubmit={handleEmployeeSubmit} className="space-y-3.5">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">E-mail Corporativo</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  E-mail Corporativo
+                </label>
                 <div className="relative">
                   <input
                     type="email"
                     required
                     value={empEmail}
                     onChange={(e) => setEmpEmail(e.target.value)}
-                    placeholder="admin@mbpersonaliza.com.br"
+                    placeholder="seu.email@mbpersonaliza.com.br"
                     className="w-full pl-9 pr-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:border-slate-900"
                   />
                   <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
@@ -415,76 +489,44 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Senha Corporativa</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Senha Corporativa
+                </label>
                 <div className="relative">
                   <input
-                    type="password"
+                    type={showEmpPassword ? 'text' : 'password'}
                     required
                     value={empPassword}
                     onChange={(e) => setEmpPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full pl-9 pr-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:border-slate-900"
+                    className="w-full pl-9 pr-9 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:border-slate-900"
                   />
                   <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <button
+                    type="button"
+                    onClick={() => setShowEmpPassword((v) => !v)}
+                    className="absolute right-2.5 top-2 p-0.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    {showEmpPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
 
               <button
                 type="submit"
-                className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs rounded-xl shadow-md transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                disabled={isSubmitting}
+                className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs rounded-xl shadow-md transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
               >
-                <span>Validar Acesso da Empresa</span>
+                <span>
+                  {isSubmitting ? 'Validando Credenciais...' : 'Validar Acesso da Empresa'}
+                </span>
                 <ArrowRight className="w-4 h-4 text-[#FFDD00]" />
               </button>
             </form>
-
-            {/* Quick Employee Profiles Shortcuts */}
-            <div className="space-y-2 pt-2 border-t border-slate-100">
-              <p className="text-[11px] font-bold text-slate-600 uppercase tracking-wider flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-[#E6007E]" />
-                Atalhos Rápidos de Equipe (Ambiente de Teste)
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleQuickEmployeeLogin('admin')}
-                  className="p-2 text-left bg-slate-50 hover:bg-rose-50 border border-slate-200 hover:border-rose-300 rounded-xl transition-all cursor-pointer"
-                >
-                  <p className="text-[11px] font-bold text-slate-900">Marcos Braga</p>
-                  <p className="text-[10px] text-rose-600 font-semibold">Diretor / Admin</p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleQuickEmployeeLogin('gerente')}
-                  className="p-2 text-left bg-slate-50 hover:bg-purple-50 border border-slate-200 hover:border-purple-300 rounded-xl transition-all cursor-pointer"
-                >
-                  <p className="text-[11px] font-bold text-slate-900">Renata Vasconcelos</p>
-                  <p className="text-[10px] text-purple-600 font-semibold">Gerente Geral</p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleQuickEmployeeLogin('vendedor')}
-                  className="p-2 text-left bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl transition-all cursor-pointer"
-                >
-                  <p className="text-[11px] font-bold text-slate-900">Carlos Alberto</p>
-                  <p className="text-[10px] text-blue-600 font-semibold">Comercial / Vendas</p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleQuickEmployeeLogin('estoquista')}
-                  className="p-2 text-left bg-slate-50 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 rounded-xl transition-all cursor-pointer"
-                >
-                  <p className="text-[11px] font-bold text-slate-900">Diego Ribeiro</p>
-                  <p className="text-[10px] text-amber-600 font-semibold">Almoxarifado / Estoque</p>
-                </button>
-              </div>
-            </div>
           </div>
         )}
       </div>
     </div>
   );
 };
+

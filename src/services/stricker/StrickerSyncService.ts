@@ -10,6 +10,7 @@ import {
 import { StrickerAuthService } from './StrickerAuthService';
 import { StrickerProductService } from './StrickerProductService';
 import { StrickerStockService } from './StrickerStockService';
+import { authFetch } from '../authClient';
 
 const STORAGE_KEYS = {
   SYNC_LOGS: 'mb_stricker_sync_logs_v1',
@@ -93,7 +94,7 @@ export class StrickerSyncService {
    */
   public static async getWorkerStatus(): Promise<any> {
     try {
-      const res = await fetch('/api/stricker/sync/status');
+      const res = await authFetch('/api/stricker/sync/status');
       if (res.ok) {
         return await res.json();
       }
@@ -125,7 +126,7 @@ export class StrickerSyncService {
       }
 
       // 2. Chama rota backend de sincronização
-      const response = await fetch('/api/stricker/sync', {
+      const response = await authFetch('/api/stricker/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type }),
@@ -150,7 +151,7 @@ export class StrickerSyncService {
         // 3. Atualiza estoques no frontend caso envolva estoques
         if (type === 'all' || type === 'stocks') {
           try {
-            const stockRes = await fetch('/api/stricker/stocks');
+            const stockRes = await authFetch('/api/stricker/stocks');
             if (stockRes.ok) {
               const stockData = await stockRes.json();
               if (stockData.stocks && Array.isArray(stockData.stocks)) {

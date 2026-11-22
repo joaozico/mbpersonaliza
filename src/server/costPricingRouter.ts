@@ -8,6 +8,7 @@ import {
   CostQuote,
   CostPricingSettings,
   CostPricingAuditLog,
+  PermissionKey,
   RolePermissions,
   UserRole,
   CostPricingTestResult,
@@ -22,6 +23,7 @@ import {
   INITIAL_COST_QUOTES,
   INITIAL_COST_PRICING_AUDIT_LOGS,
 } from '../data/costPricingInitialData';
+import { hasServerPermission } from '../middleware/auth.ts';
 
 export const costPricingRouter = Router();
 
@@ -50,22 +52,14 @@ function logServerAudit(entry: Omit<CostPricingAuditLog, 'id' | 'timestamp'>) {
 }
 
 /**
- * Middleware de Autorização e Controle de Acesso no Backend
- * Valida autenticação, status do usuário e permissões granulares por endpoint
+ * Middleware de Autorização e Controle de Acesso no Backend (Sessão PostgreSQL)
  */
 export function requireCostPricingPermission(requiredPermission: keyof RolePermissions) {
   return (req: Request, res: Response, next: NextFunction) => {
-    const userId = (req.headers['x-user-id'] as string) || '';
-    const userRole = (req.headers['x-user-role'] as UserRole) || 'visitante';
-    const userName = (req.headers['x-user-name'] as string) || 'Usuário Desconhecido';
-    const userEmail = (req.headers['x-user-email'] as string) || '';
-    const userStatus = (req.headers['x-user-status'] as string) || 'ativo';
-    const customPermissionsHeader = (req.headers['x-user-permissions'] as string) || '{}';
-
+    const authUser = req.authUser || null;
     const clientIp = (req.headers['x-forwarded-for'] as string) || req.ip || '127.0.0.1';
 
-    // 1. Validar autenticação
-    if (!userId || !req.headers['x-user-role']) {
+    if (!authUser) {
       logServerAudit({
         userId: 'anonimo',
         userName: 'Não autenticado',
@@ -84,15 +78,14 @@ export function requireCostPricingPermission(requiredPermission: keyof RolePermi
       });
     }
 
-    // 2. Validar usuário ativo
-    if (userStatus === 'inativo') {
+    if (authUser.status === 'inativo') {
       logServerAudit({
-        userId,
-        userName,
-        userRole,
+        userId: authUser.id,
+        userName: authUser.name,
+        userRole: authUser.role,
         operation: 'EDITAR',
         entityType: 'settings',
-        entityId: userId,
+        entityId: authUser.id,
         entityName: `Tentativa usuário inativo: ${req.method} ${req.path}`,
         details: `Acesso negado para colaborador inativo. IP: ${clientIp}`,
       });
@@ -104,29 +97,14 @@ export function requireCostPricingPermission(requiredPermission: keyof RolePermi
       });
     }
 
-    // 3. Administrador possui acesso irrestrito
-    if (userRole === 'admin') {
-      return next();
-    }
-
-    // 4. Validar permissão específica
-    let userPermissions: Partial<RolePermissions> = {};
-    try {
-      userPermissions = JSON.parse(customPermissionsHeader);
-    } catch {
-      userPermissions = {};
-    }
-
-    const hasPermission = Boolean(userPermissions[requiredPermission]);
-
-    if (!hasPermission) {
+    if (!hasServerPermission(req, requiredPermission as PermissionKey)) {
       logServerAudit({
-        userId,
-        userName,
-        userRole,
+        userId: authUser.id,
+        userName: authUser.name,
+        userRole: authUser.role,
         operation: 'EDITAR',
         entityType: 'settings',
-        entityId: userId,
+        entityId: authUser.id,
         entityName: `Tentativa sem permissão (${String(requiredPermission)}): ${req.method} ${req.path}`,
         details: `Acesso bloqueado: usuário não possui permissão ${String(requiredPermission)}. IP: ${clientIp}`,
       });
@@ -139,7 +117,6 @@ export function requireCostPricingPermission(requiredPermission: keyof RolePermi
       });
     }
 
-    // Autorizado
     next();
   };
 }
@@ -149,25 +126,29 @@ export function requireCostPricingPermission(requiredPermission: keyof RolePermi
 // ----------------------------------------------------------------------------
 
 // 1. Status Geral e Health Check do Módulo
-costPricingRouter.get('/status', (req: Request, res: Response) => {
-  res.json({
-    success: true,
-    module: 'Orçamento de Custos e Precificação de Produtos',
-    version: '1.0.0',
-    timestamp: new Date().toISOString(),
-    counts: {
-      materials: serverMaterials.length,
-      machines: serverMachines.length,
-      labor: serverLabor.length,
-      expenses: serverExpenses.length,
-      sheets: serverSheets.length,
-      quotes: serverQuotes.length,
-      auditLogs: serverAuditLogs.length,
-    },
-    defaultTariffKwh: serverSettings.defaultEnergyTariffKwh,
-    defaultMarginPercent: serverSettings.defaultTargetMarginPercent,
-  });
-});
+costPricingRouter.get(
+  '/status',
+  requireCostPricingPermission('canViewCostPricingModule'),
+  (req: Request, res: Response) => {
+    res.json({
+      success: true,
+      module: 'Orçamento de Custos e Precificação de Produtos',
+      version: '1.0.0',
+      timestamp: new Date().toISOString(),
+      counts: {
+        materials: serverMaterials.length,
+        machines: serverMachines.length,
+        labor: serverLabor.length,
+        expenses: serverExpenses.length,
+        sheets: serverSheets.length,
+        quotes: serverQuotes.length,
+        auditLogs: serverAuditLogs.length,
+      },
+      defaultTariffKwh: serverSettings.defaultEnergyTariffKwh,
+      defaultMarginPercent: serverSettings.defaultTargetMarginPercent,
+    });
+  }
+);
 
 // 2. Configurações Globais de Precificação
 costPricingRouter.get(
@@ -193,9 +174,9 @@ costPricingRouter.post(
       updatedAt: new Date().toISOString(),
     };
 
-    const userId = (req.headers['x-user-id'] as string) || 'admin';
-    const userName = (req.headers['x-user-name'] as string) || 'Administrador';
-    const userRole = (req.headers['x-user-role'] as UserRole) || 'admin';
+    const userId = req.authUser!.id;
+    const userName = req.authUser!.name;
+    const userRole = req.authUser!.role as UserRole;
 
     logServerAudit({
       userId,
@@ -248,9 +229,9 @@ costPricingRouter.post(
     }
 
     const idx = serverMaterials.findIndex((m) => m.id === materialData.id);
-    const userId = (req.headers['x-user-id'] as string) || 'admin';
-    const userName = (req.headers['x-user-name'] as string) || 'Administrador';
-    const userRole = (req.headers['x-user-role'] as UserRole) || 'admin';
+    const userId = req.authUser!.id;
+    const userName = req.authUser!.name;
+    const userRole = req.authUser!.role as UserRole;
 
     if (idx >= 0) {
       const prev = { ...serverMaterials[idx] };
@@ -303,9 +284,9 @@ costPricingRouter.delete(
     }
 
     const removed = serverMaterials.splice(idx, 1)[0];
-    const userId = (req.headers['x-user-id'] as string) || 'admin';
-    const userName = (req.headers['x-user-name'] as string) || 'Administrador';
-    const userRole = (req.headers['x-user-role'] as UserRole) || 'admin';
+    const userId = req.authUser!.id;
+    const userName = req.authUser!.name;
+    const userRole = req.authUser!.role as UserRole;
 
     logServerAudit({
       userId,
@@ -342,9 +323,9 @@ costPricingRouter.post(
     }
 
     const idx = serverMachines.findIndex((m) => m.id === machineData.id);
-    const userId = (req.headers['x-user-id'] as string) || 'admin';
-    const userName = (req.headers['x-user-name'] as string) || 'Administrador';
-    const userRole = (req.headers['x-user-role'] as UserRole) || 'admin';
+    const userId = req.authUser!.id;
+    const userName = req.authUser!.name;
+    const userRole = req.authUser!.role as UserRole;
 
     if (idx >= 0) {
       const prev = { ...serverMachines[idx] };
@@ -448,9 +429,9 @@ costPricingRouter.post(
     }
 
     const idx = serverSheets.findIndex((s) => s.id === sheetData.id);
-    const userId = (req.headers['x-user-id'] as string) || 'admin';
-    const userName = (req.headers['x-user-name'] as string) || 'Administrador';
-    const userRole = (req.headers['x-user-role'] as UserRole) || 'admin';
+    const userId = req.authUser!.id;
+    const userName = req.authUser!.name;
+    const userRole = req.authUser!.role as UserRole;
 
     if (idx >= 0) {
       const prev = { ...serverSheets[idx] };
@@ -551,9 +532,9 @@ costPricingRouter.post(
     }
 
     const idx = serverQuotes.findIndex((q) => q.id === quoteData.id);
-    const userId = (req.headers['x-user-id'] as string) || 'admin';
-    const userName = (req.headers['x-user-name'] as string) || 'Administrador';
-    const userRole = (req.headers['x-user-role'] as UserRole) || 'admin';
+    const userId = req.authUser!.id;
+    const userName = req.authUser!.name;
+    const userRole = req.authUser!.role as UserRole;
 
     if (idx >= 0) {
       const prev = { ...serverQuotes[idx] };
@@ -607,9 +588,9 @@ costPricingRouter.post(
       return res.status(404).json({ success: false, error: 'Orçamento não encontrado.' });
     }
 
-    const userId = (req.headers['x-user-id'] as string) || 'admin';
-    const userName = (req.headers['x-user-name'] as string) || 'Administrador';
-    const userRole = (req.headers['x-user-role'] as UserRole) || 'admin';
+    const userId = req.authUser!.id;
+    const userName = req.authUser!.name;
+    const userRole = req.authUser!.role as UserRole;
 
     const prev = { ...serverQuotes[idx] };
     serverQuotes[idx] = {

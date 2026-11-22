@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
@@ -13,11 +14,14 @@ import { couponRouter } from "./src/server/couponRouter";
 import { uploadRouter } from "./src/server/uploadRouter";
 
 import { databaseRouter } from "./src/server/databaseRouter";
+import { authRouter } from "./src/server/authRouter";
+import { attachSessionUser, requirePermission } from "./src/middleware/auth";
 import { seedInitialDataIfEmpty } from "./src/db/repository";
 import { closePool } from "./src/db";
 
 async function startServer() {
   const app = express();
+  app.set("trust proxy", true);
   const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 
   // Aumentar limite de payload para suportar upload de artefatos/mockups de até 50MB
@@ -34,7 +38,7 @@ async function startServer() {
   // Inicia worker de exportação agendada e recuperação de desastres
   backupSchedulerWorker.start();
 
-  // Inicializa seed de dados essenciais no Cloud SQL PostgreSQL se vazio
+  // Inicializa seed de dados essenciais no PostgreSQL se vazio
   seedInitialDataIfEmpty().catch((err) => {
     console.warn('[Server] PostgreSQL initial check/seed:', err);
   });
@@ -50,6 +54,25 @@ async function startServer() {
       timestamp: new Date().toISOString()
     });
   });
+
+  // Middleware de sessão autenticada (PostgreSQL auth_sessions — nunca confia em headers x-user-*)
+  app.use(attachSessionUser);
+
+  // Autenticação, Cadastro e Sessão (PostgreSQL)
+  app.use("/api/auth", authRouter);
+
+  // Verificação protegida para geração/visualização do Catálogo PDF
+  app.get(
+    "/api/catalog-pdf/access",
+    requirePermission("canAccessCatalogPdf"),
+    (req, res) => {
+      res.json({
+        success: true,
+        allowed: true,
+        user: req.authUser,
+      });
+    }
+  );
 
   // PostgreSQL Cloud SQL Database API Routes
   app.use("/api/db", databaseRouter);

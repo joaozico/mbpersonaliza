@@ -6,6 +6,7 @@ import {
   FinancialAuditEntry,
 } from '../types';
 import { StorageService } from '../services/storage';
+import { authFetch } from '../services/authClient';
 import { BoletoModal } from '../components/BoletoModal';
 import {
   FileText,
@@ -180,7 +181,7 @@ export const BoletoBillingManagementTab: React.FC<BoletoBillingManagementTabProp
       // Chama o endpoint de auditoria do backend
       let serverData: any = null;
       try {
-        const resp = await fetch('/api/payments/boleto/test-suite/run');
+        const resp = await authFetch('/api/payments/boleto/test-suite/run');
         if (resp.ok) {
           serverData = await resp.json();
         }

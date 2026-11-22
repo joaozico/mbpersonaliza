@@ -13,6 +13,7 @@ import {
   CouponValidationResult,
 } from '../types';
 import { StorageService } from '../services/storage';
+import { authFetch } from '../services/authClient';
 import { PaymentService } from '../services/paymentService';
 import { StrickerOrderService } from '../services/stricker/StrickerOrderService';
 import {
@@ -59,6 +60,7 @@ interface CheckoutViewProps {
   currentUser: UserProfile;
   onClearCart: () => void;
   onNavigate: (view: string, param?: string) => void;
+  onOpenAuth?: (mode?: 'login' | 'signup') => void;
 }
 
 export const CheckoutView: React.FC<CheckoutViewProps> = ({
@@ -66,7 +68,10 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   currentUser,
   onClearCart,
   onNavigate,
+  onOpenAuth,
 }) => {
+  const isVisitor = !currentUser || currentUser.role === 'visitante';
+
   // Company settings
   const [companySettings, setCompanySettings] = useState<CompanySettings>(() =>
     StorageService.getCompanySettings()
@@ -87,20 +92,20 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   }, []);
 
   // Customer info
-  const [name, setName] = useState(currentUser.name);
-  const [email, setEmail] = useState(currentUser.email);
-  const [phone, setPhone] = useState(currentUser.phone);
-  const [company, setCompany] = useState(currentUser.company || '');
-  const [cpfCnpj, setCpfCnpj] = useState(currentUser.cpfCnpj || '');
+  const [name, setName] = useState(isVisitor ? '' : (currentUser.name || ''));
+  const [email, setEmail] = useState(isVisitor ? '' : (currentUser.email || ''));
+  const [phone, setPhone] = useState(isVisitor ? '' : (currentUser.phone || ''));
+  const [company, setCompany] = useState(isVisitor ? '' : (currentUser.company || ''));
+  const [cpfCnpj, setCpfCnpj] = useState(isVisitor ? '' : (currentUser.cpfCnpj || ''));
 
   // Address
-  const [street, setStreet] = useState(currentUser.address?.street || 'Av. Paulista');
-  const [number, setNumber] = useState(currentUser.address?.number || '1842');
-  const [complement, setComplement] = useState(currentUser.address?.complement || 'Conj. 1408');
-  const [neighborhood, setNeighborhood] = useState(currentUser.address?.neighborhood || 'Bela Vista');
-  const [city, setCity] = useState(currentUser.address?.city || 'São Paulo');
-  const [state, setState] = useState(currentUser.address?.state || 'SP');
-  const [zip, setZip] = useState(currentUser.address?.zip || '01310-200');
+  const [street, setStreet] = useState(isVisitor ? '' : (currentUser.address?.street || ''));
+  const [number, setNumber] = useState(isVisitor ? '' : (currentUser.address?.number || ''));
+  const [complement, setComplement] = useState(isVisitor ? '' : (currentUser.address?.complement || ''));
+  const [neighborhood, setNeighborhood] = useState(isVisitor ? '' : (currentUser.address?.neighborhood || ''));
+  const [city, setCity] = useState(isVisitor ? '' : (currentUser.address?.city || ''));
+  const [state, setState] = useState(isVisitor ? '' : (currentUser.address?.state || ''));
+  const [zip, setZip] = useState(isVisitor ? '' : (currentUser.address?.zip || ''));
 
   // Regras de Pagamento por Boleto e Faturamento a Prazo
   const [paymentMethod, setPaymentMethod] = useState<'pix' | 'credit_card' | 'boleto' | 'boleto_faturado'>('pix');
@@ -112,10 +117,30 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
 
   const [cardNumber, setCardNumber] = useState('•••• •••• •••• 4242');
-  const [cardHolder, setCardHolder] = useState(currentUser.name.toUpperCase());
+  const [cardHolder, setCardHolder] = useState(isVisitor ? '' : (currentUser.name || '').toUpperCase());
   const [cardExpiry, setCardExpiry] = useState('12/28');
   const [cardCvv, setCardCvv] = useState('888');
   const [installments, setInstallments] = useState(1);
+
+  useEffect(() => {
+    if (currentUser && currentUser.role !== 'visitante') {
+      setName(currentUser.name || '');
+      setEmail(currentUser.email || '');
+      setPhone(currentUser.phone || '');
+      setCompany(currentUser.company || '');
+      setCpfCnpj(currentUser.cpfCnpj || '');
+      setCardHolder((currentUser.name || '').toUpperCase());
+      if (currentUser.address) {
+        if (currentUser.address.street) setStreet(currentUser.address.street);
+        if (currentUser.address.number) setNumber(currentUser.address.number);
+        if (currentUser.address.complement) setComplement(currentUser.address.complement);
+        if (currentUser.address.neighborhood) setNeighborhood(currentUser.address.neighborhood);
+        if (currentUser.address.city) setCity(currentUser.address.city);
+        if (currentUser.address.state) setState(currentUser.address.state);
+        if (currentUser.address.zip) setZip(currentUser.address.zip);
+      }
+    }
+  }, [currentUser?.id]);
 
   // Quotes disponíveis para vínculo
   const availableQuotes = useMemo(() => {
@@ -216,7 +241,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
 
     try {
       // Tentar validação no backend
-      const res = await fetch('/api/coupons/validate', {
+      const res = await authFetch('/api/coupons/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -782,6 +807,50 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
         >
           Ir para o Catálogo
         </button>
+      </div>
+    );
+  }
+
+  if (isVisitor) {
+    return (
+      <div className="max-w-xl mx-auto px-4 py-16 text-center space-y-5" id="checkout-auth-required">
+        <div className="w-16 h-16 rounded-3xl bg-pink-50 text-[#E6007E] border border-pink-100 flex items-center justify-center mx-auto">
+          <Lock className="w-8 h-8" />
+        </div>
+        <div className="space-y-2">
+          <span className="text-xs font-bold uppercase tracking-wider text-[#E6007E]">
+            Identificação Necessária
+          </span>
+          <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 font-heading uppercase">
+            Entre ou Cadastre-se para Finalizar
+          </h2>
+          <p className="text-xs sm:text-sm text-slate-600 max-w-md mx-auto">
+            Para concluir sua compra online, emitir nota fiscal e acompanhar a produção do seu pedido, acesse sua conta ou crie um cadastro gratuito.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+          <button
+            type="button"
+            onClick={() => onOpenAuth?.('login')}
+            className="px-6 py-3 bg-slate-900 hover:bg-[#E6007E] text-white font-bold text-xs sm:text-sm rounded-xl transition-colors cursor-pointer shadow-sm"
+          >
+            ENTRAR
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenAuth?.('signup')}
+            className="px-6 py-3 bg-[#E6007E] hover:bg-pink-700 text-white font-bold text-xs sm:text-sm rounded-xl transition-colors cursor-pointer shadow-sm"
+          >
+            CADASTRE-SE
+          </button>
+          <button
+            type="button"
+            onClick={() => onNavigate('quote')}
+            className="px-6 py-3 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 font-bold text-xs sm:text-sm rounded-xl transition-colors cursor-pointer"
+          >
+            Solicitar Orçamento sem Cadastro
+          </button>
+        </div>
       </div>
     );
   }

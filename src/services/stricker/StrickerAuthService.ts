@@ -1,4 +1,5 @@
 import { StrickerConfig } from '../../types/stricker';
+import { authFetch } from '../authClient';
 
 const STORAGE_KEYS = {
   CONFIG: 'mb_stricker_config_v1',
@@ -55,7 +56,7 @@ export class StrickerAuthService {
    */
   public static async syncWithServerConfig(): Promise<StrickerConfig> {
     try {
-      const response = await fetch('/api/stricker/config');
+      const response = await authFetch('/api/stricker/config');
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
@@ -100,7 +101,7 @@ export class StrickerAuthService {
 
     // Se mudou configuração de autoSync, avisa o backend
     if (config.autoSyncEnabled !== undefined || config.syncIntervalHours !== undefined) {
-      fetch('/api/stricker/sync/auto/toggle', {
+      authFetch('/api/stricker/sync/auto/toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -148,7 +149,7 @@ export class StrickerAuthService {
 
     // 2. Renova token através da rota backend segura
     try {
-      const response = await fetch('/api/stricker/auth/authenticate', {
+      const response = await authFetch('/api/stricker/auth/authenticate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -210,7 +211,7 @@ export class StrickerAuthService {
     const envToTest = environment || config.environment;
 
     try {
-      const response = await fetch('/api/stricker/auth/test', {
+      const response = await authFetch('/api/stricker/auth/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -272,7 +273,7 @@ export class StrickerAuthService {
     const config = this.getConfig();
     if (config.sessionToken) {
       try {
-        await fetch('/api/stricker/auth/close', {
+        await authFetch('/api/stricker/auth/close', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token: config.sessionToken }),

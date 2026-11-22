@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Logo } from './Logo';
 import { StorageService } from '../services/storage';
-import { CompanySettings } from '../types';
+import { CompanySettings, UserProfile } from '../types';
 import { WhatsAppContactModal } from './WhatsAppContactModal';
 import {
   MapPin,
@@ -19,10 +19,12 @@ import {
 } from 'lucide-react';
 
 interface FooterProps {
+  currentUser?: UserProfile;
   onNavigate: (view: string, param?: string) => void;
 }
 
-export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
+export const Footer: React.FC<FooterProps> = ({ currentUser, onNavigate }) => {
+  const canAccessCatalogPdf = StorageService.hasUserPermission(currentUser, 'canAccessCatalogPdf');
   const [settings, setSettings] = useState<CompanySettings>(() => StorageService.getCompanySettings());
   const [layoutSettings, setLayoutSettings] = useState(() => StorageService.getLayoutSettings());
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
@@ -131,14 +133,16 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
                   Catálogo de Produtos
                 </button>
               </li>
-              <li>
-                <button
-                  onClick={() => onNavigate('digital-catalog')}
-                  className="hover:text-[#00AEEF] transition-colors flex items-center gap-1"
-                >
-                  Catálogo Digital PDF
-                </button>
-              </li>
+              {canAccessCatalogPdf && (
+                <li>
+                  <button
+                    onClick={() => onNavigate('digital-catalog')}
+                    className="hover:text-[#00AEEF] transition-colors flex items-center gap-1"
+                  >
+                    Catálogo Digital PDF
+                  </button>
+                </li>
+              )}
               <li>
                 <button
                   onClick={() => onNavigate('quote')}

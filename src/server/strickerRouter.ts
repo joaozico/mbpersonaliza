@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { strickerSyncWorker } from './strickerSyncWorker';
+import { requireStaffSession } from '../middleware/auth.ts';
 import {
   INITIAL_STRICKER_PRODUCTS,
   INITIAL_STRICKER_COLORS,
@@ -8,6 +9,7 @@ import {
 } from '../data/strickerInitialData';
 
 export const strickerRouter = Router();
+strickerRouter.use(requireStaffSession);
 
 // Cache em memória no servidor para sessão e rate limit
 let currentSessionToken: string | null = 'sess_spot_demo_9847239847129837';

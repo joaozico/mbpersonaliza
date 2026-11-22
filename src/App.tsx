@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Product, Category, Subcategory, CartItem, UserProfile, ProductVariant, CompanySettings, BackupHistoryEntry } from './types';
-import { StorageService } from './services/storage';
+import { StorageService, VISITOR_PROFILE } from './services/storage';
+import { bootstrapSession, authFetch } from './services/authClient';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { CartDrawer } from './components/CartDrawer';
@@ -28,11 +29,67 @@ import { ContactView } from './views/ContactView';
 import { AdminMaintenanceBanner } from './components/AdminMaintenanceBanner';
 import { GlobalSearchModal } from './components/GlobalSearchModal';
 import { AnalyticsService } from './services/analytics';
+import { Lock } from 'lucide-react';
+
+function resolveRouteFromPath(pathname: string): {
+  view: string;
+  param?: string;
+  authMode?: 'login' | 'signup';
+} {
+  const clean = (pathname || '/').replace(/\/+$/, '') || '/';
+  if (clean === '/') return { view: 'home' };
+  if (clean === '/catalogo') return { view: 'catalog' };
+  if (clean.startsWith('/produtos/')) {
+    const slug = decodeURIComponent(clean.slice('/produtos/'.length));
+    return { view: 'product-detail', param: slug || undefined };
+  }
+  if (clean === '/orcamento') return { view: 'quote' };
+  if (clean === '/catalogo-digital') return { view: 'digital-catalog' };
+  if (clean === '/checkout') return { view: 'checkout' };
+  if (clean === '/minha-conta') return { view: 'customer-portal' };
+  if (clean === '/login') return { view: 'home', authMode: 'login' };
+  if (clean === '/cadastro') return { view: 'home', authMode: 'signup' };
+  if (clean === '/admin/login') return { view: 'admin-login' };
+  if (clean === '/admin') return { view: 'admin' };
+  if (clean === '/pdv') return { view: 'pdv' };
+  if (clean === '/financeiro') return { view: 'financial' };
+  if (clean === '/precificacao') return { view: 'cost_pricing' };
+  if (clean === '/admin/metricas') return { view: 'metrics' };
+  if (clean === '/sobre') return { view: 'about' };
+  if (clean === '/contato') return { view: 'contact' };
+  if (clean === '/manutencao') return { view: 'maintenance' };
+  return { view: 'home' };
+}
+
+function getPathForView(view: string, param: string | undefined, products: Product[]): string {
+  if (view === 'home') return '/';
+  if (view === 'catalog') return '/catalogo';
+  if (view === 'product-detail') {
+    const prod = products.find((p) => p.id === param || p.slug === param);
+    return prod ? `/produtos/${encodeURIComponent(prod.slug || prod.id)}` : `/produtos/${encodeURIComponent(param || '')}`;
+  }
+  if (view === 'quote') return '/orcamento';
+  if (view === 'digital-catalog') return '/catalogo-digital';
+  if (view === 'checkout') return '/checkout';
+  if (view === 'customer-portal') return '/minha-conta';
+  if (view === 'admin-login') return '/admin/login';
+  if (view === 'admin') return '/admin';
+  if (view === 'pdv') return '/pdv';
+  if (view === 'financial' || view === 'financeiro') return '/financeiro';
+  if (view === 'cost_pricing' || view === 'precificacao' || view === 'custos') return '/precificacao';
+  if (view === 'metrics') return '/admin/metricas';
+  if (view === 'about') return '/sobre';
+  if (view === 'contact') return '/contato';
+  if (view === 'maintenance') return '/manutencao';
+  return '/';
+}
 
 export default function App() {
+  const initialRoute = typeof window !== 'undefined' ? resolveRouteFromPath(window.location.pathname) : { view: 'home' };
+
   // Current Navigation View & optional parameter (e.g. productId or categoryId)
-  const [currentView, setCurrentView] = useState<string>('home');
-  const [viewParam, setViewParam] = useState<string | undefined>(undefined);
+  const [currentView, setCurrentView] = useState<string>(initialRoute.view);
+  const [viewParam, setViewParam] = useState<string | undefined>(initialRoute.param);
 
   // App Data State (synced from StorageService)
   const [products, setProducts] = useState<Product[]>(() => StorageService.getProducts());
@@ -45,7 +102,13 @@ export default function App() {
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
 
   // Auth Modal State
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(Boolean(initialRoute.authMode));
+  const [authModalMode, setAuthModalMode] = useState<'login' | 'signup'>(initialRoute.authMode || 'login');
+
+  const openAuthModal = (mode: 'login' | 'signup' = 'login') => {
+    setAuthModalMode(mode);
+    setIsAuthModalOpen(true);
+  };
 
   // Global Search / Spotlight State
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState<boolean>(false);
@@ -78,32 +141,88 @@ export default function App() {
       currentUser.role === 'gerente' ||
       Boolean(currentUser.customPermissions?.canManageCompanySettings));
 
-  // Sync official data from PostgreSQL (Cloud SQL) on application start
-  useEffect(() => {
-    StorageService.initPostgresSync()
-      .then((synced) => {
-        if (synced) {
-          refreshData();
-        }
-      })
-      .catch((err) => {
-        console.warn('PostgreSQL initial sync notice:', err);
-      });
+  const isStaff = Boolean(currentUser && currentUser.role !== 'visitante' && currentUser.role !== 'cliente');
+  const hasAnyAdminPermission =
+    isStaff &&
+    (currentUser.role === 'admin' ||
+      [
+        'canViewOverview',
+        'canViewQuotes',
+        'canViewOrders',
+        'canManageProducts',
+        'canManageCategories',
+        'canManageStock',
+        'canManageCoupons',
+        'canManageCompanySettings',
+        'canManageLayout',
+        'canManageStricker',
+        'canManageUsers',
+        'canManageBoletos',
+        'canManageBackup',
+      ].some((perm) => StorageService.hasUserPermission(currentUser, perm as any)));
 
-    fetch('/api/system/maintenance', { cache: 'no-store' })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data && data.maintenance) {
-          const localSettings = StorageService.getMaintenanceSettings();
-          if (Boolean(localSettings.enabled) !== Boolean(data.maintenance.enabled)) {
-            StorageService.saveMaintenanceSettings(data.maintenance);
-            setCompanySettings(StorageService.getCompanySettings());
-          }
+  // Bootstrap real session & sync official data from PostgreSQL on application start
+  useEffect(() => {
+    let active = true;
+
+    const startup = async () => {
+      try {
+        const boot = await bootstrapSession();
+        if (!active) return;
+        StorageService.setCurrentUser(boot.user || VISITOR_PROFILE);
+        if (boot.rolePermissions) {
+          StorageService.setPermissionsMatrixMemory(boot.rolePermissions);
         }
-      })
-      .catch((err) => {
+        if (boot.priceVisibility) {
+          StorageService.setPriceVisibilityModeMemory(boot.priceVisibility);
+        }
+      } catch (err) {
+        console.warn('Auth bootstrap notice:', err);
+        StorageService.setCurrentUser(VISITOR_PROFILE);
+      }
+
+      try {
+        await StorageService.initPostgresSync();
+      } catch (err) {
+        console.warn('PostgreSQL initial sync notice:', err);
+      }
+
+      if (active) {
+        refreshData();
+      }
+
+      try {
+        const res = await fetch('/api/system/maintenance', { cache: 'no-store' });
+        const data = await res.json();
+        if (active && data && data.maintenance) {
+          try {
+            localStorage.setItem('mb_personaliza_maintenance_settings_v1', JSON.stringify(data.maintenance));
+          } catch {}
+          setCompanySettings(StorageService.getCompanySettings());
+        }
+      } catch (err) {
         console.warn('Backend maintenance status sync notice:', err);
-      });
+      }
+    };
+
+    startup();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Listen to browser back/forward history navigation
+  useEffect(() => {
+    const handlePopState = () => {
+      const resolved = resolveRouteFromPath(window.location.pathname);
+      setCurrentView(resolved.view);
+      setViewParam(resolved.param);
+      if (resolved.authMode) {
+        openAuthModal(resolved.authMode);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
   useEffect(() => {
@@ -178,8 +297,10 @@ export default function App() {
     AnalyticsService.trackPageView(path, title);
   }, [currentView, viewParam, companySettings.maintenance]);
 
-  // Rotina em segundo plano para verificação de exportação agendada de recuperação de desastres
+  // Rotina em segundo plano para verificação de exportação agendada de recuperação de desastres (somente Admin)
   useEffect(() => {
+    if (!currentUser || currentUser.role !== 'admin') return;
+
     const checkScheduledBackup = async () => {
       try {
         const cfg = StorageService.getBackupScheduleConfig();
@@ -226,7 +347,7 @@ export default function App() {
           }
 
           try {
-            await fetch('/api/backup/export', {
+            await authFetch('/api/backup/export', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ trigger: 'scheduled', clientPayload: backup.payload }),
@@ -243,7 +364,7 @@ export default function App() {
     checkScheduledBackup();
     const intervalTimer = setInterval(checkScheduledBackup, 60000);
     return () => clearInterval(intervalTimer);
-  }, []);
+  }, [currentUser?.role]);
 
   // Global Keyboard Shortcuts (Ctrl+K, Cmd+K, '/') and Event Handler for Global Search
   useEffect(() => {
@@ -282,6 +403,11 @@ export default function App() {
 
   // Navigation Handler
   const handleNavigate = (view: string, param?: string) => {
+    if (view === 'login' || view === 'cadastro') {
+      openAuthModal(view === 'cadastro' ? 'signup' : 'login');
+      return;
+    }
+
     // If maintenance is active and user is NOT an authorized admin:
     // Only allow admin-login so an administrator can authenticate
     if (isMaintenanceActive && !isAuthorizedAdmin) {
@@ -301,6 +427,15 @@ export default function App() {
 
     setCurrentView(view);
     setViewParam(param);
+
+    if (typeof window !== 'undefined') {
+      const targetPath = getPathForView(view, param, products);
+      if (window.location.pathname !== targetPath) {
+        try {
+          window.history.pushState({ view, param }, '', targetPath);
+        } catch {}
+      }
+    }
   };
 
   // Cart Handlers
@@ -329,7 +464,7 @@ export default function App() {
 
   const handleOpenQuoteModal = (initial?: { product: Product; variant?: ProductVariant; quantity: number }) => {
     setQuoteInitialItem(initial);
-    setCurrentView('quote');
+    handleNavigate('quote');
   };
 
   // Maintenance Mode Interception:
@@ -401,6 +536,7 @@ export default function App() {
             setGlobalSearchInitialQuery(initialQuery || '');
             setIsGlobalSearchOpen(true);
           }}
+          onOpenAuth={openAuthModal}
         />
       )}
 
@@ -418,6 +554,7 @@ export default function App() {
             categories={categories}
             currentUser={currentUser}
             onNavigate={handleNavigate}
+            onOpenAuth={openAuthModal}
           />
         )}
 
@@ -430,6 +567,7 @@ export default function App() {
             currentUser={currentUser}
             onNavigate={handleNavigate}
             onOpenQuoteModal={handleOpenQuoteModal}
+            onOpenAuth={openAuthModal}
           />
         )}
 
@@ -441,6 +579,7 @@ export default function App() {
             onNavigate={handleNavigate}
             onAddToCart={handleAddToCart}
             onOpenQuoteModal={handleOpenQuoteModal}
+            onOpenAuth={openAuthModal}
           />
         )}
 
@@ -451,6 +590,7 @@ export default function App() {
             currentUser={currentUser}
             initialItem={quoteInitialItem}
             onNavigate={handleNavigate}
+            onOpenAuth={openAuthModal}
           />
         )}
 
@@ -458,6 +598,7 @@ export default function App() {
           <DigitalCatalogView
             products={products}
             categories={categories}
+            currentUser={currentUser}
             onNavigate={handleNavigate}
           />
         )}
@@ -468,18 +609,51 @@ export default function App() {
             currentUser={currentUser}
             onClearCart={handleClearCart}
             onNavigate={handleNavigate}
+            onOpenAuth={openAuthModal}
           />
         )}
 
         {currentView === 'customer-portal' && (
-          <CustomerPortalView
-            currentUser={currentUser}
-            onUserUpdate={(u) => {
-              setCurrentUser(u);
-              refreshData();
-            }}
-            onNavigate={handleNavigate}
-          />
+          !currentUser || currentUser.role === 'visitante' ? (
+            <div className="max-w-lg mx-auto px-4 py-16 text-center space-y-5">
+              <div className="w-16 h-16 rounded-3xl bg-pink-50 text-[#E6007E] border border-pink-100 flex items-center justify-center mx-auto">
+                <Lock className="w-8 h-8" />
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-2xl font-extrabold text-slate-900 font-heading uppercase">
+                  Acesse sua Conta
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-600">
+                  Entre com seu e-mail e senha ou cadastre-se para acompanhar seus pedidos, orçamentos, boletos e favoritos.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => openAuthModal('login')}
+                  className="px-6 py-3 bg-slate-900 hover:bg-[#E6007E] text-white font-bold text-xs sm:text-sm rounded-xl transition-colors cursor-pointer"
+                >
+                  ENTRAR
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openAuthModal('signup')}
+                  className="px-6 py-3 bg-[#E6007E] hover:bg-pink-700 text-white font-bold text-xs sm:text-sm rounded-xl transition-colors cursor-pointer"
+                >
+                  CADASTRE-SE
+                </button>
+              </div>
+            </div>
+          ) : (
+            <CustomerPortalView
+              currentUser={currentUser}
+              onUserUpdate={(u) => {
+                setCurrentUser(u);
+                refreshData();
+              }}
+              onNavigate={handleNavigate}
+            />
+          )
         )}
 
         {currentView === 'admin-login' && (
@@ -493,7 +667,7 @@ export default function App() {
         )}
 
         {currentView === 'admin' && (
-          currentUser.role === 'cliente' || currentUser.role === 'visitante' ? (
+          !isStaff ? (
             <AdminLoginView
               onLoginSuccess={(user) => {
                 setCurrentUser(user);
@@ -501,6 +675,25 @@ export default function App() {
               }}
               onNavigate={handleNavigate}
             />
+          ) : !hasAnyAdminPermission ? (
+            <div className="max-w-lg mx-auto px-4 py-16 text-center space-y-4">
+              <div className="w-16 h-16 rounded-3xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center mx-auto">
+                <Lock className="w-8 h-8" />
+              </div>
+              <h2 className="text-2xl font-extrabold text-slate-900 font-heading uppercase">
+                Acesso Restrito
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-600">
+                Seu perfil ({currentUser.role}) não possui permissão para acessar o Painel Administrativo.
+              </p>
+              <button
+                type="button"
+                onClick={() => handleNavigate('home')}
+                className="px-5 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Voltar à Loja
+              </button>
+            </div>
           ) : (
             <AdminPanel
               currentUser={currentUser}
@@ -514,22 +707,69 @@ export default function App() {
         )}
 
         {currentView === 'metrics' && (
-          <SiteMetricsView
-            currentUser={currentUser}
-            onNavigate={handleNavigate}
-          />
-        )}
-
-        {currentView === 'pdv' && (
-          currentUser.role === 'cliente' || currentUser.role === 'visitante' ? (
+          !isStaff ? (
             <AdminLoginView
               onLoginSuccess={(user) => {
                 setCurrentUser(user);
                 refreshData();
-                setCurrentView('pdv');
               }}
+              onNavigate={(view, param) => handleNavigate(view === 'admin' ? 'metrics' : view, param)}
+            />
+          ) : !StorageService.hasUserPermission(currentUser, 'canViewSiteMetrics') ? (
+            <div className="max-w-lg mx-auto px-4 py-16 text-center space-y-4">
+              <div className="w-16 h-16 rounded-3xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center mx-auto">
+                <Lock className="w-8 h-8" />
+              </div>
+              <h2 className="text-2xl font-extrabold text-slate-900 font-heading uppercase">
+                Acesso Restrito
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-600">
+                Seu perfil não possui permissão para acessar as Métricas do Site.
+              </p>
+              <button
+                type="button"
+                onClick={() => handleNavigate('home')}
+                className="px-5 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Voltar à Loja
+              </button>
+            </div>
+          ) : (
+            <SiteMetricsView
+              currentUser={currentUser}
               onNavigate={handleNavigate}
             />
+          )
+        )}
+
+        {currentView === 'pdv' && (
+          !isStaff ? (
+            <AdminLoginView
+              onLoginSuccess={(user) => {
+                setCurrentUser(user);
+                refreshData();
+              }}
+              onNavigate={(view, param) => handleNavigate(view === 'admin' ? 'pdv' : view, param)}
+            />
+          ) : !StorageService.hasUserPermission(currentUser, 'canAccessPDV') ? (
+            <div className="max-w-lg mx-auto px-4 py-16 text-center space-y-4">
+              <div className="w-16 h-16 rounded-3xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center mx-auto">
+                <Lock className="w-8 h-8" />
+              </div>
+              <h2 className="text-2xl font-extrabold text-slate-900 font-heading uppercase">
+                Acesso Restrito ao PDV
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-600">
+                Seu perfil não possui permissão para operar o PDV - Frente de Caixa.
+              </p>
+              <button
+                type="button"
+                onClick={() => handleNavigate('home')}
+                className="px-5 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Voltar à Loja
+              </button>
+            </div>
           ) : (
             <PDVView
               currentUser={currentUser}
@@ -541,31 +781,59 @@ export default function App() {
         )}
 
         {(currentView === 'financial' || currentView === 'financeiro') && (
-          <FinancialModuleView
-            currentUser={currentUser}
-            onNavigate={handleNavigate}
-            onUserChange={(user) => {
-              setCurrentUser(user);
-              refreshData();
-            }}
-          />
-        )}
-
-        {/* Módulo de Orçamento de Custos & Precificação (Acesso Direto com Proteção de Permissões) */}
-        {(currentView === 'cost_pricing' || currentView === 'precificacao' || currentView === 'custos') && (
-          currentUser.role === 'admin' || StorageService.hasUserPermission(currentUser, 'canViewCostPricingModule') ? (
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-              <CostPricingModuleView currentUser={currentUser} />
-            </div>
-          ) : (
+          !isStaff ? (
             <AdminLoginView
               onLoginSuccess={(user) => {
                 setCurrentUser(user);
                 refreshData();
-                setCurrentView('cost_pricing');
               }}
-              onNavigate={handleNavigate}
+              onNavigate={(view, param) => handleNavigate(view === 'admin' ? 'financial' : view, param)}
             />
+          ) : (
+            <FinancialModuleView
+              currentUser={currentUser}
+              onNavigate={handleNavigate}
+              onUserChange={(user) => {
+                setCurrentUser(user);
+                refreshData();
+              }}
+            />
+          )
+        )}
+
+        {/* Módulo de Orçamento de Custos & Precificação (Acesso Direto com Proteção de Permissões) */}
+        {(currentView === 'cost_pricing' || currentView === 'precificacao' || currentView === 'custos') && (
+          !isStaff ? (
+            <AdminLoginView
+              onLoginSuccess={(user) => {
+                setCurrentUser(user);
+                refreshData();
+              }}
+              onNavigate={(view, param) => handleNavigate(view === 'admin' ? 'cost_pricing' : view, param)}
+            />
+          ) : currentUser.role !== 'admin' && !StorageService.hasUserPermission(currentUser, 'canViewCostPricingModule') ? (
+            <div className="max-w-lg mx-auto px-4 py-16 text-center space-y-4">
+              <div className="w-16 h-16 rounded-3xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center mx-auto">
+                <Lock className="w-8 h-8" />
+              </div>
+              <h2 className="text-2xl font-extrabold text-slate-900 font-heading uppercase">
+                Acesso Restrito
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-600">
+                Seu perfil não possui permissão para acessar o módulo de Precificação & Custos.
+              </p>
+              <button
+                type="button"
+                onClick={() => handleNavigate('home')}
+                className="px-5 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Voltar à Loja
+              </button>
+            </div>
+          ) : (
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+              <CostPricingModuleView currentUser={currentUser} />
+            </div>
           )
         )}
 
@@ -596,7 +864,7 @@ export default function App() {
 
       {/* Footer (Hidden in PDV fullscreen mode or Maintenance mode) */}
       {currentView !== 'pdv' && currentView !== 'maintenance' && (
-        <Footer onNavigate={handleNavigate} />
+        <Footer currentUser={currentUser} onNavigate={handleNavigate} />
       )}
 
       {/* Shopping Cart Drawer */}
@@ -605,10 +873,12 @@ export default function App() {
         onClose={() => setIsCartOpen(false)}
         cart={cart}
         items={cart}
+        currentUser={currentUser}
         onCartChange={refreshData}
         onUpdateQuantity={handleUpdateCartQty}
         onRemoveItem={handleRemoveCartItem}
         onNavigate={handleNavigate}
+        onOpenAuth={openAuthModal}
         onCheckout={() => {
           setIsCartOpen(false);
           handleNavigate('checkout');
@@ -640,6 +910,7 @@ export default function App() {
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
+        initialCustomerMode={authModalMode}
         onLoginSuccess={(user) => {
           setCurrentUser(user);
           refreshData();

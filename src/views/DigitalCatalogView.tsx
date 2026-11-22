@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Product, Category, CompanySettings } from '../types';
+import { Product, Category, CompanySettings, UserProfile } from '../types';
 import { StorageService } from '../services/storage';
 import { Logo } from '../components/Logo';
 import { SEOHead } from '../components/SEOHead';
@@ -17,19 +17,24 @@ import {
   MessageSquare,
   ChevronRight,
   Filter,
+  Lock,
 } from 'lucide-react';
 
 interface DigitalCatalogViewProps {
   products: Product[];
   categories: Category[];
+  currentUser?: UserProfile;
   onNavigate: (view: string, param?: string) => void;
 }
 
 export const DigitalCatalogView: React.FC<DigitalCatalogViewProps> = ({
   products,
   categories,
+  currentUser,
   onNavigate,
 }) => {
+  const canAccessCatalogPdf = StorageService.hasUserPermission(currentUser, 'canAccessCatalogPdf');
+  const canViewPrices = StorageService.canViewPrices(currentUser);
   const [selectedCat, setSelectedCat] = useState<string>('all');
   const [showPriceTiers, setShowPriceTiers] = useState<boolean>(true);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -74,6 +79,40 @@ export const DigitalCatalogView: React.FC<DigitalCatalogViewProps> = ({
     const msg = `Olá! Segue nosso catálogo digital de produtos e brindes personalizados ${companySettings.tradeName || 'MB Personaliza'}: ${url}`;
     window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`, '_blank');
   };
+
+  if (!canAccessCatalogPdf) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-20 text-center space-y-5">
+        <div className="w-16 h-16 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto border border-rose-200">
+          <Lock className="w-8 h-8" />
+        </div>
+        <div className="space-y-2">
+          <h2 className="text-2xl font-heading font-black uppercase text-slate-900">
+            Acesso Restrito: Catálogo Digital PDF
+          </h2>
+          <p className="text-sm text-slate-600 leading-relaxed">
+            O catálogo digital diagramado para impressão está disponível apenas para perfis autorizados da equipe. Você pode navegar livremente pelo catálogo público de produtos ou solicitar um orçamento.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => onNavigate('catalog')}
+            className="px-5 py-2.5 bg-slate-900 hover:bg-[#E6007E] text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
+          >
+            Ver Catálogo da Loja
+          </button>
+          <button
+            type="button"
+            onClick={() => onNavigate('home')}
+            className="px-5 py-2.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+          >
+            Voltar ao Início
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8" id="digital-catalog-root">
@@ -238,7 +277,7 @@ export const DigitalCatalogView: React.FC<DigitalCatalogViewProps> = ({
 
                 {/* Price and Tiers */}
                 <div className="pt-2 border-t border-slate-200">
-                  {product.show_price ? (
+                  {canViewPrices && product.show_price ? (
                     <div>
                       <div className="flex items-baseline justify-between mb-1">
                         <span className="text-[10px] text-slate-500 font-medium">A partir de:</span>

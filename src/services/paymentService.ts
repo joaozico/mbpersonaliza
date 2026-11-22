@@ -1,5 +1,6 @@
 import { PaymentGatewayProvider, PaymentTransaction, PaymentGatewayConfig } from '../types';
 import { StorageService } from './storage';
+import { authFetch } from './authClient';
 
 export interface ProcessPaymentParams {
   gateway: PaymentGatewayProvider;
@@ -55,7 +56,7 @@ export const PaymentService = {
     message: string;
   }> {
     try {
-      const res = await fetch(`/api/payments/gateways/status?provider=${provider}`);
+      const res = await authFetch(`/api/payments/gateways/status?provider=${provider}`);
       if (res.ok) {
         const data = await res.json();
         return {
@@ -122,7 +123,7 @@ export const PaymentService = {
   // Process transaction
   async processPayment(params: ProcessPaymentParams): Promise<PaymentProcessResult> {
     try {
-      const response = await fetch('/api/payments/process', {
+      const response = await authFetch('/api/payments/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
@@ -183,7 +184,7 @@ export const PaymentService = {
     operatorName: string
   ): Promise<{ success: boolean; message: string }> {
     try {
-      const response = await fetch('/api/payments/refund', {
+      const response = await authFetch('/api/payments/refund', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transactionId, gateway, reason, operatorName }),

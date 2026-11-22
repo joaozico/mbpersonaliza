@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { RolePermissions, UserProfile, UserRole } from '../types';
+import { PermissionKey, RolePermissions } from '../types';
+import { hasServerPermission } from '../middleware/auth.ts';
 
 export const financialRouter = Router();
 
@@ -24,27 +25,16 @@ const serverAuditLogs: ServerSecurityAudit[] = [];
 
 /**
  * Middleware de Autenticação e Autorização para o Módulo Financeiro
- * Valida:
- * 1. Usuário autenticado (via headers x-user-id, x-user-role, x-user-email, x-user-status)
- * 2. Usuário ativo (status === 'ativo')
- * 3. Identidade do usuário
- * 4. Perfil/nível de acesso (admin possui bypass total)
- * 5. Permissão necessária passada como parâmetro
+ * Usa exclusivamente req.authUser validado via sessão PostgreSQL (nunca confia em headers x-user-*).
  */
 export function requireFinancialPermission(requiredPermission: keyof RolePermissions) {
   return (req: Request, res: Response, next: NextFunction) => {
-    const userId = (req.headers['x-user-id'] as string) || '';
-    const userRole = (req.headers['x-user-role'] as string) || '';
-    const userName = (req.headers['x-user-name'] as string) || 'Usuário Desconhecido';
-    const userEmail = (req.headers['x-user-email'] as string) || '';
-    const userStatus = (req.headers['x-user-status'] as string) || 'ativo';
-    const customPermissionsHeader = (req.headers['x-user-permissions'] as string) || '{}';
-
+    const authUser = req.authUser || null;
     const clientIp = (req.headers['x-forwarded-for'] as string) || req.ip || '127.0.0.1';
 
     // 1. Validar autenticação
-    if (!userId || !userRole) {
-      const auditEntry: ServerSecurityAudit = {
+    if (!authUser) {
+      serverAuditLogs.unshift({
         id: `sec-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         timestamp: new Date().toISOString(),
         userId: 'anonimo',
@@ -57,8 +47,7 @@ export function requireFinancialPermission(requiredPermission: keyof RolePermiss
         details: 'Tentativa de requisição não autenticada à API financeira.',
         ip: clientIp,
         origin: 'api',
-      };
-      serverAuditLogs.unshift(auditEntry);
+      });
 
       return res.status(401).json({
         success: false,
@@ -68,22 +57,21 @@ export function requireFinancialPermission(requiredPermission: keyof RolePermiss
     }
 
     // 2. Validar usuário ativo
-    if (userStatus === 'inativo') {
-      const auditEntry: ServerSecurityAudit = {
+    if (authUser.status === 'inativo') {
+      serverAuditLogs.unshift({
         id: `sec-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         timestamp: new Date().toISOString(),
-        userId,
-        userName,
-        userEmail,
-        userRole,
+        userId: authUser.id,
+        userName: authUser.name,
+        userEmail: authUser.email,
+        userRole: authUser.role,
         operation: `API_${req.method}_${req.path}`,
         permissionUsed: String(requiredPermission),
         result: 'bloqueado',
         details: `Usuário com cadastro inativo tentou executar ${req.method} ${req.path}.`,
         ip: clientIp,
         origin: 'api',
-      };
-      serverAuditLogs.unshift(auditEntry);
+      });
 
       return res.status(403).json({
         success: false,
@@ -92,39 +80,24 @@ export function requireFinancialPermission(requiredPermission: keyof RolePermiss
       });
     }
 
-    // 3. Administrador possui acesso total
-    if (userRole === 'admin') {
-      return next();
-    }
-
-    // 4. Validar permissão específica
-    let userPermissions: Partial<RolePermissions> = {};
-    try {
-      userPermissions = JSON.parse(customPermissionsHeader);
-    } catch {
-      userPermissions = {};
-    }
-
-    const hasPermission = Boolean(userPermissions[requiredPermission]);
-
-    if (!hasPermission) {
-      const auditEntry: ServerSecurityAudit = {
+    // 3. Validar permissão específica (admin possui acesso total via hasServerPermission)
+    if (!hasServerPermission(req, requiredPermission as PermissionKey)) {
+      serverAuditLogs.unshift({
         id: `sec-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         timestamp: new Date().toISOString(),
-        userId,
-        userName,
-        userEmail,
-        userRole,
+        userId: authUser.id,
+        userName: authUser.name,
+        userEmail: authUser.email,
+        userRole: authUser.role,
         operation: `API_${req.method}_${req.path}`,
         permissionUsed: String(requiredPermission),
         result: 'bloqueado',
-        details: `Acesso negado: Usuário '${userName}' (${userRole}) não possui a permissão '${String(
+        details: `Acesso negado: Usuário '${authUser.name}' (${authUser.role}) não possui a permissão '${String(
           requiredPermission
         )}' para acessar ${req.method} ${req.path}.`,
         ip: clientIp,
         origin: 'api',
-      };
-      serverAuditLogs.unshift(auditEntry);
+      });
 
       return res.status(403).json({
         success: false,

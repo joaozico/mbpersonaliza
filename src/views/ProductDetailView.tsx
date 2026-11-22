@@ -23,6 +23,7 @@ import {
   Printer,
   ChevronRight,
   Info,
+  Lock,
 } from 'lucide-react';
 
 import { FavoriteButton } from '../components/FavoriteButton';
@@ -34,6 +35,7 @@ interface ProductDetailViewProps {
   onNavigate: (view: string, param?: string) => void;
   onAddToCart: (item: CartItem, openDrawer?: boolean) => void;
   onOpenQuoteModal: (initialItem?: { product: Product; variant?: ProductVariant; quantity: number }) => void;
+  onOpenAuth?: (mode?: 'login' | 'signup') => void;
 }
 
 export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
@@ -43,7 +45,9 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
   onNavigate,
   onAddToCart,
   onOpenQuoteModal,
+  onOpenAuth,
 }) => {
+  const canViewPrices = StorageService.canViewPrices(currentUser);
   const product = (products || []).find((p) => p.id === productId || p.slug === productId) || products?.[0];
 
   const [activeImageIndex, setActiveImageIndex] = useState(0);
@@ -165,7 +169,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
           description: product.description,
           image: product.images?.[0] || '',
           sku: product.code,
-          price: currentUnitPrice,
+          price: canViewPrices && product.show_price ? currentUnitPrice : undefined,
           currency: 'BRL',
           inStock: product.is_active && product.stock_qty > 0,
           category: product.categoryId,
@@ -211,6 +215,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                 productId={product.id}
                 productName={product.name}
                 currentUser={currentUser}
+                onRequireLogin={() => onOpenAuth?.('login')}
                 size="md"
               />
             </div>
@@ -286,7 +291,39 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
           </div>
 
           {/* PRICING & PRICE TIERS TABLE */}
-          {product.show_price ? (
+          {!canViewPrices ? (
+            <div className="bg-slate-900 text-white p-5 rounded-2xl border border-slate-800 space-y-4 shadow-sm">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-[#FFDD00] flex-shrink-0">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-white text-sm uppercase font-heading">
+                    Preços exclusivos para clientes cadastrados
+                  </h4>
+                  <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                    Entre ou cadastre-se para consultar os preços e a tabela progressiva por quantidade deste item.
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => onOpenAuth?.('login')}
+                  className="px-4 py-2.5 bg-white hover:bg-slate-100 text-slate-950 font-extrabold text-xs rounded-xl transition-colors cursor-pointer"
+                >
+                  ENTRAR
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onOpenAuth?.('signup')}
+                  className="px-4 py-2.5 bg-[#E6007E] hover:bg-[#c9006e] text-white font-extrabold text-xs rounded-xl transition-colors cursor-pointer"
+                >
+                  CADASTRE-SE
+                </button>
+              </div>
+            </div>
+          ) : product.show_price ? (
             <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-4">
               <div className="flex items-end justify-between">
                 <div>
@@ -479,7 +516,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
 
               {/* Action Buttons */}
               <div className="flex-1 flex gap-2 pt-5">
-                {product.show_price ? (
+                {canViewPrices && product.show_price ? (
                   <>
                     <button
                       onClick={handleAddToCart}
@@ -512,7 +549,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
             </div>
 
             {/* Direct quote link even for priced items */}
-            {product.show_price && (
+            {canViewPrices && product.show_price && (
               <div className="text-center">
                 <button
                   onClick={handleQuoteClick}
@@ -582,7 +619,9 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                   {rel.name}
                 </h4>
                 <div className="mt-1 flex items-center justify-between text-xs">
-                  {rel.show_price ? (
+                  {!canViewPrices ? (
+                    <span className="text-[11px] text-slate-500 font-semibold">Entre para consultar</span>
+                  ) : rel.show_price ? (
                     <span className="font-bold text-slate-900">
                       R$ {(rel.promo_price || rel.base_price).toFixed(2)}
                     </span>

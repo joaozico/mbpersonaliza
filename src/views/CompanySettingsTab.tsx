@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { CompanySettings, WhatsAppContact, UserProfile, MaintenanceSettings } from '../types';
+import { CompanySettings, WhatsAppContact, UserProfile, MaintenanceSettings, PriceVisibilityMode } from '../types';
 import { StorageService } from '../services/storage';
 import { INITIAL_MAINTENANCE_SETTINGS } from '../data/initialData';
 import { compressImageFile } from '../utils/imageOptimizer';
@@ -68,6 +68,9 @@ export const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({
   initialSubSection = 'geral',
 }) => {
   const [settings, setSettings] = useState<CompanySettings>(() => StorageService.getCompanySettings());
+  const [priceVisibilityMode, setPriceVisibilityMode] = useState<PriceVisibilityMode>(() =>
+    StorageService.getPriceVisibilityMode()
+  );
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const showError = (msg: string) => {
@@ -449,7 +452,7 @@ export const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({
     setSaveSuccess(false);
   };
 
-  const handleSave = (e?: React.FormEvent | React.MouseEvent) => {
+  const handleSave = async (e?: React.FormEvent | React.MouseEvent) => {
     if (e && typeof e.preventDefault === 'function') {
       e.preventDefault();
     }
@@ -479,15 +482,17 @@ export const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({
     }
 
     const result = StorageService.saveCompanySettings(settings);
+    const visResult = await StorageService.savePriceVisibilityMode(priceVisibilityMode);
 
-    if (result.success) {
+    if (result.success && visResult.success) {
       setSaveSuccess(true);
       setErrorMessage(null);
-      // Auto-scroll to top to see confirmation
       window.scrollTo({ top: 0, behavior: 'smooth' });
       setTimeout(() => {
         setSaveSuccess(false);
       }, 5000);
+    } else if (!visResult.success) {
+      setErrorMessage(visResult.error || 'Erro ao salvar configuração de visibilidade dos preços.');
     } else {
       setErrorMessage(result.error || 'Erro ao salvar alterações no armazenamento.');
     }
@@ -978,6 +983,90 @@ export const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({
                     placeholder="Retirada grátis em nosso balcão ou envio via Sedex, PAC e transportadoras com seguro."
                   />
                 </div>
+              </div>
+            </div>
+
+            {/* VISIBILIDADE DOS PREÇOS DOS PRODUTOS */}
+            <div className="pt-5 border-t border-slate-100 space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <h4 className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-2">
+                    <Eye className="w-4 h-4 text-[#E6007E]" />
+                    <span>VISIBILIDADE DOS PREÇOS DOS PRODUTOS</span>
+                  </h4>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Defina se os preços do catálogo são exibidos apenas para clientes cadastrados e autenticados ou para todos os visitantes da loja.
+                  </p>
+                </div>
+                <span
+                  className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                    priceVisibilityMode === 'registered_only'
+                      ? 'bg-pink-100 text-[#E6007E]'
+                      : 'bg-emerald-100 text-emerald-700'
+                  }`}
+                >
+                  {priceVisibilityMode === 'registered_only'
+                    ? 'Restrito a Clientes Cadastrados'
+                    : 'Visível para Todos'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label
+                  className={`p-4 rounded-2xl border-2 cursor-pointer transition-all flex items-start gap-3 ${
+                    priceVisibilityMode === 'registered_only'
+                      ? 'border-[#E6007E] bg-pink-50/50 shadow-xs'
+                      : 'border-slate-200 bg-slate-50/40 hover:border-slate-300'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="priceVisibilityMode"
+                    value="registered_only"
+                    checked={priceVisibilityMode === 'registered_only'}
+                    onChange={() => {
+                      setPriceVisibilityMode('registered_only');
+                      setSaveSuccess(false);
+                    }}
+                    className="mt-1 accent-[#E6007E]"
+                  />
+                  <div className="space-y-1">
+                    <p className="text-xs font-extrabold text-slate-900 uppercase">
+                      OPÇÃO 1 – PREÇOS VISÍVEIS SOMENTE PARA CLIENTES CADASTRADOS
+                    </p>
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      Visitantes não autenticados navegam normalmente pelos produtos, imagens e descrições, porém os valores ficam ocultos até entrarem ou criarem uma conta.
+                    </p>
+                  </div>
+                </label>
+
+                <label
+                  className={`p-4 rounded-2xl border-2 cursor-pointer transition-all flex items-start gap-3 ${
+                    priceVisibilityMode === 'all'
+                      ? 'border-emerald-600 bg-emerald-50/50 shadow-xs'
+                      : 'border-slate-200 bg-slate-50/40 hover:border-slate-300'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="priceVisibilityMode"
+                    value="all"
+                    checked={priceVisibilityMode === 'all'}
+                    onChange={() => {
+                      setPriceVisibilityMode('all');
+                      setSaveSuccess(false);
+                    }}
+                    className="mt-1 accent-emerald-600"
+                  />
+                  <div className="space-y-1">
+                    <p className="text-xs font-extrabold text-slate-900 uppercase">
+                      OPÇÃO 2 – PREÇOS VISÍVEIS PARA TODOS
+                    </p>
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      Todos os visitantes e clientes cadastrados visualizam os preços, faixas de desconto e valores diretamente na vitrine pública.
+                    </p>
+                  </div>
+                </label>
               </div>
             </div>
           </div>

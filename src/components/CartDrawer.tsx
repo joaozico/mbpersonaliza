@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { CartItem } from '../types';
+import { CartItem, UserProfile } from '../types';
 import { StorageService } from '../services/storage';
 import {
   X,
@@ -17,6 +17,7 @@ import {
   Tag,
   CheckCircle2,
   AlertCircle,
+  Lock,
 } from 'lucide-react';
 
 export interface CartDrawerProps {
@@ -24,12 +25,14 @@ export interface CartDrawerProps {
   onClose: () => void;
   cart?: CartItem[];
   items?: CartItem[];
+  currentUser?: UserProfile;
   onCartChange?: () => void;
   onUpdateQuantity?: (itemId: string, newQty: number) => void;
   onRemoveItem?: (itemId: string) => void;
   onNavigate?: (view: string, param?: string) => void;
   onCheckout?: () => void;
   onRequestQuote?: () => void;
+  onOpenAuth?: (mode?: 'login' | 'signup') => void;
 }
 
 export const CartDrawer: React.FC<CartDrawerProps> = ({
@@ -37,13 +40,17 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   onClose,
   cart,
   items,
+  currentUser,
   onCartChange,
   onUpdateQuantity,
   onRemoveItem,
   onNavigate,
   onCheckout,
   onRequestQuote,
+  onOpenAuth,
 }) => {
+  const canViewPrices = StorageService.canViewPrices(currentUser);
+  const isVisitor = !currentUser || currentUser.role === 'visitante';
   // Coupon state (must remain before any early return to obey React Rules of Hooks)
   const [couponCode, setCouponCode] = React.useState('');
   const [appliedCoupon, setAppliedCoupon] = React.useState<any>(null);
@@ -179,6 +186,16 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
   const handleGoToCheckout = () => {
     onClose();
+    if (isVisitor) {
+      if (onOpenAuth) {
+        onOpenAuth('login');
+      } else if (onRequestQuote) {
+        onRequestQuote();
+      } else if (onNavigate) {
+        onNavigate('quote');
+      }
+      return;
+    }
     if (onCheckout) {
       onCheckout();
     } else if (onNavigate) {
@@ -234,7 +251,11 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 >
                   Seu Carrinho ({totalItemCount} {totalItemCount === 1 ? 'item' : 'itens'})
                 </h3>
-                <p className="text-[11px] text-slate-500">Tabela de preço progressiva aplicada</p>
+                <p className="text-[11px] text-slate-500">
+                  {canViewPrices
+                    ? 'Tabela de preço progressiva aplicada'
+                    : 'Faça login ou cadastre-se para consultar os preços'}
+                </p>
               </div>
             </div>
             <button
@@ -378,14 +399,23 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                         </div>
 
                         {/* Price calc */}
-                        <div className="text-right">
-                          <div className="text-[11px] text-slate-400">
-                            {quantity} un × R$ {unitPrice.toFixed(2)}
+                        {canViewPrices ? (
+                          <div className="text-right">
+                            <div className="text-[11px] text-slate-400">
+                              {quantity} un × R$ {unitPrice.toFixed(2)}
+                            </div>
+                            <div className="text-sm font-black text-slate-900 font-heading">
+                              R$ {itemTotal.toFixed(2)}
+                            </div>
                           </div>
-                          <div className="text-sm font-black text-slate-900 font-heading">
-                            R$ {itemTotal.toFixed(2)}
+                        ) : (
+                          <div className="text-right">
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500">
+                              <Lock className="w-3 h-3 text-[#E6007E]" />
+                              Entre para ver preços
+                            </span>
                           </div>
-                        </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -397,102 +427,142 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           {/* Footer with totals & Action buttons */}
           {cartList.length > 0 && (
             <div className="p-4 sm:p-5 border-t border-slate-200 bg-slate-50 space-y-3">
-              <div className="space-y-1.5 text-xs">
-                {/* Campo de Cupom no Drawer */}
-                <div className="pb-2 border-b border-slate-200">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
-                      <Ticket className="w-3.5 h-3.5 text-[#E6007E]" />
-                      <span>Possui cupom de desconto?</span>
+              {canViewPrices ? (
+                <div className="space-y-1.5 text-xs">
+                  {/* Campo de Cupom no Drawer */}
+                  <div className="pb-2 border-b border-slate-200">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
+                        <Ticket className="w-3.5 h-3.5 text-[#E6007E]" />
+                        <span>Possui cupom de desconto?</span>
+                      </span>
+                    </div>
+
+                    {!appliedCoupon ? (
+                      <div className="flex gap-1.5">
+                        <input
+                          type="text"
+                          value={couponCode}
+                          onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleApplyCoupon())}
+                          placeholder="Ex: PRIMEIRACOMPRA"
+                          className="flex-1 px-2.5 py-1.5 text-xs font-mono uppercase bg-white border border-slate-300 rounded-lg focus:outline-none focus:border-slate-800"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleApplyCoupon}
+                          disabled={isApplying || !couponCode.trim()}
+                          className="px-3 py-1.5 bg-slate-900 hover:bg-[#E6007E] text-white text-xs font-bold rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          Aplicar
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <Tag className="w-3.5 h-3.5 text-emerald-600" />
+                          <span className="font-mono font-bold text-emerald-900 text-xs">{appliedCoupon.code}</span>
+                          <span className="text-[10px] text-emerald-700 font-semibold">
+                            (- R$ {couponDiscount.toFixed(2)})
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleRemoveCoupon}
+                          className="text-emerald-700 hover:text-rose-600 p-0.5 rounded cursor-pointer"
+                          title="Remover"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+
+                    {couponMsg && (
+                      <div
+                        className={`mt-1.5 p-1.5 rounded text-[10px] flex items-center gap-1 ${
+                          couponMsg.type === 'success'
+                            ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                            : 'bg-rose-50 text-rose-800 border border-rose-200'
+                        }`}
+                      >
+                        {couponMsg.type === 'success' ? (
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                        ) : (
+                          <AlertCircle className="w-3 h-3 text-rose-600 shrink-0" />
+                        )}
+                        <span>{couponMsg.text}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex justify-between text-slate-600">
+                    <span>Subtotal ({totalItemCount} itens):</span>
+                    <span className="font-semibold text-slate-800">R$ {subtotal.toFixed(2)}</span>
+                  </div>
+
+                  {couponDiscount > 0 && (
+                    <div className="flex justify-between text-[#E6007E] bg-pink-50 px-2 py-1 rounded font-semibold border border-pink-100">
+                      <span>Desconto do Cupom ({appliedCoupon?.code}):</span>
+                      <span>- R$ {couponDiscount.toFixed(2)}</span>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between text-emerald-700 bg-emerald-50 px-2.5 py-1.5 rounded-lg font-medium border border-emerald-100">
+                    <span className="flex items-center gap-1.5">
+                      <QrCode className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Desconto de 5% no PIX:</span>
+                    </span>
+                    <span className="font-bold">- R$ {pixDiscount.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm font-bold text-slate-900 pt-1.5 border-t border-slate-200">
+                    <span>Total à vista no PIX:</span>
+                    <span className="font-extrabold text-base text-[#E6007E] font-heading">
+                      R$ {totalWithPix.toFixed(2)}
                     </span>
                   </div>
-
-                  {!appliedCoupon ? (
-                    <div className="flex gap-1.5">
-                      <input
-                        type="text"
-                        value={couponCode}
-                        onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
-                        onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleApplyCoupon())}
-                        placeholder="Ex: PRIMEIRACOMPRA"
-                        className="flex-1 px-2.5 py-1.5 text-xs font-mono uppercase bg-white border border-slate-300 rounded-lg focus:outline-none focus:border-slate-800"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleApplyCoupon}
-                        disabled={isApplying || !couponCode.trim()}
-                        className="px-3 py-1.5 bg-slate-900 hover:bg-[#E6007E] text-white text-xs font-bold rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-                      >
-                        Aplicar
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <Tag className="w-3.5 h-3.5 text-emerald-600" />
-                        <span className="font-mono font-bold text-emerald-900 text-xs">{appliedCoupon.code}</span>
-                        <span className="text-[10px] text-emerald-700 font-semibold">
-                          (- R$ {couponDiscount.toFixed(2)})
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleRemoveCoupon}
-                        className="text-emerald-700 hover:text-rose-600 p-0.5 rounded cursor-pointer"
-                        title="Remover"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  )}
-
-                  {couponMsg && (
-                    <div
-                      className={`mt-1.5 p-1.5 rounded text-[10px] flex items-center gap-1 ${
-                        couponMsg.type === 'success'
-                          ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                          : 'bg-rose-50 text-rose-800 border border-rose-200'
-                      }`}
-                    >
-                      {couponMsg.type === 'success' ? (
-                        <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
-                      ) : (
-                        <AlertCircle className="w-3 h-3 text-rose-600 shrink-0" />
-                      )}
-                      <span>{couponMsg.text}</span>
-                    </div>
-                  )}
+                  <p className="text-[10px] text-slate-500 text-center">
+                    Ou R$ {subtotal.toFixed(2)} em até 12x no cartão de crédito / Faturado PJ
+                  </p>
                 </div>
-
-                <div className="flex justify-between text-slate-600">
-                  <span>Subtotal ({totalItemCount} itens):</span>
-                  <span className="font-semibold text-slate-800">R$ {subtotal.toFixed(2)}</span>
-                </div>
-
-                {couponDiscount > 0 && (
-                  <div className="flex justify-between text-[#E6007E] bg-pink-50 px-2 py-1 rounded font-semibold border border-pink-100">
-                    <span>Desconto do Cupom ({appliedCoupon?.code}):</span>
-                    <span>- R$ {couponDiscount.toFixed(2)}</span>
+              ) : (
+                <div className="p-3.5 bg-white border border-slate-200 rounded-2xl space-y-2.5">
+                  <div className="flex items-start gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-pink-50 text-[#E6007E] flex items-center justify-center shrink-0">
+                      <Lock className="w-4 h-4" />
+                    </div>
+                    <div className="space-y-0.5">
+                      <p className="text-xs font-extrabold text-slate-900">
+                        Entre ou cadastre-se para consultar os preços.
+                      </p>
+                      <p className="text-[11px] text-slate-500">
+                        {totalItemCount} {totalItemCount === 1 ? 'unidade selecionada' : 'unidades selecionadas'} para cotação ou pedido.
+                      </p>
+                    </div>
                   </div>
-                )}
-
-                <div className="flex justify-between text-emerald-700 bg-emerald-50 px-2.5 py-1.5 rounded-lg font-medium border border-emerald-100">
-                  <span className="flex items-center gap-1.5">
-                    <QrCode className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Desconto de 5% no PIX:</span>
-                  </span>
-                  <span className="font-bold">- R$ {pixDiscount.toFixed(2)}</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onOpenAuth?.('login');
+                      }}
+                      className="flex-1 py-2 bg-slate-900 hover:bg-[#E6007E] text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                    >
+                      Entrar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onOpenAuth?.('signup');
+                      }}
+                      className="flex-1 py-2 bg-[#E6007E] hover:bg-pink-700 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                    >
+                      Cadastre-se
+                    </button>
+                  </div>
                 </div>
-                <div className="flex justify-between text-sm font-bold text-slate-900 pt-1.5 border-t border-slate-200">
-                  <span>Total à vista no PIX:</span>
-                  <span className="font-extrabold text-base text-[#E6007E] font-heading">
-                    R$ {totalWithPix.toFixed(2)}
-                  </span>
-                </div>
-                <p className="text-[10px] text-slate-500 text-center">
-                  Ou R$ {subtotal.toFixed(2)} em até 12x no cartão de crédito / Faturado PJ
-                </p>
-              </div>
+              )}
 
               <div className="space-y-2 pt-1">
                 <button
@@ -500,7 +570,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   className="w-full py-3 bg-slate-900 hover:bg-[#E6007E] text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer group"
                   id="btn-drawer-checkout"
                 >
-                  <span>Finalizar Pedido Online</span>
+                  <span>{isVisitor ? 'Entrar para Finalizar Pedido' : 'Finalizar Pedido Online'}</span>
                   <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                 </button>
 

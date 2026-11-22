@@ -110,13 +110,15 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const resultsContainerRef = useRef<HTMLDivElement>(null);
 
-  // Check admin role
+  // Check admin role & permissions
   const isStaffUser = Boolean(
     currentUser &&
     currentUser.role &&
     currentUser.role !== 'cliente' &&
     currentUser.role !== 'visitante'
   );
+  const canViewPrices = StorageService.canViewPrices(currentUser);
+  const canAccessCatalogPdf = StorageService.hasUserPermission(currentUser, 'canAccessCatalogPdf');
 
   // Focus input on open
   useEffect(() => {
@@ -199,7 +201,9 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
           if (nameMatch) score += 30;
           if (p.is_featured) score += 5;
 
-          const priceText = p.show_price
+          const priceText = !canViewPrices
+            ? 'Entre para consultar'
+            : p.show_price
             ? `R$ ${(p.promo_price || p.base_price || 0).toFixed(2).replace('.', ',')}`
             : 'Sob Consulta';
 
@@ -297,14 +301,18 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
           icon: FileSpreadsheet,
           view: 'quote',
         },
-        {
-          id: 'nav-digital-catalog',
-          title: 'Catálogo Digital Interativo',
-          subtitle: 'Visualizar revista digital e baixar catálogo completo em PDF',
-          keywords: ['catalogo digital', 'revista', 'pdf download', 'apresentacao', 'portfolio'],
-          icon: FileText,
-          view: 'digital-catalog',
-        },
+        ...(canAccessCatalogPdf
+          ? [
+              {
+                id: 'nav-digital-catalog',
+                title: 'Catálogo Digital Interativo',
+                subtitle: 'Visualizar revista digital e baixar catálogo completo em PDF',
+                keywords: ['catalogo digital', 'revista', 'pdf download', 'apresentacao', 'portfolio'],
+                icon: FileText,
+                view: 'digital-catalog',
+              },
+            ]
+          : []),
         {
           id: 'nav-customer-portal',
           title: 'Minha Conta & Acompanhamento de Pedidos',
@@ -383,13 +391,40 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
 
     // 4. ADMIN & MANAGEMENT SCOPE (If staff member)
     if (isStaffUser && (activeFilter === 'all' || activeFilter === 'admin')) {
+      const hasAdminPanelPerm =
+        StorageService.hasUserPermission(currentUser, 'canViewDashboard') ||
+        StorageService.hasUserPermission(currentUser, 'canManageProducts') ||
+        StorageService.hasUserPermission(currentUser, 'canManageQuotes') ||
+        StorageService.hasUserPermission(currentUser, 'canManageOrders') ||
+        StorageService.hasUserPermission(currentUser, 'canManageStock') ||
+        StorageService.hasUserPermission(currentUser, 'canManageUsers') ||
+        StorageService.hasUserPermission(currentUser, 'canManageCompanySettings') ||
+        StorageService.hasUserPermission(currentUser, 'canManageDeliverySettings') ||
+        StorageService.hasUserPermission(currentUser, 'canCustomizeLayout') ||
+        StorageService.hasUserPermission(currentUser, 'canViewFinancialTransactions') ||
+        StorageService.hasUserPermission(currentUser, 'canManagePaymentGateways') ||
+        StorageService.hasUserPermission(currentUser, 'canOpenCloseCashRegister') ||
+        StorageService.hasUserPermission(currentUser, 'canConfigureBoletoRules') ||
+        StorageService.hasUserPermission(currentUser, 'canViewCoupons') ||
+        StorageService.hasUserPermission(currentUser, 'canManageMaintenanceMode');
+
       // Management tabs
       const adminModules = [
-        { id: 'adm-panel', title: 'Painel Administrativo Completo', view: 'admin', keywords: ['admin', 'painel', 'gestao', 'configuracoes'] },
-        { id: 'adm-pdv', title: 'PDV - Frente de Caixa (Loja Física)', view: 'pdv', keywords: ['pdv', 'caixa', 'frente de caixa', 'balcao', 'venda rapida'] },
-        { id: 'adm-fin', title: 'Módulo Financeiro & Fluxo de Caixa', view: 'financial', keywords: ['financeiro', 'dre', 'contas a pagar', 'receber', 'banco'] },
-        { id: 'adm-cost', title: 'Orçamento de Custos & Precificação de Produtos', view: 'cost_pricing', keywords: ['custos', 'precificacao', 'margem', 'markup', 'lucro'] },
-        { id: 'adm-metrics', title: 'Métricas de Acessos & Visualizações do Site', view: 'metrics', keywords: ['metricas', 'analytics', 'visitas', 'graficos', 'estatisticas'] },
+        ...(hasAdminPanelPerm
+          ? [{ id: 'adm-panel', title: 'Painel Administrativo Completo', view: 'admin', keywords: ['admin', 'painel', 'gestao', 'configuracoes'] }]
+          : []),
+        ...(StorageService.hasUserPermission(currentUser, 'canAccessPDV')
+          ? [{ id: 'adm-pdv', title: 'PDV - Frente de Caixa (Loja Física)', view: 'pdv', keywords: ['pdv', 'caixa', 'frente de caixa', 'balcao', 'venda rapida'] }]
+          : []),
+        ...(StorageService.hasUserPermission(currentUser, 'canViewFinancialModule')
+          ? [{ id: 'adm-fin', title: 'Módulo Financeiro & Fluxo de Caixa', view: 'financial', keywords: ['financeiro', 'dre', 'contas a pagar', 'receber', 'banco'] }]
+          : []),
+        ...(StorageService.hasUserPermission(currentUser, 'canViewCostPricingModule')
+          ? [{ id: 'adm-cost', title: 'Orçamento de Custos & Precificação de Produtos', view: 'cost_pricing', keywords: ['custos', 'precificacao', 'margem', 'markup', 'lucro'] }]
+          : []),
+        ...(StorageService.hasUserPermission(currentUser, 'canViewSiteMetrics')
+          ? [{ id: 'adm-metrics', title: 'Métricas de Acessos & Visualizações do Site', view: 'metrics', keywords: ['metricas', 'analytics', 'visitas', 'graficos', 'estatisticas'] }]
+          : []),
       ];
 
       adminModules.forEach((m) => {
@@ -412,95 +447,101 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
         }
       });
 
-      // Search Orders
-      try {
-        const orders = StorageService.getOrders();
-        orders.forEach((ord) => {
-          if (
-            (ord.code || '').toLowerCase().includes(q) ||
-            (ord.clientName || '').toLowerCase().includes(q) ||
-            (ord.clientEmail || '').toLowerCase().includes(q) ||
-            (ord.clientCompany || '').toLowerCase().includes(q)
-          ) {
-            items.push({
-              id: `ord-${ord.id}`,
-              type: 'order',
-              title: `Pedido ${ord.code} - ${ord.clientName}`,
-              subtitle: `Total: R$ ${ord.total.toFixed(2)} • ${ord.paymentStatus} • ${ord.items.length} itens`,
-              icon: FileText,
-              badge: `Pedido (${ord.orderStatus || ord.paymentStatus})`,
-              badgeColor: 'bg-blue-100 text-blue-900',
-              action: () => {
-                saveRecentSearch(query);
-                onClose();
-                onNavigate('admin');
-              },
-              score: 28,
-            });
-          }
-        });
-      } catch {}
+      // Search Orders (only if permitted)
+      if (StorageService.hasUserPermission(currentUser, 'canManageOrders')) {
+        try {
+          const orders = StorageService.getOrders();
+          orders.forEach((ord) => {
+            if (
+              (ord.code || '').toLowerCase().includes(q) ||
+              (ord.clientName || '').toLowerCase().includes(q) ||
+              (ord.clientEmail || '').toLowerCase().includes(q) ||
+              (ord.clientCompany || '').toLowerCase().includes(q)
+            ) {
+              items.push({
+                id: `ord-${ord.id}`,
+                type: 'order',
+                title: `Pedido ${ord.code} - ${ord.clientName}`,
+                subtitle: `Total: R$ ${ord.total.toFixed(2)} • ${ord.paymentStatus} • ${ord.items.length} itens`,
+                icon: FileText,
+                badge: `Pedido (${ord.orderStatus || ord.paymentStatus})`,
+                badgeColor: 'bg-blue-100 text-blue-900',
+                action: () => {
+                  saveRecentSearch(query);
+                  onClose();
+                  onNavigate('admin');
+                },
+                score: 28,
+              });
+            }
+          });
+        } catch {}
+      }
 
-      // Search Quotes
-      try {
-        const quotes = StorageService.getQuotes();
-        quotes.forEach((qt) => {
-          if (
-            (qt.code || '').toLowerCase().includes(q) ||
-            (qt.clientName || '').toLowerCase().includes(q) ||
-            (qt.clientEmail || '').toLowerCase().includes(q) ||
-            (qt.clientCompany || '').toLowerCase().includes(q)
-          ) {
-            items.push({
-              id: `qt-${qt.id}`,
-              type: 'quote',
-              title: `Orçamento ${qt.code} - ${qt.clientName}`,
-              subtitle: `Total Est.: R$ ${(qt.totalEstimated || 0).toFixed(2)} • ${qt.status} • ${qt.clientCompany || qt.clientEmail}`,
-              icon: FileSpreadsheet,
-              badge: `Orçamento (${qt.status})`,
-              badgeColor: 'bg-purple-100 text-purple-900',
-              action: () => {
-                saveRecentSearch(query);
-                onClose();
-                onNavigate('admin');
-              },
-              score: 27,
-            });
-          }
-        });
-      } catch {}
+      // Search Quotes (only if permitted)
+      if (StorageService.hasUserPermission(currentUser, 'canManageQuotes')) {
+        try {
+          const quotes = StorageService.getQuotes();
+          quotes.forEach((qt) => {
+            if (
+              (qt.code || '').toLowerCase().includes(q) ||
+              (qt.clientName || '').toLowerCase().includes(q) ||
+              (qt.clientEmail || '').toLowerCase().includes(q) ||
+              (qt.clientCompany || '').toLowerCase().includes(q)
+            ) {
+              items.push({
+                id: `qt-${qt.id}`,
+                type: 'quote',
+                title: `Orçamento ${qt.code} - ${qt.clientName}`,
+                subtitle: `Total Est.: R$ ${(qt.totalEstimated || 0).toFixed(2)} • ${qt.status} • ${qt.clientCompany || qt.clientEmail}`,
+                icon: FileSpreadsheet,
+                badge: `Orçamento (${qt.status})`,
+                badgeColor: 'bg-purple-100 text-purple-900',
+                action: () => {
+                  saveRecentSearch(query);
+                  onClose();
+                  onNavigate('admin');
+                },
+                score: 27,
+              });
+            }
+          });
+        } catch {}
+      }
 
-      // Search Coupons
-      try {
-        const coupons = StorageService.getCoupons();
-        coupons.forEach((cpn) => {
-          if (
-            (cpn.code || '').toLowerCase().includes(q) ||
-            (cpn.campaignName || '').toLowerCase().includes(q)
-          ) {
-            items.push({
-              id: `cpn-${cpn.id}`,
-              type: 'coupon',
-              title: `Cupom ${cpn.code}: ${cpn.campaignName}`,
-              subtitle: `Desconto: ${cpn.discountType === 'percentage' ? `${cpn.discountValue}%` : `R$ ${cpn.discountValue.toFixed(2)}`} • Status: ${cpn.status}`,
-              icon: Tag,
-              badge: 'Cupom',
-              badgeColor: 'bg-pink-100 text-pink-900',
-              action: () => {
-                saveRecentSearch(query);
-                onClose();
-                onNavigate('admin');
-              },
-              score: 26,
-            });
-          }
-        });
-      } catch {}
+      // Search Coupons (only if permitted)
+      if (StorageService.hasUserPermission(currentUser, 'canViewCoupons')) {
+        try {
+          const coupons = StorageService.getCoupons();
+          coupons.forEach((cpn) => {
+            if (
+              (cpn.code || '').toLowerCase().includes(q) ||
+              (cpn.campaignName || '').toLowerCase().includes(q)
+            ) {
+              items.push({
+                id: `cpn-${cpn.id}`,
+                type: 'coupon',
+                title: `Cupom ${cpn.code}: ${cpn.campaignName}`,
+                subtitle: `Desconto: ${cpn.discountType === 'percentage' ? `${cpn.discountValue}%` : `R$ ${cpn.discountValue.toFixed(2)}`} • Status: ${cpn.status}`,
+                icon: Tag,
+                badge: 'Cupom',
+                badgeColor: 'bg-pink-100 text-pink-900',
+                action: () => {
+                  saveRecentSearch(query);
+                  onClose();
+                  onNavigate('admin');
+                },
+                score: 26,
+              });
+            }
+          });
+        } catch {}
+      }
     }
 
     // Sort by score descending
     return items.sort((a, b) => (b.score || 0) - (a.score || 0));
-  }, [query, activeFilter, products, categories, subcategories, isStaffUser, onNavigate, onClose, onOpenCart]);
+  }, [query, activeFilter, products, categories, subcategories, isStaffUser, canViewPrices, canAccessCatalogPdf, currentUser, onNavigate, onClose, onOpenCart]);
 
   // Adjust selectedIndex when result length changes
   useEffect(() => {

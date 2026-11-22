@@ -5,6 +5,7 @@ import {
   StrickerServiceLine,
 } from '../../types/stricker';
 import { INITIAL_STRICKER_ORDERS } from '../../data/strickerInitialData';
+import { authFetch } from '../authClient';
 
 const STORAGE_KEYS = {
   ORDERS: 'mb_stricker_orders_v1',
@@ -97,7 +98,7 @@ export class StrickerOrderService {
     }
 
     try {
-      const response = await fetch('/api/stricker/orders/create', {
+      const response = await authFetch('/api/stricker/orders/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(orderPayload),

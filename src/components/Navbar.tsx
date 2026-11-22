@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Logo } from './Logo';
-import { RoleSwitcher } from './RoleSwitcher';
 import { UserProfile, Product, Category, CompanySettings } from '../types';
 import { StorageService } from '../services/storage';
 import { WhatsAppContactModal } from './WhatsAppContactModal';
@@ -35,6 +34,7 @@ interface NavbarProps {
   products: Product[];
   categories: Category[];
   onOpenGlobalSearch?: (initialQuery?: string) => void;
+  onOpenAuth?: (mode?: 'login' | 'signup') => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -47,6 +47,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   products,
   categories,
   onOpenGlobalSearch,
+  onOpenAuth,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -79,8 +80,24 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const cleanWhatsapp = (companySettings.whatsapp || '(11) 98765-4321').replace(/\D/g, '');
 
+  const isVisitor = !currentUser || currentUser.role === 'visitante';
+  const isCustomer = currentUser?.role === 'cliente';
   const isAdminRole = ['admin', 'gerente', 'vendedor', 'estoquista'].includes(currentUser.role);
-  const canViewFinancial = StorageService.hasUserPermission(currentUser, 'canViewFinancialModule');
+  const canViewFinancial =
+    isAdminRole && StorageService.hasUserPermission(currentUser, 'canViewFinancialModule');
+  const canAccessPDV =
+    isAdminRole && StorageService.hasUserPermission(currentUser, 'canAccessPDV');
+  const canViewDashboard =
+    isAdminRole && StorageService.hasUserPermission(currentUser, 'canViewDashboard');
+  const canAccessCatalogPdf =
+    isAdminRole && StorageService.hasUserPermission(currentUser, 'canAccessCatalogPdf');
+
+  const handleLogout = async () => {
+    await StorageService.logout();
+    onUserChange(StorageService.getCurrentUser());
+    setIsMobileMenuOpen(false);
+    onNavigate('home');
+  };
 
   // Search autocomplete
   const filteredProducts = searchQuery.trim().length > 1
@@ -156,39 +173,35 @@ export const Navbar: React.FC<NavbarProps> = ({
               </button>
 
               {isAdminRole ? (
-              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2">
+                  {canViewDashboard && (
+                    <button
+                      onClick={() => onNavigate('admin')}
+                      className="flex items-center gap-1 text-[#FFDD00] hover:text-amber-300 text-xs font-bold transition-colors cursor-pointer"
+                      title="Acessar Painel Administrativo"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Painel Admin</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={handleLogout}
+                    className="text-[10px] text-slate-300 hover:text-rose-400 font-semibold transition-colors cursor-pointer"
+                    title="Encerrar sessão administrativa"
+                  >
+                    (Sair)
+                  </button>
+                </div>
+              ) : (
                 <button
-                  onClick={() => onNavigate('admin')}
-                  className="flex items-center gap-1 text-[#FFDD00] hover:text-amber-300 text-xs font-bold transition-colors cursor-pointer"
-                  title="Acessar Painel Administrativo"
+                  onClick={() => onNavigate('admin-login')}
+                  className="flex items-center gap-1 text-slate-300 hover:text-[#FFDD00] text-xs font-semibold transition-colors cursor-pointer"
+                  title="Acesso Restrito para Colaboradores e Administradores"
                 >
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Painel Admin</span>
+                  <Shield className="w-3.5 h-3.5 text-[#00AEEF]" />
+                  <span className="hidden sm:inline">Acesso Admin</span>
                 </button>
-                <button
-                  onClick={() => {
-                    const client = StorageService.switchRole('cliente');
-                    onUserChange(client);
-                    onNavigate('home');
-                  }}
-                  className="text-[10px] text-slate-400 hover:text-rose-400 font-semibold transition-colors cursor-pointer"
-                  title="Sair do modo administrativo"
-                >
-                  (Sair)
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => onNavigate('admin-login')}
-                className="flex items-center gap-1 text-slate-300 hover:text-[#FFDD00] text-xs font-semibold transition-colors cursor-pointer"
-                title="Acesso Restrito para Colaboradores e Administradores"
-              >
-                <Shield className="w-3.5 h-3.5 text-[#00AEEF]" />
-                <span className="hidden sm:inline">Acesso Admin</span>
-              </button>
-            )}
-
-            <RoleSwitcher currentUser={currentUser} onUserChange={onUserChange} />
+              )}
           </div>
         </div>
       </div>
@@ -242,13 +255,13 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               Catálogo
             </button>
-            {layoutSettings?.header?.showCatalogPdfLink && (
+            {canAccessCatalogPdf && layoutSettings?.header?.showCatalogPdfLink && (
               <button
                 onClick={() => onNavigate('digital-catalog')}
                 className={`flex items-center gap-1.5 px-2 py-1 2xl:px-2.5 rounded-md text-xs font-semibold bg-sky-50 text-[#00AEEF] hover:bg-sky-100 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   currentView === 'digital-catalog' ? 'ring-1 ring-[#00AEEF]' : ''
                 }`}
-                title="Catálogo PDF / Impressão pronto para clientes"
+                title="Catálogo PDF / Impressão (Acesso Autorizado)"
               >
                 <Printer className="w-3.5 h-3.5 shrink-0" />
                 <span>Catálogo PDF</span>
@@ -284,8 +297,8 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Action CTAs (Always visible and never clipped) */}
           <div className="flex items-center gap-1.5 shrink-0">
-            {/* Quick PDV Button for Employees */}
-            {isAdminRole && (
+            {/* Quick PDV Button for authorized staff */}
+            {canAccessPDV && (
               <button
                 onClick={() => onNavigate('pdv')}
                 className={`hidden sm:flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-xs shrink-0 whitespace-nowrap cursor-pointer ${
@@ -321,23 +334,36 @@ export const Navbar: React.FC<NavbarProps> = ({
               </button>
             )}
 
-            {/* Admin or Customer Portal button */}
+            {/* Auth / Admin / Customer Account Buttons */}
             {isAdminRole ? (
-              <button
-                onClick={() => onNavigate('admin')}
-                className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-xs shrink-0 whitespace-nowrap cursor-pointer ${
-                  currentView === 'admin'
-                    ? 'bg-slate-900 text-white ring-2 ring-[#FFDD00]'
-                    : 'bg-slate-900 text-white hover:bg-slate-800'
-                }`}
-                id="btn-nav-admin"
-                title="Acessar Painel de Gestão"
-              >
-                <LayoutDashboard className="w-3.5 h-3.5 text-[#FFDD00] shrink-0" />
-                <span className="hidden lg:inline">Painel Gestão</span>
-                <span className="lg:hidden">Painel</span>
-              </button>
-            ) : (
+              <div className="flex items-center gap-1.5 shrink-0">
+                {canViewDashboard && (
+                  <button
+                    onClick={() => onNavigate('admin')}
+                    className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-xs shrink-0 whitespace-nowrap cursor-pointer ${
+                      currentView === 'admin'
+                        ? 'bg-slate-900 text-white ring-2 ring-[#FFDD00]'
+                        : 'bg-slate-900 text-white hover:bg-slate-800'
+                    }`}
+                    id="btn-nav-admin"
+                    title="Acessar Painel de Gestão"
+                  >
+                    <LayoutDashboard className="w-3.5 h-3.5 text-[#FFDD00] shrink-0" />
+                    <span className="hidden lg:inline">Painel Gestão</span>
+                    <span className="lg:hidden">Painel</span>
+                  </button>
+                )}
+                <button
+                  onClick={handleLogout}
+                  className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-rose-600 hover:bg-rose-50 border border-rose-200 transition-colors cursor-pointer"
+                  id="btn-nav-staff-logout"
+                  title="Sair da conta corporativa"
+                >
+                  <LogOut className="w-3.5 h-3.5 shrink-0" />
+                  <span>Sair</span>
+                </button>
+              </div>
+            ) : isCustomer ? (
               <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   onClick={() => onNavigate('customer-portal')}
@@ -347,20 +373,39 @@ export const Navbar: React.FC<NavbarProps> = ({
                       : 'border-slate-300 text-slate-700 hover:bg-slate-50'
                   }`}
                   id="btn-nav-customer-portal"
-                  title="Minha Conta"
+                  title={`Minha Conta (${currentUser.name})`}
                 >
-                  <User className="w-4 h-4 text-slate-500 shrink-0" />
-                  <span className="hidden sm:inline">Minha Conta</span>
+                  <User className="w-4 h-4 text-[#E6007E] shrink-0" />
+                  <span className="hidden sm:inline max-w-[140px] truncate">
+                    Olá, {currentUser.name.split(' ')[0]}
+                  </span>
                 </button>
-
                 <button
-                  onClick={() => onNavigate('admin-login')}
-                  className="hidden 2xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors border border-transparent hover:border-slate-200 shrink-0 whitespace-nowrap cursor-pointer"
-                  title="Acesso Administrativo MB"
-                  id="btn-nav-admin-login-quick"
+                  onClick={handleLogout}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 transition-colors cursor-pointer"
+                  id="btn-nav-logout"
+                  title="Sair da Minha Conta"
                 >
-                  <KeyRound className="w-3.5 h-3.5 text-[#00AEEF] shrink-0" />
-                  <span>Admin</span>
+                  <LogOut className="w-3.5 h-3.5 shrink-0" />
+                  <span className="hidden sm:inline">Sair</span>
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  onClick={() => (onOpenAuth ? onOpenAuth('login') : onNavigate('login'))}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold border border-slate-300 text-slate-800 hover:border-slate-900 hover:bg-slate-50 transition-all shrink-0 whitespace-nowrap cursor-pointer"
+                  id="btn-nav-login"
+                >
+                  <User className="w-3.5 h-3.5 text-slate-600 shrink-0" />
+                  <span>ENTRAR</span>
+                </button>
+                <button
+                  onClick={() => (onOpenAuth ? onOpenAuth('signup') : onNavigate('cadastro'))}
+                  className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold bg-[#E6007E] hover:bg-[#c9006e] text-white shadow-xs transition-all shrink-0 whitespace-nowrap cursor-pointer"
+                  id="btn-nav-register"
+                >
+                  <span>CADASTRE-SE</span>
                 </button>
               </div>
             )}
@@ -427,8 +472,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           </button>
 
           <div className="flex flex-col space-y-2 text-sm font-semibold text-slate-800">
-            {/* PDV Quick Action for Employees in Mobile Drawer */}
-            {isAdminRole && (
+            {/* PDV Quick Action for authorized employees in Mobile Drawer */}
+            {canAccessPDV && (
               <button
                 onClick={() => {
                   onNavigate('pdv');
@@ -464,16 +509,18 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               Catálogo de Produtos
             </button>
-            <button
-              onClick={() => {
-                onNavigate('digital-catalog');
-                setIsMobileMenuOpen(false);
-              }}
-              className="text-left py-2 px-3 rounded-lg bg-sky-50 text-[#00AEEF] flex items-center justify-between"
-            >
-              <span>Catálogo PDF / Impressão</span>
-              <Printer className="w-4 h-4" />
-            </button>
+            {canAccessCatalogPdf && layoutSettings?.header?.showCatalogPdfLink && (
+              <button
+                onClick={() => {
+                  onNavigate('digital-catalog');
+                  setIsMobileMenuOpen(false);
+                }}
+                className="text-left py-2 px-3 rounded-lg bg-sky-50 text-[#00AEEF] flex items-center justify-between"
+              >
+                <span>Catálogo PDF / Impressão</span>
+                <Printer className="w-4 h-4" />
+              </button>
+            )}
             <button
               onClick={() => {
                 onNavigate('quote');
@@ -500,31 +547,77 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </span>
               )}
             </button>
-            <button
-              onClick={() => {
-                onNavigate('customer-portal');
-                setIsMobileMenuOpen(false);
-              }}
-              className="text-left py-2 px-3 rounded-lg hover:bg-slate-50 flex items-center justify-between"
-            >
-              <span>Minha Conta (Cliente)</span>
-              <User className="w-4 h-4 text-slate-400" />
-            </button>
+
+            {isCustomer ? (
+              <>
+                <button
+                  onClick={() => {
+                    onNavigate('customer-portal');
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className="text-left py-2 px-3 rounded-lg bg-pink-50/70 text-[#E6007E] font-bold flex items-center justify-between"
+                >
+                  <span>Minha Conta ({currentUser.name.split(' ')[0]})</span>
+                  <User className="w-4 h-4 text-[#E6007E]" />
+                </button>
+                <button
+                  onClick={handleLogout}
+                  className="text-left py-2 px-3 rounded-lg hover:bg-rose-50 text-rose-600 font-bold flex items-center justify-between"
+                >
+                  <span>Sair da Conta</span>
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </>
+            ) : isVisitor ? (
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button
+                  onClick={() => {
+                    setIsMobileMenuOpen(false);
+                    if (onOpenAuth) onOpenAuth('login');
+                    else onNavigate('login');
+                  }}
+                  className="py-2.5 px-3 rounded-xl border border-slate-300 text-slate-900 font-extrabold text-xs text-center"
+                >
+                  ENTRAR
+                </button>
+                <button
+                  onClick={() => {
+                    setIsMobileMenuOpen(false);
+                    if (onOpenAuth) onOpenAuth('signup');
+                    else onNavigate('cadastro');
+                  }}
+                  className="py-2.5 px-3 rounded-xl bg-[#E6007E] text-white font-extrabold text-xs text-center"
+                >
+                  CADASTRE-SE
+                </button>
+              </div>
+            ) : null}
 
             {isAdminRole ? (
-              <button
-                onClick={() => {
-                  onNavigate('admin');
-                  setIsMobileMenuOpen(false);
-                }}
-                className="text-left py-2 px-3 rounded-lg bg-slate-900 text-white font-bold flex items-center justify-between"
-              >
-                <span className="flex items-center gap-2">
-                  <LayoutDashboard className="w-4 h-4 text-[#FFDD00]" />
-                  Painel de Gestão ({currentUser.role})
-                </span>
-                <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded">Logado</span>
-              </button>
+              <>
+                {canViewDashboard && (
+                  <button
+                    onClick={() => {
+                      onNavigate('admin');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="text-left py-2 px-3 rounded-lg bg-slate-900 text-white font-bold flex items-center justify-between"
+                  >
+                    <span className="flex items-center gap-2">
+                      <LayoutDashboard className="w-4 h-4 text-[#FFDD00]" />
+                      Painel de Gestão ({currentUser.role})
+                    </span>
+                    <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded">Logado</span>
+                  </button>
+                )}
+                <button
+                  onClick={handleLogout}
+                  className="text-left py-2 px-3 rounded-lg bg-rose-50 text-rose-700 font-bold flex items-center justify-between"
+                >
+                  <span>Sair da Sessão Corporativa</span>
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </>
             ) : (
               <button
                 onClick={() => {

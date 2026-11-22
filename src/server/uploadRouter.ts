@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { requireAuthSession } from '../middleware/auth.ts';
 
 export const uploadRouter = Router();
 
@@ -17,7 +18,7 @@ if (!fs.existsSync(UPLOADS_DIR)) {
  * Recebe imagens e arquivos em Base64 (DataURL) e grava no disco permanente,
  * retornando uma URL pública leve (/uploads/...) para não sobrecarregar o PostgreSQL.
  */
-uploadRouter.post('/base64', (req: Request, res: Response) => {
+uploadRouter.post('/base64', requireAuthSession, (req: Request, res: Response) => {
   try {
     const { dataUrl, filename = 'upload.png', folder = '' } = req.body;
 
@@ -56,7 +57,8 @@ uploadRouter.post('/base64', (req: Request, res: Response) => {
       .slice(0, 30);
     const finalFilename = `${Date.now()}-${safeBaseName}-${safeHash}${ext}`;
 
-    const targetFolder = folder ? path.join(UPLOADS_DIR, folder) : UPLOADS_DIR;
+    const safeFolder = folder ? path.basename(String(folder)).replace(/[^a-zA-Z0-9_-]/g, '_') : '';
+    const targetFolder = safeFolder ? path.join(UPLOADS_DIR, safeFolder) : UPLOADS_DIR;
     if (!fs.existsSync(targetFolder)) {
       fs.mkdirSync(targetFolder, { recursive: true });
     }
@@ -64,7 +66,7 @@ uploadRouter.post('/base64', (req: Request, res: Response) => {
     const filePath = path.join(targetFolder, finalFilename);
     fs.writeFileSync(filePath, buffer);
 
-    const publicUrl = folder ? `/uploads/${folder}/${finalFilename}` : `/uploads/${finalFilename}`;
+    const publicUrl = safeFolder ? `/uploads/${safeFolder}/${finalFilename}` : `/uploads/${finalFilename}`;
 
     return res.json({
       success: true,

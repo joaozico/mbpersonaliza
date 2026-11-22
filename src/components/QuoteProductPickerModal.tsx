@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Product, Category } from '../types';
+import { Product, Category, UserProfile } from '../types';
+import { StorageService } from '../services/storage';
 import {
   Search,
   X,
@@ -19,6 +20,7 @@ interface QuoteProductPickerModalProps {
   onClose: () => void;
   products: Product[];
   categories?: Category[];
+  currentUser?: UserProfile;
   mode?: 'add' | 'replace';
   currentProductId?: string;
   alreadyAddedProductIds?: string[];
@@ -30,11 +32,13 @@ export const QuoteProductPickerModal: React.FC<QuoteProductPickerModalProps> = (
   onClose,
   products,
   categories = [],
+  currentUser,
   mode = 'add',
   currentProductId,
   alreadyAddedProductIds = [],
   onSelectProduct,
 }) => {
+  const canViewPrices = StorageService.canViewPrices(currentUser);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'popular' | 'price_asc' | 'price_desc' | 'name'>('popular');
@@ -110,12 +114,12 @@ export const QuoteProductPickerModal: React.FC<QuoteProductPickerModalProps> = (
 
     // Sorting
     return list.sort((a, b) => {
-      if (sortBy === 'price_asc') {
+      if (canViewPrices && sortBy === 'price_asc') {
         const priceA = a.promo_price || a.base_price;
         const priceB = b.promo_price || b.base_price;
         return priceA - priceB;
       }
-      if (sortBy === 'price_desc') {
+      if (canViewPrices && sortBy === 'price_desc') {
         const priceA = a.promo_price || a.base_price;
         const priceB = b.promo_price || b.base_price;
         return priceB - priceA;
@@ -126,7 +130,7 @@ export const QuoteProductPickerModal: React.FC<QuoteProductPickerModalProps> = (
       // 'popular'
       return (b.is_featured ? 1 : 0) - (a.is_featured ? 1 : 0);
     });
-  }, [activeProducts, selectedCategory, searchQuery, sortBy, categoryMap]);
+  }, [activeProducts, selectedCategory, searchQuery, sortBy, categoryMap, canViewPrices]);
 
   if (!isOpen) return null;
 
@@ -210,13 +214,13 @@ export const QuoteProductPickerModal: React.FC<QuoteProductPickerModalProps> = (
             <div className="flex items-center gap-1.5 shrink-0">
               <span className="text-[11px] font-bold text-slate-500 hidden sm:inline">Ordenar:</span>
               <select
-                value={sortBy}
+                value={!canViewPrices && (sortBy === 'price_asc' || sortBy === 'price_desc') ? 'popular' : sortBy}
                 onChange={(e) => setSortBy(e.target.value as any)}
                 className="px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl text-slate-700 font-bold outline-none cursor-pointer"
               >
                 <option value="popular">Destaques / Populares</option>
-                <option value="price_asc">Menor Preço</option>
-                <option value="price_desc">Maior Preço</option>
+                {canViewPrices && <option value="price_asc">Menor Preço</option>}
+                {canViewPrices && <option value="price_desc">Maior Preço</option>}
                 <option value="name">Nome (A-Z)</option>
               </select>
             </div>
@@ -386,10 +390,22 @@ export const QuoteProductPickerModal: React.FC<QuoteProductPickerModalProps> = (
                     {/* Bottom: Price Reference & Action Button */}
                     <div className="pt-2.5 mt-2 border-t border-slate-100 flex items-center justify-between gap-2">
                       <div>
-                        <div className="text-[9px] uppercase font-bold text-slate-400">A partir de</div>
-                        <div className="text-xs font-black text-slate-900 font-heading">
-                          R$ {price.toFixed(2)}
-                        </div>
+                        {canViewPrices && p.show_price ? (
+                          <>
+                            <div className="text-[9px] uppercase font-bold text-slate-400">A partir de</div>
+                            <div className="text-xs font-black text-slate-900 font-heading">
+                              R$ {price.toFixed(2)}
+                            </div>
+                          </>
+                        ) : !canViewPrices ? (
+                          <div className="text-[10px] font-bold text-slate-500 leading-tight">
+                            Entre para consultar
+                          </div>
+                        ) : (
+                          <div className="text-[10px] font-bold text-amber-700">
+                            Sob Orçamento
+                          </div>
+                        )}
                       </div>
 
                       <button

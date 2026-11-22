@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { UserProfile, UserRole } from '../types';
+import { UserProfile } from '../types';
 import { StorageService } from '../services/storage';
+import { loginWithCredentials } from '../services/authClient';
 import { Logo } from '../components/Logo';
 import { SEOHead } from '../components/SEOHead';
 import {
@@ -12,13 +13,10 @@ import {
   EyeOff,
   AlertCircle,
   CheckCircle2,
-  Building2,
   ArrowLeft,
   KeyRound,
   Shield,
   ShieldAlert,
-  Sparkles,
-  HelpCircle,
 } from 'lucide-react';
 
 interface AdminLoginViewProps {
@@ -30,51 +28,55 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
   onLoginSuccess,
   onNavigate,
 }) => {
-  const [email, setEmail] = useState('admin@mbpersonaliza.com.br');
-  const [password, setPassword] = useState('123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
 
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [showForgotNotice, setShowForgotNotice] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessMessage('');
-    setIsLoading(true);
 
-    setTimeout(() => {
-      const res = StorageService.loginEmployee(email, password);
-      setIsLoading(false);
+    if (!email.trim() || !password) {
+      setErrorMessage('Informe seu e-mail corporativo e senha de acesso.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const res = await loginWithCredentials({
+        email: email.trim(),
+        password,
+        portal: 'staff',
+      });
 
       if (res.success && res.user) {
+        StorageService.setCurrentUser(res.user);
+        if (res.rolePermissions) {
+          StorageService.setPermissionsMatrixMemory(res.rolePermissions);
+        }
+        if (res.priceVisibility) {
+          StorageService.setPriceVisibilityModeMemory(res.priceVisibility);
+        }
+        await StorageService.initPostgresSync();
         setSuccessMessage(`Acesso autorizado! Bem-vindo(a), ${res.user.name}.`);
-        setTimeout(() => {
-          onLoginSuccess(res.user!);
-          onNavigate('admin');
-        }, 600);
+        onLoginSuccess(res.user);
+        onNavigate('admin');
       } else {
         setErrorMessage(
-          res.message || 'Credenciais inválidas. Verifique seu e-mail corporativo e senha.'
+          res.error || res.message || 'Credenciais inválidas. Verifique seu e-mail corporativo e senha.'
         );
       }
-    }, 400);
-  };
-
-  const handleQuickLogin = (role: UserRole) => {
-    setIsLoading(true);
-    setTimeout(() => {
-      const user = StorageService.switchRole(role);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Erro de comunicação ao autenticar colaborador.');
+    } finally {
       setIsLoading(false);
-      setSuccessMessage(`Acesso rápido autenticado como ${user.name} (${user.role.toUpperCase()})`);
-      setTimeout(() => {
-        onLoginSuccess(user);
-        onNavigate('admin');
-      }, 500);
-    }, 300);
+    }
   };
 
   return (
@@ -152,7 +154,7 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="admin@mbpersonaliza.com.br"
+                  placeholder="seu.email@mbpersonaliza.com.br"
                   className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-800/80 border border-slate-700 text-white placeholder-slate-500 rounded-xl focus:bg-slate-800 focus:outline-none focus:border-[#00AEEF] focus:ring-1 focus:ring-[#00AEEF] transition-all"
                 />
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
@@ -164,7 +166,6 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
                 <label className="text-xs font-bold text-slate-300">
                   Senha de Acesso
                 </label>
-                <span className="text-[10px] text-slate-500">Padrão demo: 123</span>
               </div>
               <div className="relative">
                 <input
@@ -187,17 +188,7 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center justify-between text-xs">
-              <label className="flex items-center gap-2 cursor-pointer select-none text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  className="w-3.5 h-3.5 rounded text-[#E6007E] focus:ring-0 bg-slate-800 border-slate-700"
-                />
-                <span>Lembrar neste navegador</span>
-              </label>
-
+            <div className="flex items-center justify-end text-xs">
               <button
                 type="button"
                 onClick={() => setShowForgotNotice((prev) => !prev)}
@@ -239,80 +230,6 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
               )}
             </button>
           </form>
-
-          {/* Quick Access Shortcuts for testing */}
-          <div className="pt-4 border-t border-slate-800 space-y-3">
-            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-[#FFDD00]" />
-              <span>Acesso Rápido por Perfil (Ambiente de Teste)</span>
-            </p>
-
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('admin')}
-                className="p-2.5 text-left bg-slate-800/60 hover:bg-rose-950/40 border border-slate-700 hover:border-rose-500/50 rounded-xl transition-all cursor-pointer group"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-extrabold text-white group-hover:text-rose-300">
-                    Marcos Braga
-                  </span>
-                  <span className="text-[9px] px-1.5 py-0.2 bg-rose-500/20 text-rose-300 rounded font-bold">
-                    Admin
-                  </span>
-                </div>
-                <p className="text-[10px] text-slate-400 mt-0.5">Diretoria Executiva (Total)</p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('gerente')}
-                className="p-2.5 text-left bg-slate-800/60 hover:bg-purple-950/40 border border-slate-700 hover:border-purple-500/50 rounded-xl transition-all cursor-pointer group"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-extrabold text-white group-hover:text-purple-300">
-                    Renata V.
-                  </span>
-                  <span className="text-[9px] px-1.5 py-0.2 bg-purple-500/20 text-purple-300 rounded font-bold">
-                    Gerente
-                  </span>
-                </div>
-                <p className="text-[10px] text-slate-400 mt-0.5">Operações & Produção</p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('vendedor')}
-                className="p-2.5 text-left bg-slate-800/60 hover:bg-blue-950/40 border border-slate-700 hover:border-blue-500/50 rounded-xl transition-all cursor-pointer group"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-extrabold text-white group-hover:text-blue-300">
-                    Carlos Alberto
-                  </span>
-                  <span className="text-[9px] px-1.5 py-0.2 bg-blue-500/20 text-blue-300 rounded font-bold">
-                    Vendas
-                  </span>
-                </div>
-                <p className="text-[10px] text-slate-400 mt-0.5">Comercial & Orçamentos</p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('estoquista')}
-                className="p-2.5 text-left bg-slate-800/60 hover:bg-amber-950/40 border border-slate-700 hover:border-amber-500/50 rounded-xl transition-all cursor-pointer group"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-extrabold text-white group-hover:text-amber-300">
-                    Diego Ribeiro
-                  </span>
-                  <span className="text-[9px] px-1.5 py-0.2 bg-amber-500/20 text-amber-300 rounded font-bold">
-                    Estoque
-                  </span>
-                </div>
-                <p className="text-[10px] text-slate-400 mt-0.5">Almoxarifado & Entradas</p>
-              </button>
-            </div>
-          </div>
         </div>
 
         {/* Security and Support info */}
@@ -329,3 +246,4 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
     </div>
   );
 };
+

@@ -9,6 +9,7 @@ import {
   Product,
 } from '../types';
 import { StorageService } from '../services/storage';
+import { authFetch } from '../services/authClient';
 import {
   Ticket,
   Plus,
@@ -462,13 +463,10 @@ export const CouponsManagementTab: React.FC<CouponsManagementTabProps> = ({ curr
   const handleRunTestScenarios = async () => {
     setIsRunningTests(true);
     try {
-      const res = await fetch('/api/coupons/run-test-scenarios', {
+      const res = await authFetch('/api/coupons/run-test-scenarios', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-user-id': currentUser.id,
-          'x-user-name': currentUser.name,
-          'x-user-role': currentUser.role,
         },
       });
 

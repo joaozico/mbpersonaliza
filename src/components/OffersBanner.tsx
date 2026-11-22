@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Product, OffersBannerSettings, OffersBannerBackgroundTheme, CartItem } from '../types';
+import { Product, OffersBannerSettings, OffersBannerBackgroundTheme, CartItem, UserProfile } from '../types';
+import { StorageService } from '../services/storage';
 import { optimizeImageUrl, generateSrcSet } from '../utils/imageOptimizer';
 import {
   ChevronLeft,
@@ -19,6 +20,7 @@ import {
 interface OffersBannerProps {
   products: Product[];
   settings?: OffersBannerSettings;
+  currentUser?: UserProfile;
   onNavigate: (view: string, param?: string) => void;
   onQuickAddToCart?: (item: CartItem) => void;
   className?: string;
@@ -59,11 +61,13 @@ export interface ResolvedOfferSlide {
 export const OffersBanner: React.FC<OffersBannerProps> = ({
   products,
   settings,
+  currentUser,
   onNavigate,
   onQuickAddToCart,
   className = '',
   isLivePreview = false,
 }) => {
+  const canViewPrices = StorageService.canViewPrices(currentUser);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [direction, setDirection] = useState<'next' | 'prev'>('next');
   const [isHovered, setIsHovered] = useState(false);
@@ -777,8 +781,8 @@ export const OffersBanner: React.FC<OffersBannerProps> = ({
                     </div>
                   )}
 
-                  {/* Price Tag Bubble Overlay (Optional, if promo price exists) */}
-                  {currentSlide.hasPromo && currentSlide.promoPrice && (
+                  {/* Price Tag Bubble Overlay (Optional, if promo price exists and user can view prices) */}
+                  {canViewPrices && currentSlide.hasPromo && currentSlide.promoPrice && (
                     <div className="absolute top-2 sm:top-4 right-1 sm:right-3 z-30 bg-white/95 text-slate-900 border border-slate-200/80 px-2 sm:px-2.5 py-1 rounded-xl shadow-lg flex flex-col items-center backdrop-blur-xs transform rotate-2 hover:rotate-0 transition-transform">
                       <span className="text-[8px] sm:text-[9px] text-slate-400 font-bold uppercase line-through leading-none">
                         R$ {currentSlide.originalPrice.toFixed(2)}

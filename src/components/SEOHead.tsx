@@ -163,7 +163,7 @@ export const SEOHead: React.FC<SEOHeadProps> = ({
 
     // 4. Product Schema (if on a product page)
     if (productData) {
-      list.push({
+      const productSchema: Record<string, any> = {
         '@context': 'https://schema.org',
         '@type': 'Product',
         name: productData.name,
@@ -175,11 +175,13 @@ export const SEOHead: React.FC<SEOHeadProps> = ({
           name: productData.brand || siteName,
         },
         category: productData.category,
-        offers: {
+      };
+      if (typeof productData.price === 'number' && productData.price > 0) {
+        productSchema.offers = {
           '@type': 'Offer',
           url: canonicalUrl,
           priceCurrency: productData.currency || 'BRL',
-          price: productData.price ? productData.price.toFixed(2) : '0.00',
+          price: productData.price.toFixed(2),
           itemCondition: 'https://schema.org/NewCondition',
           availability: productData.inStock !== false
             ? 'https://schema.org/InStock'
@@ -188,8 +190,9 @@ export const SEOHead: React.FC<SEOHeadProps> = ({
             '@type': 'Organization',
             name: siteName,
           },
-        },
-      });
+        };
+      }
+      list.push(productSchema);
     }
 
     // 5. Custom JSON-LD passed in props

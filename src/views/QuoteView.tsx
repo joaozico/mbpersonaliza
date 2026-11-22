@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Product, ProductVariant, Quote, QuoteItem, UserProfile, Category } from '../types';
 import { StorageService } from '../services/storage';
 import { ArtworkUpload } from '../components/ArtworkUpload';
@@ -33,6 +33,7 @@ import {
   List,
   SlidersHorizontal,
   Zap,
+  Lock,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -42,6 +43,7 @@ interface QuoteViewProps {
   currentUser: UserProfile;
   initialItem?: { product: Product; variant?: ProductVariant; quantity: number };
   onNavigate: (view: string, param?: string) => void;
+  onOpenAuth?: (mode?: 'login' | 'signup') => void;
 }
 
 export const QuoteView: React.FC<QuoteViewProps> = ({
@@ -50,16 +52,30 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
   currentUser,
   initialItem,
   onNavigate,
+  onOpenAuth,
 }) => {
-  const [clientName, setClientName] = useState(currentUser.name || '');
-  const [clientEmail, setClientEmail] = useState(currentUser.email || '');
-  const [clientPhone, setClientPhone] = useState(currentUser.phone || '');
-  const [clientCompany, setClientCompany] = useState(currentUser.company || '');
-  const [clientCpfCnpj, setClientCpfCnpj] = useState(currentUser.cpfCnpj || '');
+  const canViewPrices = StorageService.canViewPrices(currentUser);
+  const isVisitor = !currentUser || currentUser.role === 'visitante';
+
+  const [clientName, setClientName] = useState(isVisitor ? '' : (currentUser.name || ''));
+  const [clientEmail, setClientEmail] = useState(isVisitor ? '' : (currentUser.email || ''));
+  const [clientPhone, setClientPhone] = useState(isVisitor ? '' : (currentUser.phone || ''));
+  const [clientCompany, setClientCompany] = useState(isVisitor ? '' : (currentUser.company || ''));
+  const [clientCpfCnpj, setClientCpfCnpj] = useState(isVisitor ? '' : (currentUser.cpfCnpj || ''));
   const [deliveryDeadline, setDeliveryDeadline] = useState('');
   const [deliveryCityState, setDeliveryCityState] = useState('São Paulo - SP');
   const [notes, setNotes] = useState('');
   const [uploadedArtwork, setUploadedArtwork] = useState<{ name: string; url: string; size: string } | null>(null);
+
+  useEffect(() => {
+    if (currentUser && currentUser.role !== 'visitante') {
+      setClientName((prev) => prev || currentUser.name || '');
+      setClientEmail((prev) => prev || currentUser.email || '');
+      setClientPhone((prev) => prev || currentUser.phone || '');
+      setClientCompany((prev) => prev || currentUser.company || '');
+      setClientCpfCnpj((prev) => prev || currentUser.cpfCnpj || '');
+    }
+  }, [currentUser?.id]);
 
   // Quick product search state in QuoteView
   const [searchQuery, setSearchQuery] = useState('');
@@ -142,12 +158,12 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
 
     // Sorting
     return list.sort((a, b) => {
-      if (searchSortBy === 'price_asc') {
+      if (canViewPrices && searchSortBy === 'price_asc') {
         const priceA = a.promo_price || a.base_price;
         const priceB = b.promo_price || b.base_price;
         return priceA - priceB;
       }
-      if (searchSortBy === 'price_desc') {
+      if (canViewPrices && searchSortBy === 'price_desc') {
         const priceA = a.promo_price || a.base_price;
         const priceB = b.promo_price || b.base_price;
         return priceB - priceA;
@@ -158,7 +174,7 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
       // 'popular'
       return (b.is_featured ? 1 : 0) - (a.is_featured ? 1 : 0);
     });
-  }, [activeProducts, selectedCategory, searchQuery, searchSortBy, categoryMap]);
+  }, [activeProducts, selectedCategory, searchQuery, searchSortBy, categoryMap, canViewPrices]);
 
   // Quote items
   const [items, setItems] = useState<QuoteItem[]>(() => {
@@ -321,6 +337,14 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
     const randomNum = Math.floor(1000 + Math.random() * 9000);
     const quoteCode = `ORC-2026-${randomNum}`;
 
+    const sanitizedItems = canViewPrices
+      ? items
+      : items.map((it) => ({
+          ...it,
+          unit_price_estimated: 0,
+          subtotal: 0,
+        }));
+
     const newQuote: Quote = {
       id: `orc-${Date.now()}`,
       code: quoteCode,
@@ -332,12 +356,12 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
       clientCpfCnpj,
       deliveryDeadline,
       deliveryCityState,
-      items,
+      items: sanitizedItems,
       notes,
       artworkName: uploadedArtwork?.name,
       artworkUrl: uploadedArtwork?.url,
       status: 'pendente',
-      totalEstimated,
+      totalEstimated: canViewPrices ? totalEstimated : 0,
       createdAt: new Date().toISOString(),
     };
 
@@ -385,14 +409,14 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
               {(submittedQuote.items || []).reduce((a, b) => a + (b?.quantity || 0), 0)} unidades em {(submittedQuote.items || []).length} produto(s)
             </span>
           </div>
-          {submittedQuote.totalEstimated && submittedQuote.totalEstimated > 0 && (
+          {canViewPrices && submittedQuote.totalEstimated && submittedQuote.totalEstimated > 0 ? (
             <div className="flex justify-between text-xs border-b border-slate-100 pb-2">
               <span className="text-slate-500">Valor Estimado Base:</span>
               <span className="font-bold text-emerald-700 font-heading">
                 R$ {submittedQuote.totalEstimated.toFixed(2)}
               </span>
             </div>
-          )}
+          ) : null}
           <div className="flex justify-between text-xs border-b border-slate-100 pb-2">
             <span className="text-slate-500">Status Atual:</span>
             <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold uppercase">
@@ -408,13 +432,23 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center justify-center gap-3 pt-4">
-          <button
-            onClick={() => onNavigate('customer-portal')}
-            className="px-6 py-3 bg-slate-900 hover:bg-[#E6007E] text-white font-bold rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center gap-2 cursor-pointer"
-          >
-            <span>Ver Meus Orçamentos (Minha Conta)</span>
-            <ArrowRight className="w-4 h-4" />
-          </button>
+          {!isVisitor ? (
+            <button
+              onClick={() => onNavigate('customer-portal')}
+              className="px-6 py-3 bg-slate-900 hover:bg-[#E6007E] text-white font-bold rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center gap-2 cursor-pointer"
+            >
+              <span>Ver Meus Orçamentos (Minha Conta)</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          ) : (
+            <button
+              onClick={() => onOpenAuth?.('login')}
+              className="px-6 py-3 bg-slate-900 hover:bg-[#E6007E] text-white font-bold rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center gap-2 cursor-pointer"
+            >
+              <span>Entrar ou Cadastrar-se para Acompanhar</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          )}
           <button
             onClick={() => onNavigate('home')}
             className="px-6 py-3 bg-white hover:bg-slate-50 text-slate-700 font-bold rounded-xl text-xs sm:text-sm border border-slate-200 cursor-pointer"
@@ -639,8 +673,8 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
                   title="Ordenar produtos"
                 >
                   <option value="popular">Mais Populares</option>
-                  <option value="price_asc">Menor Preço</option>
-                  <option value="price_desc">Maior Preço</option>
+                  {canViewPrices && <option value="price_asc">Menor Preço</option>}
+                  {canViewPrices && <option value="price_desc">Maior Preço</option>}
                   <option value="name">Nome (A-Z)</option>
                 </select>
 
@@ -832,15 +866,31 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
                             </h5>
 
                             {/* Price preview */}
-                            <div className="flex items-baseline gap-1.5 pt-0.5">
-                              <span className="text-[10px] text-slate-400 uppercase font-bold">
-                                A partir de:
-                              </span>
-                              <span className="text-xs font-black text-slate-900 font-heading">
-                                R$ {price.toFixed(2)}
-                              </span>
-                              <span className="text-[10px] text-slate-400 font-sans">/un</span>
-                            </div>
+                            {canViewPrices ? (
+                              <div className="flex items-baseline gap-1.5 pt-0.5">
+                                <span className="text-[10px] text-slate-400 uppercase font-bold">
+                                  A partir de:
+                                </span>
+                                <span className="text-xs font-black text-slate-900 font-heading">
+                                  R$ {price.toFixed(2)}
+                                </span>
+                                <span className="text-[10px] text-slate-400 font-sans">/un</span>
+                              </div>
+                            ) : (
+                              <div className="pt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-slate-600">
+                                <span className="inline-flex items-center gap-1 font-semibold">
+                                  <Lock className="w-3 h-3 text-[#E6007E]" />
+                                  Entre para consultar preços
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => onOpenAuth?.('login')}
+                                  className="text-[#E6007E] font-bold hover:underline cursor-pointer"
+                                >
+                                  Entrar
+                                </button>
+                              </div>
+                            )}
 
                             {/* Custom Techniques Tags */}
                             {p.details.customTechniques && p.details.customTechniques.length > 0 && (
@@ -1001,13 +1051,29 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
 
                         {/* Price & Quantity & Action */}
                         <div className="flex flex-col sm:flex-row items-center gap-3 shrink-0">
-                          <div className="text-center sm:text-right">
-                            <div className="text-[10px] text-slate-400">A partir de</div>
-                            <div className="text-sm font-black text-slate-900 font-heading">
-                              R$ {price.toFixed(2)}
-                              <span className="text-[10px] font-normal text-slate-500"> /un</span>
+                          {canViewPrices ? (
+                            <div className="text-center sm:text-right">
+                              <div className="text-[10px] text-slate-400">A partir de</div>
+                              <div className="text-sm font-black text-slate-900 font-heading">
+                                R$ {price.toFixed(2)}
+                                <span className="text-[10px] font-normal text-slate-500"> /un</span>
+                              </div>
                             </div>
-                          </div>
+                          ) : (
+                            <div className="text-center sm:text-right">
+                              <div className="text-[10px] font-bold text-slate-600 flex items-center gap-1 justify-center sm:justify-end">
+                                <Lock className="w-3 h-3 text-[#E6007E]" />
+                                Entre ou cadastre-se para consultar os preços.
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => onOpenAuth?.('login')}
+                                className="text-[11px] font-bold text-[#E6007E] hover:underline cursor-pointer"
+                              >
+                                Entrar / Cadastre-se
+                              </button>
+                            </div>
+                          )}
 
                           {/* Quantity Stepper */}
                           <div className="flex items-center border border-slate-200 rounded-lg bg-slate-50 overflow-hidden">
@@ -1153,17 +1219,42 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
                     </div>
 
                     {/* Right: Estimated reference value */}
-                    <div className="text-left sm:text-right shrink-0">
-                      <div className="text-[10px] text-slate-400 uppercase font-bold">
-                        Valor Unit. Estimado:
+                    {canViewPrices ? (
+                      <div className="text-left sm:text-right shrink-0">
+                        <div className="text-[10px] text-slate-400 uppercase font-bold">
+                          Valor Unit. Estimado:
+                        </div>
+                        <div className="text-xs font-bold text-slate-600">
+                          R$ {unitPrice.toFixed(2)} / un
+                        </div>
+                        <div className="text-sm font-black text-slate-900 font-heading mt-0.5">
+                          Subtotal: R$ {subtotalItem.toFixed(2)}
+                        </div>
                       </div>
-                      <div className="text-xs font-bold text-slate-600">
-                        R$ {unitPrice.toFixed(2)} / un
+                    ) : (
+                      <div className="text-left sm:text-right shrink-0">
+                        <div className="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-600 bg-slate-100 px-2.5 py-1 rounded-lg">
+                          <Lock className="w-3 h-3 text-[#E6007E]" />
+                          <span>Preço sob consulta / login</span>
+                        </div>
+                        <div className="mt-1 flex items-center sm:justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => onOpenAuth?.('login')}
+                            className="text-[11px] font-bold text-[#E6007E] hover:underline cursor-pointer"
+                          >
+                            Entrar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onOpenAuth?.('signup')}
+                            className="text-[11px] font-bold text-slate-700 hover:underline cursor-pointer"
+                          >
+                            Cadastre-se
+                          </button>
+                        </div>
                       </div>
-                      <div className="text-sm font-black text-slate-900 font-heading mt-0.5">
-                        Subtotal: R$ {subtotalItem.toFixed(2)}
-                      </div>
-                    </div>
+                    )}
                   </div>
 
                   {/* Quantity and Custom Technique Controls */}
@@ -1263,20 +1354,52 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
           {/* Quote Totals Summary Card */}
           <div className="p-4 sm:p-5 rounded-3xl bg-slate-900 text-white flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 shadow-md">
             <div>
-              <span className="text-[10px] font-extrabold uppercase text-[#00AEEF] tracking-wider block">
-                Estimativa Prévia do Orçamento
-              </span>
-              <div className="text-xl sm:text-2xl font-black font-heading text-white mt-0.5">
-                R$ {totalEstimated.toFixed(2)}
-              </div>
-              <span className="text-[11px] text-slate-400 block mt-0.5">
+              {canViewPrices ? (
+                <>
+                  <span className="text-[10px] font-extrabold uppercase text-[#00AEEF] tracking-wider block">
+                    Estimativa Prévia do Orçamento
+                  </span>
+                  <div className="text-xl sm:text-2xl font-black font-heading text-white mt-0.5">
+                    R$ {totalEstimated.toFixed(2)}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <span className="text-[10px] font-extrabold uppercase text-[#FFDD00] tracking-wider flex items-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5" />
+                    Preços Restritos a Clientes Cadastrados
+                  </span>
+                  <p className="text-sm font-bold text-white mt-1">
+                    Entre ou cadastre-se para consultar os preços.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2 mt-2">
+                    <button
+                      type="button"
+                      onClick={() => onOpenAuth?.('login')}
+                      className="px-3 py-1.5 bg-white text-slate-900 hover:bg-slate-100 rounded-lg text-[11px] font-bold cursor-pointer"
+                    >
+                      Entrar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onOpenAuth?.('signup')}
+                      className="px-3 py-1.5 bg-[#E6007E] text-white hover:bg-pink-700 rounded-lg text-[11px] font-bold cursor-pointer"
+                    >
+                      Cadastre-se
+                    </button>
+                  </div>
+                </>
+              )}
+              <span className="text-[11px] text-slate-400 block mt-1.5">
                 Total de <strong>{totalUnits} unidades</strong> em <strong>{items.length} produto(s)</strong>.
               </span>
             </div>
 
             <div className="text-xs text-slate-400 max-w-sm sm:text-right border-t sm:border-t-0 sm:border-l border-slate-800 pt-3 sm:pt-0 sm:pl-4">
               <p className="text-[11px] leading-relaxed">
-                *Valores de referência para simulação. Descontos progressivos por volume e frete serão calculados por nossa equipe na proposta oficial.
+                {canViewPrices
+                  ? '*Valores de referência para simulação. Descontos progressivos por volume e frete serão calculados por nossa equipe na proposta oficial.'
+                  : 'Você pode enviar sua solicitação de orçamento normalmente mesmo sem login; nossa equipe responderá com a proposta completa.'}
               </p>
             </div>
           </div>
@@ -1353,6 +1476,7 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
         }}
         products={products}
         categories={allCategories}
+        currentUser={currentUser}
         mode={pickerMode}
         currentProductId={
           replacingItemIndex !== null ? items[replacingItemIndex]?.productId : undefined
@@ -1444,14 +1568,21 @@ export const QuoteView: React.FC<QuoteViewProps> = ({
                     Código: <strong>{previewModalImage.product.code}</strong> • Mín.{' '}
                     {previewModalImage.product.min_order_qty || 50} un
                   </div>
-                  <div className="text-sm font-black text-slate-900 font-heading mt-0.5">
-                    R${' '}
-                    {(
-                      previewModalImage.product.promo_price ||
-                      previewModalImage.product.base_price
-                    ).toFixed(2)}{' '}
-                    <span className="text-xs font-normal text-slate-500">/un</span>
-                  </div>
+                  {canViewPrices ? (
+                    <div className="text-sm font-black text-slate-900 font-heading mt-0.5">
+                      R${' '}
+                      {(
+                        previewModalImage.product.promo_price ||
+                        previewModalImage.product.base_price
+                      ).toFixed(2)}{' '}
+                      <span className="text-xs font-normal text-slate-500">/un</span>
+                    </div>
+                  ) : (
+                    <div className="text-xs font-bold text-slate-600 mt-1 flex items-center gap-1.5">
+                      <Lock className="w-3.5 h-3.5 text-[#E6007E]" />
+                      <span>Entre ou cadastre-se para consultar os preços.</span>
+                    </div>
+                  )}
                 </div>
 
                 <button

@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { BackupScheduleConfig, BackupHistoryEntry, SecureBackupPayload, BackupMetadata } from '../types';
+import { recordBackupInDb } from '../db/repository';
 
 const BACKUPS_DIR = path.join(process.cwd(), 'data', 'backups');
 const CONFIG_FILE = path.join(process.cwd(), 'data', 'backup-schedule-config.json');
@@ -234,11 +235,9 @@ export async function executeServerBackup(
     saveServerBackupHistory(updatedHistory);
 
     // Record into independent PostgreSQL Database table
-    import('../db/repository.js')
-      .then(({ recordBackupInDb }) => {
-        recordBackupInDb(entry).catch((err) => console.warn('[BackupWorker] PostgreSQL backup record:', err));
-      })
-      .catch(() => {});
+    recordBackupInDb(entry).catch((err) =>
+      console.warn('[BackupWorker] PostgreSQL backup record:', err)
+    );
 
     // Prune old files on disk that are no longer in history
     try {

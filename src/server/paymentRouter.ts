@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { requireAuthSession, requireStaffSession } from '../middleware/auth.ts';
 
 export const paymentRouter = Router();
 
@@ -25,8 +26,8 @@ const paymentAuditLogs: PaymentAuditLog[] = [
   },
 ];
 
-// 1. Health & Connection Status Test
-paymentRouter.get('/gateways/status', async (req: Request, res: Response) => {
+// 1. Health & Connection Status Test (Staff only)
+paymentRouter.get('/gateways/status', requireStaffSession, async (req: Request, res: Response) => {
   try {
     const { provider = 'all' } = req.query;
 
@@ -71,8 +72,8 @@ paymentRouter.get('/gateways/status', async (req: Request, res: Response) => {
   }
 });
 
-// 2. Process Payment via Gateway (Credit Card, Debit, PIX)
-paymentRouter.post('/process', async (req: Request, res: Response) => {
+// 2. Process Payment via Gateway (Authenticated User/Staff)
+paymentRouter.post('/process', requireAuthSession, async (req: Request, res: Response) => {
   try {
     const {
       gateway = 'mercadopago',
@@ -184,8 +185,8 @@ paymentRouter.post('/process', async (req: Request, res: Response) => {
   }
 });
 
-// 3. Refund / Cancellation
-paymentRouter.post('/refund', async (req: Request, res: Response) => {
+// 3. Refund / Cancellation (Staff only)
+paymentRouter.post('/refund', requireStaffSession, async (req: Request, res: Response) => {
   try {
     const { transactionId, gateway = 'mercadopago', reason, operatorName } = req.body;
 
@@ -257,8 +258,8 @@ paymentRouter.post('/webhook/pagbank', (req: Request, res: Response) => {
   return res.status(200).json({ received: true, gateway: 'pagbank' });
 });
 
-// 6. Audit & Technical Logs
-paymentRouter.get('/logs', (req: Request, res: Response) => {
+// 6. Audit & Technical Logs (Staff only)
+paymentRouter.get('/logs', requireStaffSession, (req: Request, res: Response) => {
   return res.json({
     success: true,
     count: paymentAuditLogs.length,
@@ -279,7 +280,7 @@ paymentRouter.get('/logs', (req: Request, res: Response) => {
  * - Prazo permitido apenas com proposta/orçamento aprovado com autorização
  * - Bloqueio de propostas canceladas ou recusadas
  */
-paymentRouter.post('/boleto/validate-and-generate', (req: Request, res: Response) => {
+paymentRouter.post('/boleto/validate-and-generate', requireAuthSession, (req: Request, res: Response) => {
   try {
     const {
       origin = 'loja_online',
@@ -435,8 +436,8 @@ paymentRouter.post('/boleto/validate-and-generate', (req: Request, res: Response
   }
 });
 
-// 8. Baixa / Liquidação de Boleto Bancário via Webhook ou Conciliação
-paymentRouter.post('/boleto/:id/settle', (req: Request, res: Response) => {
+// 8. Baixa / Liquidação de Boleto Bancário via Webhook ou Conciliação (Staff only)
+paymentRouter.post('/boleto/:id/settle', requireStaffSession, (req: Request, res: Response) => {
   const { id } = req.params;
   const { paidAmount, bankRef = 'RET_BANCO_ITAU_CNAB400' } = req.body;
 
@@ -459,8 +460,8 @@ paymentRouter.post('/boleto/:id/settle', (req: Request, res: Response) => {
   });
 });
 
-// 9. Endpoint de Execução da Suíte de Testes dos 11 Cenários Obrigatórios
-paymentRouter.get('/boleto/test-suite/run', (req: Request, res: Response) => {
+// 9. Endpoint de Execução da Suíte de Testes dos 11 Cenários Obrigatórios (Staff only)
+paymentRouter.get('/boleto/test-suite/run', requireStaffSession, (req: Request, res: Response) => {
   const results = [
     {
       id: 1,

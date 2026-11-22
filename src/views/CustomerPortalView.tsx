@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { UserProfile, Order, Quote, BoletoTitulo, Product, CartItem } from '../types';
 import { StorageService } from '../services/storage';
+import { updateMyProfile } from '../services/authClient';
 import { SEOHead } from '../components/SEOHead';
 import { BoletoModal } from '../components/BoletoModal';
 import { FavoriteButton } from '../components/FavoriteButton';
 import {
   User,
+  LogOut,
   Package,
   FileSpreadsheet,
   Settings,
@@ -116,7 +118,19 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
         (o) => o.clientId === currentUser.id || o.clientEmail === currentUser.email
       )
     );
+    setQuotes(
+      StorageService.getQuotes().filter(
+        (q) => q.clientId === currentUser.id || q.clientEmail === currentUser.email
+      )
+    );
   };
+
+  useEffect(() => {
+    refreshOrders();
+    const handler = () => refreshOrders();
+    window.addEventListener('mb_storage_updated', handler);
+    return () => window.removeEventListener('mb_storage_updated', handler);
+  }, [currentUser.id, currentUser.email]);
 
   // Orders Search & Filter States
   const [orderSearch, setOrderSearch] = useState('');
@@ -316,30 +330,42 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
     }
   };
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    const updated: UserProfile = {
-      ...currentUser,
-      name,
-      email,
-      phone,
-      company,
-      cpfCnpj,
-      stateRegistration,
-      address: {
-        street,
-        number,
-        neighborhood,
-        city,
-        state,
-        zip,
-      },
-    };
-    StorageService.saveUser(updated);
-    StorageService.setCurrentUser(updated);
-    onUserUpdate(updated);
-    setSavedSuccess(true);
-    setTimeout(() => setSavedSuccess(false), 3000);
+    try {
+      const res = await updateMyProfile({
+        name,
+        phone,
+        company,
+        cpfCnpj,
+        stateRegistration,
+        address: {
+          street,
+          number,
+          neighborhood,
+          city,
+          state,
+          zip,
+        },
+      });
+      if (res.success && res.user) {
+        StorageService.setCurrentUser(res.user);
+        onUserUpdate(res.user);
+        setSavedSuccess(true);
+        showPortalNotification('success', 'Dados cadastrais atualizados com sucesso!');
+        setTimeout(() => setSavedSuccess(false), 3000);
+      } else {
+        showPortalNotification('error', res.error || 'Não foi possível salvar os dados cadastrais.');
+      }
+    } catch (err: any) {
+      showPortalNotification('error', err?.message || 'Erro de comunicação ao atualizar perfil.');
+    }
+  };
+
+  const handleLogout = async () => {
+    await StorageService.logout();
+    onUserUpdate(StorageService.getCurrentUser());
+    onNavigate('home');
   };
 
   const handleApproveQuote = (quoteId: string) => {
@@ -430,6 +456,15 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
           >
             <FileSpreadsheet className="w-4 h-4" />
             <span>Novo Orçamento</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="px-4 py-2.5 bg-white/10 hover:bg-rose-600 text-white text-xs font-bold rounded-xl border border-white/20 transition-all flex items-center gap-1.5 cursor-pointer"
+            id="btn-customer-portal-logout"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Sair</span>
           </button>
         </div>
       </div>

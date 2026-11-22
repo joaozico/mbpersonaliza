@@ -75,9 +75,12 @@ export interface RolePermissions {
   canViewCouponUsageHistory?: boolean;
   canViewCouponReports?: boolean;
   canSendCouponsToCustomers?: boolean;
+  // Catálogo Digital em PDF (Acesso restrito a Admin/autorizados)
+  canAccessCatalogPdf?: boolean;
 }
 
 export type PermissionKey = keyof RolePermissions;
+export type PriceVisibilityMode = 'registered_only' | 'all';
 
 export interface WhatsAppContact {
   id: string;
