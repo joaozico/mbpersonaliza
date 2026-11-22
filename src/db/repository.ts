@@ -82,18 +82,40 @@ interface DevServerState {
 
 let memoryDevState: DevServerState | null = null;
 
+const MASTER_ADMIN_SEED = {
+  uid: 'user_admin_master',
+  id: 'user_admin_master',
+  name: 'Administrador Master (MB Personaliza)',
+  email: 'mbpersonaliza@gmail.com',
+  phone: '',
+  company: 'MB Personaliza',
+  cpfCnpj: '',
+  role: 'admin' as UserRole,
+  department: 'Administração Master',
+  status: 'ativo' as const,
+  isActive: true,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  passwordHash:
+    'scrypt$ea8560caf9ab1968b292af7d337d7cdb$0776578e8c97a3127e1c50e4f63fc4b2ba81f6445a5ea4d409061eff4f565c6a56ab744ba7a8779ea6a91c407feab24698188a7869eb814587a5320bb9836875',
+};
+
 function buildInitialDevState(): DevServerState {
+  const initialUsers = INITIAL_USERS.map((u) => {
+    const { password, ...rest } = u;
+    return {
+      ...rest,
+      uid: u.id,
+      cpfCnpj: u.cpfCnpj || '',
+      passwordHash: password ? hashPassword(password) : null,
+      isActive: u.status !== 'inativo',
+    };
+  });
+  if (!initialUsers.some((u) => u.email.toLowerCase() === MASTER_ADMIN_SEED.email)) {
+    initialUsers.unshift({ ...MASTER_ADMIN_SEED });
+  }
+
   return {
-    users: INITIAL_USERS.map((u) => {
-      const { password, ...rest } = u;
-      return {
-        ...rest,
-        uid: u.id,
-        cpfCnpj: u.cpfCnpj || '',
-        passwordHash: password ? hashPassword(password) : null,
-        isActive: u.status !== 'inativo',
-      };
-    }),
+    users: initialUsers,
     authSessions: [],
     categories: JSON.parse(JSON.stringify(INITIAL_CATEGORIES)),
     subcategories: JSON.parse(JSON.stringify(INITIAL_SUBCATEGORIES)),
@@ -135,6 +157,14 @@ function getDevState(): DevServerState {
           ...(parsed.settings || {}),
         },
       };
+      if (
+        !memoryDevState.users.some(
+          (u: any) => String(u.email || '').trim().toLowerCase() === MASTER_ADMIN_SEED.email
+        )
+      ) {
+        memoryDevState.users.unshift({ ...MASTER_ADMIN_SEED });
+        saveDevState(memoryDevState);
+      }
       return memoryDevState!;
     }
   } catch (err) {
@@ -284,6 +314,17 @@ export async function seedInitialDataIfEmpty() {
             isActive: (u as any).isActive !== false,
           }).onConflictDoNothing();
         }
+        await db.insert(users).values({
+          uid: MASTER_ADMIN_SEED.uid,
+          name: MASTER_ADMIN_SEED.name,
+          email: MASTER_ADMIN_SEED.email,
+          phone: MASTER_ADMIN_SEED.phone,
+          company: MASTER_ADMIN_SEED.company,
+          cpfCnpj: MASTER_ADMIN_SEED.cpfCnpj,
+          role: MASTER_ADMIN_SEED.role,
+          passwordHash: MASTER_ADMIN_SEED.passwordHash,
+          isActive: true,
+        }).onConflictDoNothing();
 
         console.log('[PostgreSQL] Seeding initial quotes and orders into Cloud SQL...');
         for (const q of INITIAL_QUOTES) {
@@ -377,6 +418,30 @@ export async function seedInitialDataIfEmpty() {
               [hashed, u.id]
             );
           }
+        }
+
+        // 3. Ensure Master Administrator account exists in PostgreSQL
+        const masterCheck = await pool.query(
+          'SELECT uid, password_hash FROM users WHERE LOWER(email) = $1 LIMIT 1',
+          [MASTER_ADMIN_SEED.email]
+        );
+        if (masterCheck.rows.length === 0) {
+          await db.insert(users).values({
+            uid: MASTER_ADMIN_SEED.uid,
+            name: MASTER_ADMIN_SEED.name,
+            email: MASTER_ADMIN_SEED.email,
+            phone: MASTER_ADMIN_SEED.phone,
+            company: MASTER_ADMIN_SEED.company,
+            cpfCnpj: MASTER_ADMIN_SEED.cpfCnpj,
+            role: MASTER_ADMIN_SEED.role,
+            passwordHash: MASTER_ADMIN_SEED.passwordHash,
+            isActive: true,
+          }).onConflictDoNothing();
+        } else if (!masterCheck.rows[0].password_hash) {
+          await pool.query(
+            'UPDATE users SET password_hash = $1, role = $2, is_active = true WHERE uid = $3',
+            [MASTER_ADMIN_SEED.passwordHash, 'admin', masterCheck.rows[0].uid]
+          );
         }
       }
     });
