@@ -4,34 +4,35 @@ import {
 } from '../../types/stricker';
 import { INITIAL_STRICKER_CUSTOMIZATION_TABLES } from '../../data/strickerInitialData';
 
-const STORAGE_KEYS = {
-  TABLES: 'mb_stricker_customization_tables_v1',
-};
+let memoryTables: StrickerCustomizationTable[] | null = null;
 
 export class StrickerCustomizationService {
+  /**
+   * Atualiza cache em memória com tabelas de personalização carregadas do PostgreSQL
+   */
+  public static setCustomizationTablesFromServer(tables: StrickerCustomizationTable[]): void {
+    if (Array.isArray(tables) && tables.length > 0) {
+      memoryTables = [...tables];
+      window.dispatchEvent(new Event('mb_stricker_customizations_updated'));
+    }
+  }
+
   /**
    * Obtém todas as tabelas de personalização importadas da Stricker
    */
   public static getCustomizationTables(): StrickerCustomizationTable[] {
-    try {
-      const data = localStorage.getItem(STORAGE_KEYS.TABLES);
-      if (data) return JSON.parse(data);
-    } catch (e) {
-      console.error('Erro ao ler tabelas de personalização:', e);
+    if (memoryTables !== null) {
+      return [...memoryTables];
     }
-    return INITIAL_STRICKER_CUSTOMIZATION_TABLES;
+    return [...INITIAL_STRICKER_CUSTOMIZATION_TABLES];
   }
 
   /**
-   * Salva tabelas de personalização
+   * Atualiza cache em memória das tabelas de personalização
    */
   public static saveCustomizationTables(tables: StrickerCustomizationTable[]): void {
-    try {
-      localStorage.setItem(STORAGE_KEYS.TABLES, JSON.stringify(tables));
-      window.dispatchEvent(new Event('mb_stricker_customizations_updated'));
-    } catch (e) {
-      console.error('Erro ao salvar tabelas de personalização:', e);
-    }
+    memoryTables = [...tables];
+    window.dispatchEvent(new Event('mb_stricker_customizations_updated'));
   }
 
   /**
@@ -67,7 +68,6 @@ export class StrickerCustomizationService {
       unitHandling = table.handlingPrice;
       setup = table.setupPrice;
 
-      // Busca faixa de quantidade na tabela técnica
       for (let i = table.tiers.length - 1; i >= 0; i--) {
         const tier = table.tiers[i];
         if (quantity >= tier.minQty) {
@@ -79,7 +79,6 @@ export class StrickerCustomizationService {
       }
     }
 
-    // Se houver mais de 1 cor na técnica aplicável (ex: Transfer ou Silk), adiciona fator de repetição de cor
     if (colorsCount > 1 && area.techniqueCode !== 'LSR1' && area.techniqueCode !== 'UV1') {
       unitCustomization = unitCustomization * (1 + (colorsCount - 1) * 0.45);
       setup = setup * (1 + (colorsCount - 1) * 0.5);
@@ -99,8 +98,6 @@ export class StrickerCustomizationService {
 
   /**
    * Calcula o preço final consolidado do produto com personalização
-   * Preço do produto + preço da personalização + manuseio = preço base
-   * Preço final = preço calculado × quantidade (+ setup)
    */
   public static calculateCombinedItemTotal(
     productUnitPrice: number,
@@ -127,7 +124,9 @@ export class StrickerCustomizationService {
     }
 
     const cust = this.calculateCustomizationCost(customizationArea, quantity, colorsCount);
-    const combinedUnit = Number((productUnitPrice + cust.unitCustomizationPrice + cust.unitHandlingPrice).toFixed(2));
+    const combinedUnit = Number(
+      (productUnitPrice + cust.unitCustomizationPrice + cust.unitHandlingPrice).toFixed(2)
+    );
     const finalTotal = Number((combinedUnit * quantity + cust.setupCost).toFixed(2));
 
     return {

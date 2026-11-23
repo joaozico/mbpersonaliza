@@ -27,7 +27,10 @@ log "=== Iniciando rotina de Backup do PostgreSQL MB Personaliza ==="
 
 # Carregar variáveis de ambiente se disponíveis
 if [ -f ".env" ]; then
-    export $(grep -v '^#' .env | xargs)
+    set -a
+    # shellcheck disable=SC1091
+    source .env
+    set +a
 fi
 
 # 1. Estratégia de Dump: pg_dump nativo ou via Container
@@ -44,11 +47,29 @@ if command -v pg_dump &> /dev/null; then
             --clean --if-exists --no-owner --no-privileges | gzip > "$BACKUP_FILE"
     fi
 elif docker compose exec -T app command -v curl &> /dev/null; then
-    log "pg_dump não encontrado no host. Gerando exportação JSON consistente via API interna de Backup..."
+    log "pg_dump não encontrado no host. Gerando exportação JSON consistente via API autenticada de Backup..."
     BACKUP_JSON="${BACKUP_DIR}/mb_backup_${TIMESTAMP}.json"
-    curl -s -X POST http://127.0.0.1:3000/api/backup/export \
-         -H "Content-Type: application/json" \
-         -d '{"triggeredBy": "cron_script"}' > "$BACKUP_JSON"
+    COOKIE_JAR=$(mktemp)
+    trap 'rm -f "$COOKIE_JAR" "${BACKUP_JSON}.tmp"' EXIT
+    if [ -n "${ADMIN_SESSION_TOKEN:-}" ]; then
+        curl -sf -X POST http://127.0.0.1:3000/api/backup/export \
+             -H "Content-Type: application/json" \
+             -H "Authorization: Bearer ${ADMIN_SESSION_TOKEN}" \
+             -d '{"triggeredBy": "cron_script"}' > "${BACKUP_JSON}.tmp"
+    elif [ -n "${ADMIN_EMAIL:-}" ] && [ -n "${ADMIN_PASSWORD:-}" ]; then
+        LOGIN_PAYLOAD=$(printf '{"email":"%s","password":"%s"}' "$ADMIN_EMAIL" "$ADMIN_PASSWORD")
+        curl -sf -c "$COOKIE_JAR" -X POST http://127.0.0.1:3000/api/auth/login \
+             -H "Content-Type: application/json" \
+             -d "$LOGIN_PAYLOAD" >/dev/null
+        curl -sf -b "$COOKIE_JAR" -X POST http://127.0.0.1:3000/api/backup/export \
+             -H "Content-Type: application/json" \
+             -d '{"triggeredBy": "cron_script"}' > "${BACKUP_JSON}.tmp"
+    else
+        log "ERRO: Defina ADMIN_SESSION_TOKEN ou ADMIN_EMAIL + ADMIN_PASSWORD para backup via API."
+        exit 1
+    fi
+    mv "${BACKUP_JSON}.tmp" "$BACKUP_JSON"
+    rm -f "$COOKIE_JAR"
     gzip "$BACKUP_JSON"
     BACKUP_FILE="${BACKUP_JSON}.gz"
     CHECKSUM_FILE="${BACKUP_FILE}.sha256"

@@ -140,35 +140,29 @@ const STORAGE_KEYS = {
   FAVORITES: 'mb_personaliza_user_favorites_v1',
 };
 
-function purgeLegacySensitiveBrowserStorage(): void {
-  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
-  try {
-    localStorage.removeItem('mb_personaliza_current_user_v1');
-    localStorage.removeItem('mb_personaliza_users_v1');
-    localStorage.removeItem('mb_personaliza_permissions_matrix_v1');
-    localStorage.removeItem('mb_personaliza_price_visibility_v1');
-  } catch {
-    // ignore storage cleanup errors
-  }
-}
+const memoryStore = new Map<string, any>();
+let hasSyncedProductsFromPostgres = false;
 
-purgeLegacySensitiveBrowserStorage();
+function cloneFallback<T>(fallback: T): T {
+  if (Array.isArray(fallback)) return [...fallback] as unknown as T;
+  if (fallback && typeof fallback === 'object') return { ...(fallback as any) } as T;
+  return fallback;
+}
 
 function getStored<T>(key: string, fallback: T): T {
   try {
-    const item = localStorage.getItem(key);
-    if (!item || item === 'undefined' || item === 'null') return fallback;
-    const parsed = JSON.parse(item);
-    if (parsed === null || parsed === undefined) return fallback;
-    return parsed;
+    if (!memoryStore.has(key)) return cloneFallback(fallback);
+    const val = memoryStore.get(key);
+    if (val === null || val === undefined) return cloneFallback(fallback);
+    return val as T;
   } catch {
-    return fallback;
+    return cloneFallback(fallback);
   }
 }
 
 function setStored<T>(key: string, data: T): boolean {
   try {
-    localStorage.setItem(key, JSON.stringify(data));
+    memoryStore.set(key, data);
     if (typeof window !== 'undefined') {
       setTimeout(() => {
         window.dispatchEvent(new Event('mb_storage_updated'));
@@ -176,7 +170,7 @@ function setStored<T>(key: string, data: T): boolean {
     }
     return true;
   } catch (err) {
-    console.error(`Error saving key ${key} to localStorage:`, err);
+    console.error(`Error updating in-memory key ${key}:`, err);
     return false;
   }
 }
@@ -235,7 +229,6 @@ export const StorageService = {
   // PostgreSQL Database Initialization & Real-time Synchronization
   async initPostgresSync(): Promise<boolean> {
     try {
-      purgeLegacySensitiveBrowserStorage();
       const res = await authFetch('/api/db/init', { cache: 'no-store' });
       if (!res.ok) return false;
       const json = await res.json();
@@ -297,9 +290,8 @@ export const StorageService = {
           qrCode: p.qrCode,
           createdAt: p.createdAt ? new Date(p.createdAt).toISOString() : new Date().toISOString(),
         }));
-        if (mappedProducts.length > 0) {
-          setStored(STORAGE_KEYS.PRODUCTS, mappedProducts);
-        }
+        hasSyncedProductsFromPostgres = true;
+        setStored(STORAGE_KEYS.PRODUCTS, mappedProducts);
       }
 
       if (Array.isArray(categories) && categories.length > 0) {
@@ -395,6 +387,35 @@ export const StorageService = {
         setStored(STORAGE_KEYS.FINANCIAL_PAYMENT_METHODS, settings.financial_payment_methods);
       }
 
+      try {
+        const cartRes = await authFetch('/api/db/cart', { cache: 'no-store' });
+        if (cartRes.ok) {
+          const cartJson = await cartRes.json();
+          if (Array.isArray(cartJson?.items)) {
+            memoryStore.set(STORAGE_KEYS.CART, cartJson.items);
+          }
+        }
+      } catch {
+        // ignore cart sync warning when DB unavailable
+      }
+
+      if (memoryCurrentUser && memoryCurrentUser.role !== 'visitante') {
+        try {
+          const favRes = await authFetch('/api/db/favorites', { cache: 'no-store' });
+          if (favRes.ok) {
+            const favJson = await favRes.json();
+            if (Array.isArray(favJson?.productIds)) {
+              const map = getStored<Record<string, string[]>>(STORAGE_KEYS.FAVORITES, {});
+              map[memoryCurrentUser.id] = favJson.productIds;
+              memoryStore.set(STORAGE_KEYS.FAVORITES, map);
+              memoryCurrentUser = { ...memoryCurrentUser, favoriteProductIds: favJson.productIds };
+            }
+          }
+        } catch {
+          // ignore favorites sync warning
+        }
+      }
+
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('mb_storage_updated'));
         window.dispatchEvent(new Event('mb_products_updated'));
@@ -424,7 +445,7 @@ export const StorageService = {
     }
   },
 
-  collectLocalStorageSnapshot(): Record<string, any> {
+  collectSystemSnapshot(): Record<string, any> {
     return {
       products: this.getProducts(),
       categories: this.getCategories(),
@@ -458,7 +479,7 @@ export const StorageService = {
   },
 
   async runControlledMigrationToPostgres(dryRun = true): Promise<any> {
-    const snapshot = this.collectLocalStorageSnapshot();
+    const snapshot = this.collectSystemSnapshot();
     const res = await authFetch('/api/db/migrate-local-storage', {
       method: 'POST',
       headers: {
@@ -471,11 +492,16 @@ export const StorageService = {
   // Products
   getProducts(): Product[] {
     const p = getStored<Product[]>(STORAGE_KEYS.PRODUCTS, INITIAL_PRODUCTS);
-    const list = Array.isArray(p) && p.length > 0 ? p : INITIAL_PRODUCTS;
-    // Garante que novos produtos do sistema e da Stricker sejam incorporados se ainda não constarem
-    const existingIds = new Set(list.map((item) => item.id));
-    const missing = INITIAL_PRODUCTS.filter((initProd) => !existingIds.has(initProd.id));
-    const merged = missing.length > 0 ? [...list, ...missing] : list;
+    const list = hasSyncedProductsFromPostgres
+      ? (Array.isArray(p) ? p : [])
+      : (Array.isArray(p) && p.length > 0 ? p : INITIAL_PRODUCTS);
+    const merged = hasSyncedProductsFromPostgres
+      ? list
+      : (() => {
+          const existingIds = new Set(list.map((item) => item.id));
+          const missing = INITIAL_PRODUCTS.filter((initProd) => !existingIds.has(initProd.id));
+          return missing.length > 0 ? [...list, ...missing] : list;
+        })();
     const allowedPrices = this.canViewPrices();
 
     // Sanitiza cada produto garantindo que details, customTechniques, images e variants existam
@@ -1012,6 +1038,15 @@ export const StorageService = {
     return company.maintenance || INITIAL_MAINTENANCE_SETTINGS;
   },
 
+  setMaintenanceMemory(maintenance: MaintenanceSettings): void {
+    memoryStore.set(STORAGE_KEYS.MAINTENANCE_SETTINGS, maintenance);
+    const company = this.getCompanySettings();
+    memoryStore.set(STORAGE_KEYS.COMPANY_SETTINGS, { ...company, maintenance });
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('mb_maintenance_updated', { detail: maintenance }));
+    }
+  },
+
   saveMaintenanceSettings(
     newSettings: MaintenanceSettings,
     user?: UserProfile,
@@ -1140,7 +1175,7 @@ export const StorageService = {
       if (!saved) {
         return {
           success: false,
-          error: 'Limite de armazenamento do navegador atingido. Tente usar imagens menores.',
+          error: 'Não foi possível atualizar as configurações em memória.',
         };
       }
 
@@ -1913,11 +1948,11 @@ export const StorageService = {
       if (!saved) {
         return {
           success: false,
-          error: 'Limite de armazenamento do navegador atingido. Tente reduzir o tamanho das imagens customizadas.',
+          error: 'Não foi possível atualizar as configurações de layout em memória.',
         };
       }
       // Clean draft upon publish
-      localStorage.removeItem(STORAGE_KEYS.LAYOUT_DRAFT);
+      memoryStore.delete(STORAGE_KEYS.LAYOUT_DRAFT);
       syncToPostgres('settings/layout', 'POST', { value: settings });
 
       if (typeof window !== 'undefined') {
@@ -1941,7 +1976,7 @@ export const StorageService = {
   saveLayoutDraft(draft: SystemLayoutSettings): boolean {
     draft.updatedAt = new Date().toISOString();
     try {
-      localStorage.setItem(STORAGE_KEYS.LAYOUT_DRAFT, JSON.stringify(draft));
+      memoryStore.set(STORAGE_KEYS.LAYOUT_DRAFT, draft);
       return true;
     } catch (err) {
       console.error('Error saving layout draft:', err);
@@ -1950,7 +1985,7 @@ export const StorageService = {
   },
 
   discardLayoutDraft(): void {
-    localStorage.removeItem(STORAGE_KEYS.LAYOUT_DRAFT);
+    memoryStore.delete(STORAGE_KEYS.LAYOUT_DRAFT);
   },
 
   publishLayout(settings?: SystemLayoutSettings): { success: boolean; error?: string } {
@@ -1960,7 +1995,7 @@ export const StorageService = {
 
   resetLayoutSettings(): { success: boolean } {
     setStored(STORAGE_KEYS.LAYOUT_SETTINGS, INITIAL_LAYOUT_SETTINGS);
-    localStorage.removeItem(STORAGE_KEYS.LAYOUT_DRAFT);
+    memoryStore.delete(STORAGE_KEYS.LAYOUT_DRAFT);
     if (typeof window !== 'undefined') {
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('mb_layout_updated', { detail: INITIAL_LAYOUT_SETTINGS }));
@@ -2063,7 +2098,6 @@ export const StorageService = {
       }
     }
     memoryPermissionsMatrix = next;
-    purgeLegacySensitiveBrowserStorage();
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('mb_storage_updated'));
     }
@@ -2090,7 +2124,6 @@ export const StorageService = {
   // Auth / Users (Memory-only synced from PostgreSQL)
   setUsersMemory(users: UserProfile[]): void {
     memoryUsers = Array.isArray(users) ? users : [];
-    purgeLegacySensitiveBrowserStorage();
   },
   getUsers(): UserProfile[] {
     if (memoryUsers.length > 0) return memoryUsers;
@@ -2113,7 +2146,6 @@ export const StorageService = {
       users.push(cleanUser);
     }
     memoryUsers = users;
-    purgeLegacySensitiveBrowserStorage();
 
     if (memoryCurrentUser && memoryCurrentUser.id === user.id) {
       memoryCurrentUser = cleanUser;
@@ -2127,7 +2159,6 @@ export const StorageService = {
   },
   deleteUser(userId: string): void {
     memoryUsers = this.getUsers().filter((u) => u.id !== userId);
-    purgeLegacySensitiveBrowserStorage();
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('mb_storage_updated'));
     }
@@ -2151,7 +2182,6 @@ export const StorageService = {
   },
   setCurrentUser(user: UserProfile | null): void {
     memoryCurrentUser = user ? { ...user } : { ...VISITOR_PROFILE };
-    purgeLegacySensitiveBrowserStorage();
     if (memoryCurrentUser.role === 'visitante') {
       memoryUsers = [];
     } else if (memoryUsers.length === 0) {
@@ -2169,22 +2199,17 @@ export const StorageService = {
     memoryCurrentUser = { ...VISITOR_PROFILE };
     memoryUsers = [];
     memoryPermissionsMatrix = { ...INITIAL_PERMISSIONS_MATRIX };
-    purgeLegacySensitiveBrowserStorage();
-    if (typeof localStorage !== 'undefined') {
-      try {
-        localStorage.removeItem(STORAGE_KEYS.QUOTES);
-        localStorage.removeItem(STORAGE_KEYS.ORDERS);
-        localStorage.removeItem(STORAGE_KEYS.BOLETOS);
-        localStorage.removeItem(STORAGE_KEYS.FINANCIAL_ACCOUNTS);
-        localStorage.removeItem(STORAGE_KEYS.PDV_SALES);
-        localStorage.removeItem(STORAGE_KEYS.CASH_REGISTER_SESSIONS);
-        localStorage.removeItem(STORAGE_KEYS.PAYMENT_TRANSACTIONS);
-        localStorage.removeItem(STORAGE_KEYS.COUPONS);
-        localStorage.removeItem(STORAGE_KEYS.STOCK_MOVEMENTS);
-      } catch {
-        // ignore
-      }
-    }
+    memoryStore.delete(STORAGE_KEYS.QUOTES);
+    memoryStore.delete(STORAGE_KEYS.ORDERS);
+    memoryStore.delete(STORAGE_KEYS.BOLETOS);
+    memoryStore.delete(STORAGE_KEYS.FINANCIAL_ACCOUNTS);
+    memoryStore.delete(STORAGE_KEYS.PDV_SALES);
+    memoryStore.delete(STORAGE_KEYS.CASH_REGISTER_SESSIONS);
+    memoryStore.delete(STORAGE_KEYS.PAYMENT_TRANSACTIONS);
+    memoryStore.delete(STORAGE_KEYS.COUPONS);
+    memoryStore.delete(STORAGE_KEYS.STOCK_MOVEMENTS);
+    memoryStore.delete(STORAGE_KEYS.FAVORITES);
+    memoryStore.delete(STORAGE_KEYS.CART);
     await this.initPostgresSync();
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('mb_storage_updated'));
@@ -2250,7 +2275,14 @@ export const StorageService = {
 
     if (current && current.id === uid) {
       void updateMyProfile({ favoriteProductIds: updatedFavorites }).catch((err) => {
-        console.warn('[Favorites] Falha ao sincronizar favoritos:', err);
+        console.warn('[Favorites] Falha ao sincronizar perfil de favoritos:', err);
+      });
+      void authFetch('/api/db/favorites', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productIds: updatedFavorites }),
+      }).catch((err) => {
+        console.warn('[Favorites] Falha ao persistir favoritos no PostgreSQL:', err);
       });
     }
 
@@ -2273,13 +2305,22 @@ export const StorageService = {
     return products.filter((p) => favIds.includes(p.id));
   },
 
-  // Cart
+  // Cart (In-memory cache synced with PostgreSQL /api/db/cart)
   getCart(): CartItem[] {
     const c = getStored<CartItem[]>(STORAGE_KEYS.CART, []);
     return Array.isArray(c) ? c : [];
   },
   saveCart(cart: CartItem[]): void {
     setStored(STORAGE_KEYS.CART, cart);
+    if (typeof fetch !== 'undefined') {
+      void authFetch('/api/db/cart', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: cart }),
+      }).catch((err) => {
+        console.warn('[Cart] Falha ao persistir carrinho no PostgreSQL:', err);
+      });
+    }
   },
   addToCart(item: CartItem): void {
     const cart = this.getCart();
@@ -4813,9 +4854,10 @@ export const StorageService = {
     };
   },
 
-  // Reset local cache without any automatic admin login
+  // Reset in-memory cache without any automatic admin login and resync with PostgreSQL
   resetAllData(): void {
-    localStorage.clear();
+    memoryStore.clear();
+    hasSyncedProductsFromPostgres = false;
     memoryCurrentUser = { ...VISITOR_PROFILE };
     memoryUsers = [];
     memoryPermissionsMatrix = { ...INITIAL_PERMISSIONS_MATRIX };
@@ -4836,7 +4878,7 @@ export const StorageService = {
     setStored(STORAGE_KEYS.COUPON_USAGES, INITIAL_COUPON_USAGES);
     setStored(STORAGE_KEYS.COUPON_SEND_HISTORY, INITIAL_COUPON_SEND_HISTORY);
     setStored(STORAGE_KEYS.COUPON_AUDIT_LOGS, INITIAL_COUPON_AUDIT_LOGS);
-    window.location.reload();
+    void this.initPostgresSync();
   },
 };
 

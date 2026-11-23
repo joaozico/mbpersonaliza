@@ -214,7 +214,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   const [couponLoading, setCouponLoading] = useState(false);
   const [couponFeedback, setCouponFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Função para aplicar cupom com validação completa no backend (e fallback no Storage)
+  // Função para aplicar cupom com validação autoritativa no backend PostgreSQL
   const handleApplyCoupon = async (overrideCode?: string) => {
     const codeToTest = (overrideCode !== undefined ? overrideCode : couponInput).trim();
     if (!codeToTest) {
@@ -240,7 +240,6 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
     };
 
     try {
-      // Tentar validação no backend
       const res = await authFetch('/api/coupons/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -252,15 +251,14 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
         }),
       });
 
-      let data: CouponValidationResult;
-      if (res.ok) {
-        data = await res.json();
-      } else {
-        // Fallback local caso dev server temporário
-        data = StorageService.validateCoupon(codeToTest, payloadCartItems, subtotal, customerData);
-      }
+      const data: CouponValidationResult = await res.json().catch(() => ({
+        valid: false,
+        discountAmount: 0,
+        eligibleSubtotal: 0,
+        error: `Erro ao validar cupom no PostgreSQL (HTTP ${res.status}).`,
+      }));
 
-      if (data.valid && data.coupon) {
+      if (res.ok && data.valid && data.coupon) {
         setAppliedCoupon(data.coupon);
         setCouponDiscount(data.discountAmount);
         setCouponValidationResult(data);
@@ -278,29 +276,17 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
         setCouponValidationResult(null);
         setCouponFeedback({
           type: 'error',
-          text: data.error || 'Código de cupom inválido ou expirado.',
+          text: data.error || 'Código de cupom inválido, expirado ou banco de dados indisponível.',
         });
       }
-    } catch {
-      // Fallback para StorageService local
-      const localResult = StorageService.validateCoupon(codeToTest, payloadCartItems, subtotal, customerData);
-      if (localResult.valid && localResult.coupon) {
-        setAppliedCoupon(localResult.coupon);
-        setCouponDiscount(localResult.discountAmount);
-        setCouponValidationResult(localResult);
-        setCouponFeedback({
-          type: 'success',
-          text: `Cupom "${localResult.coupon.code}" aplicado com sucesso!`,
-        });
-      } else {
-        setAppliedCoupon(null);
-        setCouponDiscount(0);
-        setCouponValidationResult(null);
-        setCouponFeedback({
-          type: 'error',
-          text: localResult.error || 'Código de cupom inválido.',
-        });
-      }
+    } catch (err: any) {
+      setAppliedCoupon(null);
+      setCouponDiscount(0);
+      setCouponValidationResult(null);
+      setCouponFeedback({
+        type: 'error',
+        text: err?.message || 'Erro de comunicação ao validar cupom no PostgreSQL.',
+      });
     } finally {
       setCouponLoading(false);
     }
@@ -413,12 +399,18 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
     setTimeout(() => setCopiedPix(false), 2500);
   };
 
-  const handlePlaceOrder = (e: React.FormEvent) => {
+  const handlePlaceOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     setCheckoutError(null);
 
     if (cart.length === 0) {
       setCheckoutError('Seu carrinho está vazio.');
+      return;
+    }
+
+    if (isVisitor) {
+      setCheckoutError('Faça login ou cadastre sua conta para concluir o pedido com segurança no PostgreSQL.');
+      if (onOpenAuth) onOpenAuth('login');
       return;
     }
 
@@ -438,18 +430,21 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
     if (!shippingCalculation.coverage.allowed && selectedShippingOption.type !== 'retirada') {
       setCheckoutError(
         shippingCalculation.coverage.reason ||
-        'Não foi possível concluir o pedido: o CEP e endereço de entrega informado estão fora da nossa área geográfica de atendimento.'
+          'Não foi possível concluir o pedido: o CEP e endereço de entrega informado estão fora da nossa área geográfica de atendimento.'
       );
       return;
     }
 
     setIsProcessing(true);
 
-    setTimeout(() => {
+    try {
       const randomOrderNum = Math.floor(1000 + Math.random() * 9000);
+      const orderId = `ord-${Date.now()}`;
+      const orderCode = `PED-2026-${randomOrderNum}`;
+
       const newOrder: Order = {
-        id: `ord-${Date.now()}`,
-        code: `PED-2026-${randomOrderNum}`,
+        id: orderId,
+        code: orderCode,
         clientId: currentUser.id,
         clientName: name,
         clientEmail: email,
@@ -521,10 +516,12 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
         },
         total,
         paymentMethod,
-        paymentStatus: (paymentMethod === 'boleto' || paymentMethod === 'boleto_faturado') ? 'pendente' : 'pago',
+        paymentStatus:
+          paymentMethod === 'boleto' || paymentMethod === 'boleto_faturado' ? 'pendente' : 'pago',
         orderStatus: 'novo',
         sourceQuoteId: operationType === 'proposta_aprovada' ? selectedQuote?.id : undefined,
-        billingTerms: operationType === 'proposta_aprovada' ? selectedQuote?.billingTerms : undefined,
+        billingTerms:
+          operationType === 'proposta_aprovada' ? selectedQuote?.billingTerms : undefined,
         notes: `Pedido realizado via loja online. ${
           paymentMethod === 'boleto_faturado'
             ? `Boleto Faturado a Prazo (Autorizado: ${selectedQuote?.billingTerms?.conditionName || 'Proposta'}).`
@@ -535,62 +532,168 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
         createdAt: new Date().toISOString(),
       };
 
-      StorageService.addOrder(newOrder);
-
-      // Se for boleto (à vista ou faturado a prazo), gera os boletos bancários oficiais e integra com Contas a Receber
-      if (paymentMethod === 'boleto' || paymentMethod === 'boleto_faturado') {
-        const boletoRes = StorageService.generateBoletosForOrder({
-          order: newOrder,
-          quote: selectedQuote || undefined,
-          tipoCobranca: paymentMethod === 'boleto_faturado' ? 'faturado_prazo' : 'a_vista',
-          operatorName: 'Loja Virtual MB (Checkout)',
-        });
-
-        if (boletoRes.success) {
-          newOrder.boletos = boletoRes.boletos;
-          setActiveBoletos(boletoRes.boletos);
-          setShowBoletoModal(true);
-        }
-      }
-
-      // Baixa de estoque imediata para os produtos vendidos online
-      cart.forEach((item) => {
-        StorageService.adjustStock(
-          item.product.id,
-          item.quantity,
-          'saida',
-          `Venda Loja Online #${newOrder.code}`,
-          'Loja Virtual MB'
-        );
-      });
-
-      // Registra transação financeira no módulo de pagamentos
       const activeGateways = StorageService.getPaymentGateways();
       const activeGw = activeGateways.find((g) => g.enabled)?.provider || 'mercadopago';
       const gwConfig = StorageService.getPaymentGateway(activeGw);
-      const feeRate = paymentMethod === 'credit_card' ? (gwConfig?.feePercentageCredit ?? 3.49) / 100 : paymentMethod === 'pix' ? (gwConfig?.feePercentagePix ?? 0.99) / 100 : 0;
-      const feeAmount = Number((total * feeRate).toFixed(2));
-      const netAmount = Number((total - feeAmount).toFixed(2));
+
+      let serverBoletos: BoletoTitulo[] = [];
+      let initialFinancialAccount: any = undefined;
+      let paymentResult: any = null;
+
+      // 1. Validação e geração no servidor para Boleto (à vista ou faturado) ou Pagamento via Gateway
+      if (paymentMethod === 'boleto' || paymentMethod === 'boleto_faturado') {
+        const boletoRes = await authFetch('/api/payments/boleto/validate-and-generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            origin: operationType === 'proposta_aprovada' ? 'proposta_aprovada' : 'loja_online',
+            amount: total,
+            customer: { name, email, cpfCnpj },
+            billingType: paymentMethod === 'boleto_faturado' ? 'faturado_prazo' : 'a_vista',
+            quote: selectedQuote || undefined,
+            orderCode,
+            installments: selectedQuote?.billingTerms?.installmentsCount || 1,
+          }),
+        });
+        const boletoData = await boletoRes.json().catch(() => ({}));
+        if (!boletoRes.ok || !boletoData.success) {
+          setCheckoutError(
+            boletoData.error ||
+              'Não foi possível validar/emitir o boleto bancário no servidor. Seu carrinho foi preservado.'
+          );
+          return;
+        }
+        serverBoletos = Array.isArray(boletoData.boletos)
+          ? boletoData.boletos.map((b: any) => ({ ...b, orderId }))
+          : [];
+        newOrder.boletos = serverBoletos;
+
+        const firstBol = serverBoletos[0];
+        if (firstBol) {
+          const finId = `fin-rec-${Date.now()}`;
+          serverBoletos = serverBoletos.map((b) => ({ ...b, financialAccountId: finId }));
+          newOrder.boletos = serverBoletos;
+          initialFinancialAccount = {
+            id: finId,
+            type: 'receber',
+            description:
+              paymentMethod === 'boleto_faturado'
+                ? `Boleto Faturado (${serverBoletos.length}x) - Pedido #${orderCode}`
+                : `Boleto à Vista - Pedido #${orderCode}`,
+            entityName: firstBol.sacadoNome || name,
+            documentNumber: firstBol.sacadoCpfCnpj || cpfCnpj || '',
+            amount: total,
+            paidAmount: 0,
+            remainingAmount: total,
+            dueDate: firstBol.dataVencimento,
+            issueDate: firstBol.dataEmissao,
+            status: 'pendente',
+            categoryId: 'cat-rec-1',
+            costCenterId: 'cc-1',
+            orderId,
+            notes: `Nosso Número: ${firstBol.nossoNumero} | Linha Digitável: ${firstBol.linhaDigitavel}`,
+          };
+        }
+      } else {
+        const payRes = await authFetch('/api/payments/process', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            gateway: activeGw,
+            method: paymentMethod,
+            amount: total,
+            installments: paymentMethod === 'credit_card' ? installments : 1,
+            card: paymentMethod === 'credit_card' ? { number: cardNumber } : undefined,
+            saleCode: orderCode,
+            origin: 'loja_online',
+          }),
+        });
+        const payData = await payRes.json().catch(() => ({}));
+        if (!payRes.ok || !payData.success) {
+          setCheckoutError(
+            payData.error ||
+              'Falha ao processar cobrança junto ao servidor/PostgreSQL. Seu carrinho foi mantido intacto.'
+          );
+          return;
+        }
+        paymentResult = payData;
+      }
+
+      // 2. Persistência atômica no PostgreSQL (Pedido + Baixa de Estoque + Boletos + Contas a Receber + Cupom + Limpeza do Carrinho)
+      const checkoutRes = await authFetch('/api/db/orders/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          order: newOrder,
+          initialBoletos: serverBoletos,
+          initialFinancialAccount,
+        }),
+      });
+      const checkoutData = await checkoutRes.json().catch(() => ({}));
+      if (!checkoutRes.ok || !checkoutData.success) {
+        setCheckoutError(
+          checkoutData.error ||
+            'Não foi possível gravar o pedido no PostgreSQL. Nenhuma cobrança local foi confirmada e seu carrinho permanece intacto.'
+        );
+        return;
+      }
+
+      const persistedOrder: Order = checkoutData.order || newOrder;
+
+      // 3. Registra transação financeira no módulo de pagamentos no PostgreSQL
+      const feeRate =
+        paymentMethod === 'credit_card'
+          ? (gwConfig?.feePercentageCredit ?? 3.49) / 100
+          : paymentMethod === 'pix'
+          ? (gwConfig?.feePercentagePix ?? 0.99) / 100
+          : 0;
+      const feeAmount = paymentResult?.feeAmount ?? Number((total * feeRate).toFixed(2));
+      const netAmount = paymentResult?.netAmount ?? Number((total - feeAmount).toFixed(2));
 
       StorageService.addPaymentTransaction({
-        id: `tx-web-${newOrder.code}`,
-        saleId: newOrder.id,
-        saleCode: newOrder.code,
+        id: `tx-web-${persistedOrder.code}`,
+        saleId: persistedOrder.id,
+        saleCode: persistedOrder.code,
         origin: 'loja_online',
         customerName: name,
         customerCpfCnpj: cpfCnpj || undefined,
         gateway: activeGw,
-        gatewayTransactionId: `${activeGw === 'mercadopago' ? 'mp' : 'pb'}_tx_${Date.now()}`,
-        method: paymentMethod === 'credit_card' ? 'credit_card' : paymentMethod === 'pix' ? 'pix' : 'boleto',
+        gatewayTransactionId:
+          paymentResult?.transactionId ||
+          `${activeGw === 'mercadopago' ? 'mp' : 'pb'}_tx_${Date.now()}`,
+        method:
+          paymentMethod === 'credit_card'
+            ? 'credit_card'
+            : paymentMethod === 'pix'
+            ? 'pix'
+            : 'boleto',
         installments: paymentMethod === 'credit_card' ? installments : 1,
-        installmentValue: paymentMethod === 'credit_card' && installments > 1 ? Number((total / installments).toFixed(2)) : total,
+        installmentValue:
+          paymentMethod === 'credit_card' && installments > 1
+            ? Number((total / installments).toFixed(2))
+            : total,
         grossAmount: total,
         feeAmount,
         netAmount,
-        status: (paymentMethod === 'boleto' || paymentMethod === 'boleto_faturado') ? 'aguardando' : 'aprovado',
-        statusDetail: `Pedido recebido via checkout online (${paymentMethod === 'boleto_faturado' ? 'Boleto Faturado a Prazo' : paymentMethod === 'boleto' ? 'Boleto à Vista' : paymentMethod}).`,
-        cardBrand: paymentMethod === 'credit_card' ? 'Mastercard' : undefined,
-        cardLastFour: paymentMethod === 'credit_card' ? cardNumber.replace(/\D/g, '').slice(-4) || '4242' : undefined,
+        status:
+          paymentMethod === 'boleto' || paymentMethod === 'boleto_faturado'
+            ? 'aguardando'
+            : 'aprovado',
+        statusDetail:
+          paymentResult?.statusDetail ||
+          `Pedido recebido via checkout online (${
+            paymentMethod === 'boleto_faturado'
+              ? 'Boleto Faturado a Prazo'
+              : paymentMethod === 'boleto'
+              ? 'Boleto à Vista'
+              : paymentMethod
+          }).`,
+        cardBrand:
+          paymentMethod === 'credit_card' ? paymentResult?.cardBrand || 'Mastercard' : undefined,
+        cardLastFour:
+          paymentMethod === 'credit_card'
+            ? paymentResult?.cardLastFour || cardNumber.replace(/\D/g, '').slice(-4) || '4242'
+            : undefined,
         operatorName: 'Loja Virtual MB',
         metadata: {
           shippingCost,
@@ -602,10 +705,14 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
         history: [
           {
             timestamp: new Date().toISOString(),
-            status: (paymentMethod === 'boleto' || paymentMethod === 'boleto_faturado') ? 'aguardando' : 'aprovado',
-            note: (paymentMethod === 'boleto' || paymentMethod === 'boleto_faturado')
-              ? 'Boleto bancário emitido. Aguardando conciliação ou liquidação bancária.'
-              : 'Cobrança aprovada no checkout transparente.',
+            status:
+              paymentMethod === 'boleto' || paymentMethod === 'boleto_faturado'
+                ? 'aguardando'
+                : 'aprovado',
+            note:
+              paymentMethod === 'boleto' || paymentMethod === 'boleto_faturado'
+                ? 'Boleto bancário emitido no PostgreSQL. Aguardando conciliação.'
+                : 'Cobrança aprovada no checkout transparente.',
             operator: 'Loja Virtual MB',
           },
         ],
@@ -613,58 +720,60 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
         updatedAt: new Date().toISOString(),
       });
 
-      // Sincroniza pedido no WebService da Stricker para produtos importados/integrados
+      // 4. Sincroniza pedido no WebService da Stricker para produtos importados/integrados
       const strickerCartItems = cart.filter(
         (item) =>
           item.product.code.startsWith('STK-') ||
           item.product.id.startsWith('mb-stk-') ||
-          ['prod-garrafa-inox-650', 'prod-mochila-antifurto', 'prod-powerbank-10000', 'prod-caderno-a5-branve', 'prod-caneta-metal-ekston'].includes(item.product.id)
+          [
+            'prod-garrafa-inox-650',
+            'prod-mochila-antifurto',
+            'prod-powerbank-10000',
+            'prod-caderno-a5-branve',
+            'prod-caneta-metal-ekston',
+          ].includes(item.product.id)
       );
 
       if (strickerCartItems.length > 0) {
-        try {
-          const lines = strickerCartItems.map((item) => {
-            const cleanRef = item.product.code.replace('STK-', '');
-            const optSku = item.variant?.sku || cleanRef;
-            return {
-              productReference: cleanRef,
-              sku: optSku,
-              quantity: item.quantity,
-              unitPrice: item.product.cost_price || Number((item.calculatedUnitPrice * 0.65).toFixed(2)),
-              customization: item.customTechnique
-                ? {
-                    techniqueName: item.customTechnique,
-                    description: `Gravação MB Personaliza (${item.customArtworkName || 'Arte do Cliente'})`,
-                  }
-                : undefined,
-            };
-          });
+        const lines = strickerCartItems.map((item) => {
+          const cleanRef = item.product.code.replace('STK-', '');
+          const optSku = item.variant?.sku || cleanRef;
+          return {
+            productReference: cleanRef,
+            sku: optSku,
+            quantity: item.quantity,
+            lineType: item.customTechnique ? ('print' as const) : ('standard' as const),
+            unitPrice:
+              item.product.cost_price || Number((item.calculatedUnitPrice * 0.65).toFixed(2)),
+          };
+        });
 
-          StrickerOrderService.createOrder({
-            internalReference: newOrder.code,
-            waitArtwork: true, // Garante maquete técnica antes da gravação na fábrica
-            deliveryAddress: {
-              recipientName: name,
-              street,
-              number,
-              neighborhood,
-              city,
-              state,
-              zip,
-              country: 'Brasil',
-            },
-            lines,
-          }).catch((err) => console.warn('Aviso integração pedido Stricker:', err));
-        } catch (stkErr) {
-          console.warn('Erro ao disparar pedido para Stricker:', stkErr);
-        }
+        StrickerOrderService.createOrder({
+          internalReference: persistedOrder.code,
+          waitArtwork: true,
+          deliveryAddress: {
+            recipientName: name,
+            street,
+            number,
+            neighborhood,
+            city,
+            state,
+            zip,
+            country: 'Brasil',
+          },
+          lines,
+        }).catch((err) => console.warn('Aviso integração pedido Stricker:', err));
       }
 
-      onClearCart();
-      setCompletedOrder(newOrder);
-      setIsProcessing(false);
+      if (serverBoletos.length > 0) {
+        setActiveBoletos(serverBoletos);
+        setShowBoletoModal(true);
+      }
 
-      // Trigger confetti
+      await StorageService.initPostgresSync().catch(() => {});
+      onClearCart();
+      setCompletedOrder(persistedOrder);
+
       try {
         confetti({
           particleCount: 100,
@@ -673,7 +782,14 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
           colors: ['#E6007E', '#00AEEF', '#FFDD00'],
         });
       } catch {}
-    }, 1200);
+    } catch (err: any) {
+      setCheckoutError(
+        err?.message ||
+          'Erro inesperado de comunicação com o servidor PostgreSQL. Seu carrinho foi preservado.'
+      );
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   if (completedOrder) {

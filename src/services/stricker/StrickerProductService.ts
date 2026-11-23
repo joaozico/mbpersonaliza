@@ -1,6 +1,5 @@
 import {
   StrickerProduct,
-  StrickerOptional,
   StrickerColor,
   StrickerProductType,
   StrickerProductStatus,
@@ -13,12 +12,11 @@ import {
 import { Product } from '../../types';
 import { StorageService } from '../storage';
 import { StrickerAuthService } from './StrickerAuthService';
+import { authFetch } from '../authClient';
 
-const STORAGE_KEYS = {
-  PRODUCTS: 'mb_stricker_products_v1',
-  COLORS: 'mb_stricker_colors_v1',
-  TYPES: 'mb_stricker_types_v1',
-};
+let memoryProducts: StrickerProduct[] | null = null;
+let memoryColors: StrickerColor[] = [...INITIAL_STRICKER_COLORS];
+let memoryTypes: StrickerProductType[] = [...INITIAL_STRICKER_TYPES];
 
 export function mapStrickerCategoryToStore(
   categoryName?: string,
@@ -30,43 +28,103 @@ export function mapStrickerCategoryToStore(
   const name = (productName || '').toLowerCase();
 
   // 1. Drinkware & Térmicos
-  if (code === 'DRK' || cat.includes('drink') || cat.includes('térmic') || cat.includes('termic') || name.includes('garrafa') || name.includes('copo') || name.includes('caneca')) {
-    if (name.includes('garrafa') || name.includes('squeeze')) return { categoryId: 'cat-termicos', subcategoryId: 'sub-garrafas' };
-    if (name.includes('caneca')) return { categoryId: 'cat-termicos', subcategoryId: 'sub-canecas' };
+  if (
+    code === 'DRK' ||
+    cat.includes('drink') ||
+    cat.includes('térmic') ||
+    cat.includes('termic') ||
+    name.includes('garrafa') ||
+    name.includes('copo') ||
+    name.includes('caneca')
+  ) {
+    if (name.includes('garrafa') || name.includes('squeeze'))
+      return { categoryId: 'cat-termicos', subcategoryId: 'sub-garrafas' };
+    if (name.includes('caneca'))
+      return { categoryId: 'cat-termicos', subcategoryId: 'sub-canecas' };
     return { categoryId: 'cat-termicos', subcategoryId: 'sub-copos' };
   }
 
   // 2. Tecnologia & Eletrônicos
-  if (code === 'TEC' || cat.includes('tecno') || cat.includes('eletr') || name.includes('power') || name.includes('bank') || name.includes('fone') || name.includes('som')) {
-    if (name.includes('mouse') || name.includes('deskmat')) return { categoryId: 'cat-tecnologia', subcategoryId: 'sub-mousepad' };
+  if (
+    code === 'TEC' ||
+    cat.includes('tecno') ||
+    cat.includes('eletr') ||
+    name.includes('power') ||
+    name.includes('bank') ||
+    name.includes('fone') ||
+    name.includes('som')
+  ) {
+    if (name.includes('mouse') || name.includes('deskmat'))
+      return { categoryId: 'cat-tecnologia', subcategoryId: 'sub-mousepad' };
     return { categoryId: 'cat-tecnologia', subcategoryId: 'sub-powerbank' };
   }
 
   // 3. Mochilas & Bolsas
-  if (code === 'BAG' || cat.includes('bolsa') || cat.includes('mochila') || cat.includes('viagem') || name.includes('mochila') || name.includes('pasta')) {
+  if (
+    code === 'BAG' ||
+    cat.includes('bolsa') ||
+    cat.includes('mochila') ||
+    cat.includes('viagem') ||
+    name.includes('mochila') ||
+    name.includes('pasta')
+  ) {
     return { categoryId: 'cat-tecnologia', subcategoryId: 'sub-powerbank' };
   }
 
   // 4. Escrita & Papelaria
-  if (code === 'ESC' || cat.includes('escrita') || cat.includes('papel') || name.includes('caderno') || name.includes('moleskine') || name.includes('caneta') || name.includes('bloco')) {
-    if (name.includes('caneta') || name.includes('rollerball') || name.includes('esferográfica')) return { categoryId: 'cat-papelaria', subcategoryId: 'sub-canetas' };
+  if (
+    code === 'ESC' ||
+    cat.includes('escrita') ||
+    cat.includes('papel') ||
+    name.includes('caderno') ||
+    name.includes('moleskine') ||
+    name.includes('caneta') ||
+    name.includes('bloco')
+  ) {
+    if (name.includes('caneta') || name.includes('rollerball') || name.includes('esferográfica'))
+      return { categoryId: 'cat-papelaria', subcategoryId: 'sub-canetas' };
     return { categoryId: 'cat-papelaria', subcategoryId: 'sub-cadernos' };
   }
 
   // 5. Linha Ecológica
-  if (code === 'ECO' || cat.includes('eco') || cat.includes('sustent') || name.includes('bambu') || name.includes('cortiça') || name.includes('algodão') || name.includes('ecobag')) {
+  if (
+    code === 'ECO' ||
+    cat.includes('eco') ||
+    cat.includes('sustent') ||
+    name.includes('bambu') ||
+    name.includes('cortiça') ||
+    name.includes('algodão') ||
+    name.includes('ecobag')
+  ) {
     return { categoryId: 'cat-ecologicos', subcategoryId: 'sub-ecobags' };
   }
 
   // 6. Casa, Bar & Lazer
-  if (code === 'HOM' || cat.includes('casa') || cat.includes('bar') || cat.includes('lazer') || name.includes('queijo') || name.includes('vinho') || name.includes('churrasco')) {
+  if (
+    code === 'HOM' ||
+    cat.includes('casa') ||
+    cat.includes('bar') ||
+    cat.includes('lazer') ||
+    name.includes('queijo') ||
+    name.includes('vinho') ||
+    name.includes('churrasco')
+  ) {
     return { categoryId: 'cat-ecologicos', subcategoryId: 'sub-ecobags' };
   }
 
   // 7. Têxtil
-  if (cat.includes('textil') || cat.includes('têxtil') || cat.includes('uniform') || name.includes('camisa') || name.includes('camiseta') || name.includes('polo') || name.includes('boné')) {
+  if (
+    cat.includes('textil') ||
+    cat.includes('têxtil') ||
+    cat.includes('uniform') ||
+    name.includes('camisa') ||
+    name.includes('camiseta') ||
+    name.includes('polo') ||
+    name.includes('boné')
+  ) {
     if (name.includes('polo')) return { categoryId: 'cat-textil', subcategoryId: 'sub-polos' };
-    if (name.includes('boné') || name.includes('bone')) return { categoryId: 'cat-textil', subcategoryId: 'sub-bones' };
+    if (name.includes('boné') || name.includes('bone'))
+      return { categoryId: 'cat-textil', subcategoryId: 'sub-bones' };
     return { categoryId: 'cat-textil', subcategoryId: 'sub-camisetas' };
   }
 
@@ -97,7 +155,10 @@ export class StrickerProductService {
         })
       : [];
 
-    const totalStock = optionals.reduce((sum: number, opt: any) => sum + (opt.stockAvailable || 0), 0);
+    const totalStock = optionals.reduce(
+      (sum: number, opt: any) => sum + (opt.stockAvailable || 0),
+      0
+    );
     const totalNext = optionals.reduce(
       (sum: number, opt: any) =>
         sum + (opt.nextQuantities || []).reduce((s: number, nq: any) => s + (nq.quantity || 0), 0),
@@ -119,32 +180,44 @@ export class StrickerProductService {
   }
 
   /**
-   * Obtém todos os produtos importados da Stricker
+   * Atualiza cache em memória com os produtos carregados do PostgreSQL
+   */
+  public static setProductsFromServer(products: any[]): void {
+    if (Array.isArray(products)) {
+      memoryProducts = products.map((p) => this.sanitizeProduct(p));
+      window.dispatchEvent(new Event('mb_stricker_products_updated'));
+    }
+  }
+
+  /**
+   * Obtém todos os produtos Stricker em memória (hidratados do PostgreSQL)
    */
   public static getProducts(): StrickerProduct[] {
-    try {
-      const data = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
-      if (data) {
-        const parsed = JSON.parse(data);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((p) => this.sanitizeProduct(p));
-        }
-      }
-    } catch (e) {
-      console.error('Erro ao ler produtos Stricker:', e);
+    if (memoryProducts !== null) {
+      return memoryProducts.map((p) => this.sanitizeProduct(p));
     }
     return INITIAL_STRICKER_PRODUCTS.map((p) => this.sanitizeProduct(p));
   }
 
   /**
-   * Salva lista de produtos Stricker
+   * Atualiza lista de produtos Stricker em memória e persiste no PostgreSQL
    */
-  public static saveProducts(products: StrickerProduct[]): void {
-    try {
-      localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
-      window.dispatchEvent(new Event('mb_stricker_products_updated'));
-    } catch (e) {
-      console.error('Erro ao salvar produtos Stricker:', e);
+  public static saveProducts(
+    products: StrickerProduct[],
+    options: { skipServerSync?: boolean } = {}
+  ): void {
+    const sanitized = products.map((p) => this.sanitizeProduct(p));
+    memoryProducts = sanitized;
+    window.dispatchEvent(new Event('mb_stricker_products_updated'));
+
+    if (!options.skipServerSync && sanitized.length > 0) {
+      authFetch('/api/stricker/products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ products: sanitized }),
+      }).catch((err) => {
+        console.error('Erro ao persistir produtos Stricker no PostgreSQL:', err);
+      });
     }
   }
 
@@ -158,21 +231,33 @@ export class StrickerProductService {
   }
 
   /**
-   * Atualiza ou insere um produto
+   * Atualiza ou insere um produto no PostgreSQL e memória
    */
   public static saveProduct(product: StrickerProduct): void {
     const products = this.getProducts();
-    const index = products.findIndex((p) => p.reference === product.reference || p.id === product.id);
+    const index = products.findIndex(
+      (p) => p.reference === product.reference || p.id === product.id
+    );
+    const updatedProduct = this.sanitizeProduct({
+      ...product,
+      createdAt: product.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
     if (index >= 0) {
-      products[index] = { ...product, updatedAt: new Date().toISOString() };
+      products[index] = updatedProduct;
     } else {
-      products.unshift({
-        ...product,
-        createdAt: product.createdAt || new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
+      products.unshift(updatedProduct);
     }
-    this.saveProducts(products);
+    memoryProducts = products;
+    window.dispatchEvent(new Event('mb_stricker_products_updated'));
+
+    authFetch('/api/stricker/products', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product: updatedProduct }),
+    }).catch((err) => {
+      console.error('Erro ao salvar produto Stricker no PostgreSQL:', err);
+    });
   }
 
   /**
@@ -184,7 +269,7 @@ export class StrickerProductService {
     if (prod) {
       prod.status = status;
       prod.updatedAt = new Date().toISOString();
-      this.saveProducts(products);
+      this.saveProduct(prod);
     }
   }
 
@@ -198,8 +283,7 @@ export class StrickerProductService {
       prod.profitMarginPct = profitMarginPct;
       prod.salePriceMin = Number((prod.costPriceMin * (1 + profitMarginPct / 100)).toFixed(2));
       prod.salePriceMax = Number((prod.costPriceMax * (1 + profitMarginPct / 100)).toFixed(2));
-      
-      // Atualiza preços de todos os optionals
+
       prod.optionals = prod.optionals.map((opt) => ({
         ...opt,
         priceSale: Number((opt.priceOriginal * (1 + profitMarginPct / 100)).toFixed(2)),
@@ -207,9 +291,8 @@ export class StrickerProductService {
       }));
 
       prod.updatedAt = new Date().toISOString();
-      this.saveProducts(products);
+      this.saveProduct(prod);
 
-      // Se já está publicado no catálogo da loja, atualiza em tempo real
       if (prod.publishedToCatalog) {
         const mbProduct = this.convertToStoreProduct(prod);
         StorageService.saveProduct(mbProduct);
@@ -232,10 +315,11 @@ export class StrickerProductService {
       strickerProduct.name
     );
 
-    // Mapeia os optionals para variantes da MB Personaliza
     const variants = strickerProduct.optionals.map((opt) => ({
       id: `var-${opt.sku}`,
-      name: `${opt.colorName}${opt.size ? ` - ${opt.size}` : ''}${opt.capacity ? ` - ${opt.capacity}` : ''}`,
+      name: `${opt.colorName}${opt.size ? ` - ${opt.size}` : ''}${
+        opt.capacity ? ` - ${opt.capacity}` : ''
+      }`,
       sku: opt.sku,
       colorHex: opt.colorHex || '#111111',
       size: opt.size,
@@ -243,12 +327,10 @@ export class StrickerProductService {
       additional_price: 0,
     }));
 
-    // Mapeia técnicas de personalização
     const customTechs = Array.from(
       new Set(strickerProduct.customizationOptions.map((c) => c.techniqueName))
     );
 
-    // Mapeia faixas de preço por quantidade
     const firstOpt = strickerProduct.optionals[0];
     const priceTiers =
       firstOpt?.priceTiers && firstOpt.priceTiers.length > 0
@@ -259,14 +341,36 @@ export class StrickerProductService {
             unit_price: Number((tier.unitPrice * (1 + margin / 100)).toFixed(2)),
             discount_pct: Math.max(
               0,
-              Math.round(((basePrice - Number((tier.unitPrice * (1 + margin / 100)).toFixed(2))) / basePrice) * 100)
+              Math.round(
+                ((basePrice - Number((tier.unitPrice * (1 + margin / 100)).toFixed(2))) /
+                  basePrice) *
+                  100
+              )
             ),
           }))
         : [
             { id: 'pt-1', min_qty: 10, max_qty: 24, unit_price: basePrice, discount_pct: 0 },
-            { id: 'pt-2', min_qty: 25, max_qty: 99, unit_price: Number((basePrice * 0.94).toFixed(2)), discount_pct: 6 },
-            { id: 'pt-3', min_qty: 100, max_qty: 249, unit_price: Number((basePrice * 0.86).toFixed(2)), discount_pct: 14 },
-            { id: 'pt-4', min_qty: 250, max_qty: 9999, unit_price: Number((basePrice * 0.76).toFixed(2)), discount_pct: 24 },
+            {
+              id: 'pt-2',
+              min_qty: 25,
+              max_qty: 99,
+              unit_price: Number((basePrice * 0.94).toFixed(2)),
+              discount_pct: 6,
+            },
+            {
+              id: 'pt-3',
+              min_qty: 100,
+              max_qty: 249,
+              unit_price: Number((basePrice * 0.86).toFixed(2)),
+              discount_pct: 14,
+            },
+            {
+              id: 'pt-4',
+              min_qty: 250,
+              max_qty: 9999,
+              unit_price: Number((basePrice * 0.76).toFixed(2)),
+              discount_pct: 24,
+            },
           ];
 
     const slug = `${strickerProduct.name}-${strickerProduct.reference}`
@@ -295,10 +399,16 @@ export class StrickerProductService {
         dimensions: strickerProduct.dimensions,
         capacity: strickerProduct.capacity,
         packaging: strickerProduct.packaging,
-        customTechniques: customTechs.length > 0 ? customTechs : ['Gravação a Laser', 'Silk Screen', 'Transfer'],
-        printAreas: strickerProduct.customizationOptions.map((c) => `${c.component} (${c.location}): ${c.areaCm2}cm²`).join('; '),
+        customTechniques:
+          customTechs.length > 0 ? customTechs : ['Gravação a Laser', 'Silk Screen', 'Transfer'],
+        printAreas: strickerProduct.customizationOptions
+          .map((c) => `${c.component} (${c.location}): ${c.areaCm2}cm²`)
+          .join('; '),
       },
-      images: strickerProduct.allImages.length > 0 ? strickerProduct.allImages : [strickerProduct.mainImage],
+      images:
+        strickerProduct.allImages.length > 0
+          ? strickerProduct.allImages
+          : [strickerProduct.mainImage],
       show_price: true,
       cost_price: strickerProduct.costPriceMin,
       profit_margin: margin,
@@ -322,11 +432,8 @@ export class StrickerProductService {
    */
   public static publishToStoreCatalog(strickerProduct: StrickerProduct): Product {
     const mbProduct = this.convertToStoreProduct(strickerProduct);
-
-    // Salva no catálogo principal do sistema MB Personaliza
     StorageService.saveProduct(mbProduct);
 
-    // Marca como publicado no registro Stricker
     strickerProduct.publishedToCatalog = true;
     strickerProduct.mbProductId = mbProduct.id;
     this.saveProduct(strickerProduct);
@@ -340,7 +447,9 @@ export class StrickerProductService {
   /**
    * Sincroniza todos os produtos Stricker publicados com o catálogo da loja MB Personaliza
    */
-  public static syncAllPublishedProductsToStore(forceAll: boolean = false): { syncedCount: number } {
+  public static syncAllPublishedProductsToStore(forceAll: boolean = false): {
+    syncedCount: number;
+  } {
     const products = this.getProducts();
     let syncedCount = 0;
 
@@ -364,51 +473,19 @@ export class StrickerProductService {
     return { syncedCount };
   }
 
-  /**
-   * Obtém todas as cores da Stricker
-   */
   public static getColors(): StrickerColor[] {
-    try {
-      const data = localStorage.getItem(STORAGE_KEYS.COLORS);
-      if (data) return JSON.parse(data);
-    } catch (e) {
-      console.error('Erro ao ler cores:', e);
-    }
-    return INITIAL_STRICKER_COLORS;
+    return [...memoryColors];
   }
 
-  /**
-   * Salva cores da Stricker
-   */
   public static saveColors(colors: StrickerColor[]): void {
-    try {
-      localStorage.setItem(STORAGE_KEYS.COLORS, JSON.stringify(colors));
-    } catch (e) {
-      console.error('Erro ao salvar cores:', e);
-    }
+    memoryColors = [...colors];
   }
 
-  /**
-   * Obtém tipos de produtos
-   */
   public static getProductTypes(): StrickerProductType[] {
-    try {
-      const data = localStorage.getItem(STORAGE_KEYS.TYPES);
-      if (data) return JSON.parse(data);
-    } catch (e) {
-      console.error('Erro ao ler tipos de produto:', e);
-    }
-    return INITIAL_STRICKER_TYPES;
+    return [...memoryTypes];
   }
 
-  /**
-   * Salva tipos de produto
-   */
   public static saveProductTypes(types: StrickerProductType[]): void {
-    try {
-      localStorage.setItem(STORAGE_KEYS.TYPES, JSON.stringify(types));
-    } catch (e) {
-      console.error('Erro ao salvar tipos de produto:', e);
-    }
+    memoryTypes = [...types];
   }
 }

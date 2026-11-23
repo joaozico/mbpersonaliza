@@ -195,9 +195,7 @@ export default function App() {
         const res = await fetch('/api/system/maintenance', { cache: 'no-store' });
         const data = await res.json();
         if (active && data && data.maintenance) {
-          try {
-            localStorage.setItem('mb_personaliza_maintenance_settings_v1', JSON.stringify(data.maintenance));
-          } catch {}
+          StorageService.setMaintenanceMemory(data.maintenance);
           setCompanySettings(StorageService.getCompanySettings());
         }
       } catch (err) {

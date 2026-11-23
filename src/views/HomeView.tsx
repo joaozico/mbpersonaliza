@@ -132,13 +132,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
                   {/* Left Content */}
                   <div className="lg:col-span-7 space-y-6">
-                    {layout.hero.badgeText && (
-                      <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-700 text-xs font-semibold">
-                        <span className="w-2 h-2 rounded-full bg-[#E6007E]" />
-                        <span className="text-[#FFDD00]">{layout.hero.badgeText}</span>
-                      </div>
-                    )}
-
                     <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black uppercase font-heading tracking-tight leading-none text-white">
                       {layout.hero.titleParts && layout.hero.titleParts.length > 0 ? (
                         layout.hero.titleParts.map((part, idx) => (

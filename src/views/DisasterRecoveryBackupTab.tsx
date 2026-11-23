@@ -1357,7 +1357,7 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
             </div>
           </div>
 
-          {/* Pré-Voo Hostinger VPS & Migração Controlada (localStorage -> PostgreSQL) */}
+          {/* Pré-Voo Hostinger VPS & Sincronização Controlada (Estado em Memória -> PostgreSQL) */}
           <div className="p-6 rounded-3xl bg-slate-50 border border-slate-200 space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200/80 pb-4">
               <div>
@@ -1371,11 +1371,11 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
                 </div>
                 <h4 className="text-base sm:text-lg font-heading font-extrabold text-slate-900 uppercase mt-1 flex items-center gap-2">
                   <Server className="w-5 h-5 text-[#E6007E]" />
-                  <span>Pré-Voo Hostinger VPS & Migração Controlada</span>
+                  <span>Pré-Voo Hostinger VPS & Sincronização Controlada</span>
                 </h4>
                 <p className="text-xs text-slate-600 mt-0.5">
-                  Auditoria não-destrutiva da infraestrutura atual e migração incremental de registros pendentes do{' '}
-                  <code className="px-1 py-0.5 bg-white rounded border border-slate-200">localStorage</code> para o PostgreSQL, preservando integralmente dados e volumes existentes.
+                  Auditoria não-destrutiva da infraestrutura atual e sincronização incremental de registros com o{' '}
+                  <code className="px-1 py-0.5 bg-white rounded border border-slate-200">PostgreSQL</code>, preservando integralmente dados e volumes existentes.
                 </p>
               </div>
 
@@ -1408,7 +1408,7 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
                     vpsPreflight.data?.database?.configured ? 'text-emerald-600' : 'text-amber-600'
                   }`}
                 >
-                  {vpsPreflight.data?.database?.configured ? 'Credenciais Ativas' : 'Modo Fallback Local'}
+                  {vpsPreflight.data?.database?.configured ? 'Credenciais Ativas' : 'Aguardando PostgreSQL'}
                 </span>
               </div>
 
@@ -1491,7 +1491,7 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
                     <p className="text-[11px] text-slate-500 mt-1">
                       Executado em {new Date(migrationState.report.timestamp).toLocaleString('pt-BR')} • Banco:{' '}
                       <strong>
-                        {migrationState.report.databaseConnected ? 'PostgreSQL Conectado' : 'Offline / Fallback Local'}
+                        {migrationState.report.databaseConnected ? 'PostgreSQL Conectado' : 'PostgreSQL Desconectado'}
                       </strong>
                     </p>
                   </div>

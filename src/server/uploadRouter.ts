@@ -58,12 +58,19 @@ uploadRouter.post('/base64', requireAuthSession, (req: Request, res: Response) =
     const finalFilename = `${Date.now()}-${safeBaseName}-${safeHash}${ext}`;
 
     const safeFolder = folder ? path.basename(String(folder)).replace(/[^a-zA-Z0-9_-]/g, '_') : '';
-    const targetFolder = safeFolder ? path.join(UPLOADS_DIR, safeFolder) : UPLOADS_DIR;
+    const resolvedBase = path.resolve(UPLOADS_DIR);
+    const targetFolder = safeFolder ? path.resolve(resolvedBase, safeFolder) : resolvedBase;
+    if (targetFolder !== resolvedBase && !targetFolder.startsWith(resolvedBase + path.sep)) {
+      return res.status(400).json({ success: false, error: 'Diretório de destino inválido.' });
+    }
     if (!fs.existsSync(targetFolder)) {
       fs.mkdirSync(targetFolder, { recursive: true });
     }
 
-    const filePath = path.join(targetFolder, finalFilename);
+    const filePath = path.resolve(targetFolder, finalFilename);
+    if (!filePath.startsWith(resolvedBase + path.sep)) {
+      return res.status(400).json({ success: false, error: 'Caminho de destino inválido.' });
+    }
     fs.writeFileSync(filePath, buffer);
 
     const publicUrl = safeFolder ? `/uploads/${safeFolder}/${finalFilename}` : `/uploads/${finalFilename}`;

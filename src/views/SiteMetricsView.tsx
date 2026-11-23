@@ -95,6 +95,7 @@ export const SiteMetricsView: React.FC<SiteMetricsViewProps> = ({
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [tick, setTick] = useState(0);
+  const [dbError, setDbError] = useState<string | null>(null);
 
   // Security check directly through AnalyticsService
   const reportResult = useMemo(() => {
@@ -105,16 +106,23 @@ export const SiteMetricsView: React.FC<SiteMetricsViewProps> = ({
     );
   }, [currentUser, period, customStart, customEnd, tick]);
 
+  useEffect(() => {
+    AnalyticsService.hydrateFromServer().then((res) => {
+      setTick((t) => t + 1);
+      setDbError(!res.success && res.error ? res.error : null);
+    });
+  }, []);
+
   // Realtime live auto-update interval
   useEffect(() => {
     if (!autoRefresh) return;
     const interval = setInterval(() => {
-      setTick((t) => t + 1);
-    }, 25000); // 25s auto-refresh
+      AnalyticsService.hydrateFromServer().then(() => setTick((t) => t + 1));
+    }, 25000); // 25s auto-refresh from PostgreSQL
     return () => clearInterval(interval);
   }, [autoRefresh]);
 
-  // Listen to analytics storage events
+  // Listen to analytics update events
   useEffect(() => {
     const handleUpdate = () => {
       setTick((t) => t + 1);
@@ -123,12 +131,12 @@ export const SiteMetricsView: React.FC<SiteMetricsViewProps> = ({
     return () => window.removeEventListener('mb_analytics_updated', handleUpdate);
   }, []);
 
-  const handleManualRefresh = () => {
+  const handleManualRefresh = async () => {
     setIsRefreshing(true);
-    setTimeout(() => {
-      setTick((t) => t + 1);
-      setIsRefreshing(false);
-    }, 400);
+    const res = await AnalyticsService.hydrateFromServer();
+    setDbError(!res.success && res.error ? res.error : null);
+    setTick((t) => t + 1);
+    setIsRefreshing(false);
   };
 
   const handleExportCsv = () => {
@@ -240,6 +248,16 @@ export const SiteMetricsView: React.FC<SiteMetricsViewProps> = ({
         canonicalPath="/admin/metricas"
         noIndex={true}
       />
+
+      {dbError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex items-start gap-3 text-rose-800 shadow-xs">
+          <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+          <div className="text-xs sm:text-sm space-y-0.5">
+            <p className="font-bold">Erro ao carregar métricas do PostgreSQL</p>
+            <p className="text-rose-700">{dbError}</p>
+          </div>
+        </div>
+      )}
 
       {/* TOP HEADER */}
       <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-6">

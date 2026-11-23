@@ -6,7 +6,7 @@
  * - Canvas-based client-side compression with WebP & PNG alpha channel support
  * - Responsive srcset generation for modern devices (Retina / High-DPI)
  * - Lightweight inline SVG placeholders for instant fallback without broken icons
- * - Prevents layout shifts and minimizes localStorage footprint
+ * - Prevents layout shifts and minimizes payload size for PostgreSQL persistence
  */
 
 export interface OptimizedImageResult {

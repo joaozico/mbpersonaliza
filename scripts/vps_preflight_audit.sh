@@ -85,11 +85,20 @@ else
   echo -e "  ${YELLOW}-${RESET} Aplicação não respondeu em http://127.0.0.1:3000/api/health"
 fi
 
-if curl -sf http://127.0.0.1:3000/api/db/vps-preflight; then
-  echo ""
-  echo -e "  ${GREEN}✓${RESET} /api/db/vps-preflight coletado"
+if [ -n "${ADMIN_SESSION_TOKEN:-}" ]; then
+  if curl -sf -H "Authorization: Bearer ${ADMIN_SESSION_TOKEN}" http://127.0.0.1:3000/api/db/vps-preflight; then
+    echo ""
+    echo -e "  ${GREEN}✓${RESET} /api/db/vps-preflight coletado com sessão admin"
+  else
+    echo -e "  ${YELLOW}-${RESET} Endpoint /api/db/vps-preflight indisponível"
+  fi
 else
-  echo -e "  ${YELLOW}-${RESET} Endpoint /api/db/vps-preflight indisponível"
+  PREFLIGHT_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/api/db/vps-preflight || echo "000")
+  if [ "$PREFLIGHT_CODE" = "401" ]; then
+    echo -e "  ${GREEN}✓${RESET} /api/db/vps-preflight protegido por sessão administrativa (HTTP 401 sem login)"
+  else
+    echo -e "  ${YELLOW}-${RESET} /api/db/vps-preflight retornou HTTP ${PREFLIGHT_CODE}"
+  fi
 fi
 
 # 6. Domínio HTTPS externo (somente leitura)

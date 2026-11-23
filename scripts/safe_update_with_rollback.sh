@@ -118,9 +118,24 @@ echo -e "  ${GREEN}✓${RESET} Aplicação saudável em http://127.0.0.1:3000"
 
 if [ "$APPLY_ADDITIVE_TABLES" = true ]; then
   echo -e "  Garantindo novas tabelas aditivas (CREATE TABLE IF NOT EXISTS)..."
-  curl -sf -X POST http://127.0.0.1:3000/api/db/ensure-additive-tables \
-    -H "Content-Type: application/json" \
-    -H "x-user-role: admin"
+  COOKIE_JAR=$(mktemp)
+  trap 'rm -f "$COOKIE_JAR"' EXIT
+  if [ -n "${ADMIN_SESSION_TOKEN:-}" ]; then
+    curl -sf -X POST http://127.0.0.1:3000/api/db/ensure-additive-tables \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer ${ADMIN_SESSION_TOKEN}"
+  elif [ -n "${ADMIN_EMAIL:-}" ] && [ -n "${ADMIN_PASSWORD:-}" ]; then
+    LOGIN_PAYLOAD=$(printf '{"email":"%s","password":"%s"}' "$ADMIN_EMAIL" "$ADMIN_PASSWORD")
+    curl -sf -c "$COOKIE_JAR" -X POST http://127.0.0.1:3000/api/auth/login \
+      -H "Content-Type: application/json" \
+      -d "$LOGIN_PAYLOAD" >/dev/null
+    curl -sf -b "$COOKIE_JAR" -X POST http://127.0.0.1:3000/api/db/ensure-additive-tables \
+      -H "Content-Type: application/json"
+  else
+    echo -e "${RED}ERRO: Defina ADMIN_SESSION_TOKEN ou ADMIN_EMAIL + ADMIN_PASSWORD para autenticar /api/db/ensure-additive-tables.${RESET}"
+    exit 1
+  fi
+  rm -f "$COOKIE_JAR"
   echo ""
 fi
 

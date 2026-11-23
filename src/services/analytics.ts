@@ -18,32 +18,28 @@ import {
   PurchaseIntentStat,
 } from '../types';
 import { StorageService } from './storage';
+import { authFetch } from './authClient';
 
-const ANALYTICS_STORAGE_KEYS = {
-  PAGEVIEWS: 'mb_analytics_pageviews_v1',
-  EVENTS: 'mb_analytics_events_v1',
-  REALTIME: 'mb_analytics_realtime_v1',
-  SESSION: 'mb_analytics_session_id_v1',
-  VISITOR: 'mb_analytics_visitor_id_v1',
-};
+let memoryVisitorId: string | null = null;
+let memorySessionId: string | null = null;
+let memorySeenBefore = false;
+let memoryPageviews: PageViewRecord[] = [];
+let memoryEvents: AnalyticsEventRecord[] = [];
+let memoryRealtime: RealtimeVisitor[] = [];
 
-// Helper for session & visitor IDs (LGPD compliant, anonymized client-side hash)
+// Helper for session & visitor IDs (in-memory only, zero browser storage)
 function getOrCreateVisitorId(): string {
-  let vid = localStorage.getItem(ANALYTICS_STORAGE_KEYS.VISITOR);
-  if (!vid) {
-    vid = 'v_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
-    localStorage.setItem(ANALYTICS_STORAGE_KEYS.VISITOR, vid);
+  if (!memoryVisitorId) {
+    memoryVisitorId = 'v_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
   }
-  return vid;
+  return memoryVisitorId;
 }
 
 function getOrCreateSessionId(): string {
-  let sid = sessionStorage.getItem(ANALYTICS_STORAGE_KEYS.SESSION);
-  if (!sid) {
-    sid = 's_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
-    sessionStorage.setItem(ANALYTICS_STORAGE_KEYS.SESSION, sid);
+  if (!memorySessionId) {
+    memorySessionId = 's_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
   }
-  return sid;
+  return memorySessionId;
 }
 
 function detectDevice(): 'celular' | 'computador' | 'tablet' {
@@ -75,214 +71,73 @@ function detectOS(): 'Android' | 'Windows' | 'iOS' | 'macOS' | 'Linux' | 'Outros
   return 'Outros';
 }
 
-// Deterministic seed generation for rich initial metrics
-function generateSeedData(): { pageviews: PageViewRecord[]; events: AnalyticsEventRecord[] } {
-  const pageviews: PageViewRecord[] = [];
-  const events: AnalyticsEventRecord[] = [];
-  const now = new Date();
+export const AnalyticsService = {
+  // Hydrate real pageviews and events from PostgreSQL
+  async hydrateFromServer(): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res = await authFetch('/api/analytics/data');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        return {
+          success: false,
+          error: data.error || `Erro ao consultar métricas no PostgreSQL (HTTP ${res.status}).`,
+        };
+      }
+      memoryPageviews = Array.isArray(data.pageviews) ? data.pageviews : [];
+      memoryEvents = Array.isArray(data.events) ? data.events : [];
 
-  const pages = [
-    { path: '/', title: 'Início - MB Personaliza' },
-    { path: '/catalogo', title: 'Catálogo de Brindes Personalizados' },
-    { path: '/produtos/copo-termico-inox-473ml', title: 'Copo Térmico Inox 473ml com Gravação Laser' },
-    { path: '/produtos/squeeze-aluminio-600ml', title: 'Squeeze de Alumínio 600ml Personalizado' },
-    { path: '/produtos/caneca-ceramica-laser', title: 'Caneca de Cerâmica Fosca Personalizada' },
-    { path: '/produtos/kit-boas-vindas-premium', title: 'Kit Boas-Vindas Onboarding Corporativo' },
-    { path: '/produtos/caderno-moleskine-ecologico', title: 'Caderno Tipo Moleskine Ecológico' },
-    { path: '/orcamento', title: 'Solicitar Cotação / Orçamento Rápido' },
-    { path: '/sobre', title: 'Sobre a MB Personaliza' },
-    { path: '/contato', title: 'Fale Conosco & Atendimento' },
-    { path: '/catalogo-digital', title: 'Catálogo Digital PDF MB Personaliza' },
-  ];
-
-  const sources: PageViewRecord['source'][] = ['google', 'instagram', 'whatsapp', 'direto', 'google', 'instagram', 'facebook', 'outros_sites'];
-  const devices: PageViewRecord['device'][] = ['celular', 'celular', 'celular', 'computador', 'computador', 'tablet'];
-  const browsers: PageViewRecord['browser'][] = ['Chrome', 'Chrome', 'Chrome', 'Safari', 'Edge', 'Firefox'];
-  const oss: PageViewRecord['os'][] = ['Android', 'Android', 'Windows', 'iOS', 'macOS'];
-
-  const locations = [
-    { state: 'SP', city: 'São Paulo', weight: 45 },
-    { state: 'SP', city: 'Campinas', weight: 12 },
-    { state: 'SP', city: 'São Bernardo do Campo', weight: 8 },
-    { state: 'RJ', city: 'Rio de Janeiro', weight: 14 },
-    { state: 'MG', city: 'Belo Horizonte', weight: 10 },
-    { state: 'PR', city: 'Curitiba', weight: 6 },
-    { state: 'SC', city: 'Florianópolis', weight: 4 },
-    { state: 'RS', city: 'Porto Alegre', weight: 4 },
-    { state: 'BA', city: 'Salvador', weight: 3 },
-    { state: 'DF', city: 'Brasília', weight: 3 },
-    { state: 'GO', city: 'Goiânia', weight: 2 },
-  ];
-
-  // Generate 90 days of structured data with realistic peaks on weekdays and growth trend
-  for (let daysAgo = 90; daysAgo >= 0; daysAgo--) {
-    const dayDate = new Date(now.getTime() - daysAgo * 24 * 60 * 60 * 1000);
-    const dayOfWeek = dayDate.getDay(); // 0 is Sunday, 6 is Saturday
-    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-
-    // Base traffic: 120-220 visits on weekdays, 45-80 on weekends, with a +25% growth over 90 days
-    const trendFactor = 1 + (90 - daysAgo) * 0.003;
-    const baseDailyVisits = isWeekend
-      ? Math.floor((55 + Math.sin(daysAgo) * 15) * trendFactor)
-      : Math.floor((160 + Math.sin(daysAgo * 1.5) * 45) * trendFactor);
-
-    for (let i = 0; i < baseDailyVisits; i++) {
-      const hour = Math.floor(Math.random() * 24);
-      // More visits during business hours (09:00 - 18:00)
-      const businessHourBias = hour >= 9 && hour <= 18 ? 0.7 : 0.3;
-      if (Math.random() > businessHourBias && (hour < 7 || hour > 22)) continue;
-
-      const visitTimestamp = new Date(dayDate);
-      visitTimestamp.setHours(hour, Math.floor(Math.random() * 60), Math.floor(Math.random() * 60));
-
-      const visitorId = 'v_' + Math.floor(Math.random() * 400 + (90 - daysAgo) * 10);
-      const isNewVisitor = Math.random() < 0.65;
-      const sessionId = 's_' + visitTimestamp.getTime() + '_' + Math.floor(Math.random() * 1000);
-      
-      const pageIndex = Math.random() < 0.4 ? 0 : Math.floor(Math.random() * pages.length);
-      const page = pages[pageIndex];
-      const source = sources[Math.floor(Math.random() * sources.length)];
-      const device = devices[Math.floor(Math.random() * devices.length)];
-      const browser = browsers[Math.floor(Math.random() * browsers.length)];
-      const os = oss[Math.floor(Math.random() * oss.length)];
-
-      // Pick location based on weights
-      const locRand = Math.random() * 100;
-      let acc = 0;
-      let chosenLoc = locations[0];
-      for (const loc of locations) {
-        acc += loc.weight;
-        if (locRand <= acc) {
-          chosenLoc = loc;
-          break;
+      const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+      const seenSessions = new Set<string>();
+      const activeFromDb: RealtimeVisitor[] = [];
+      for (const pv of memoryPageviews) {
+        if (new Date(pv.timestamp).getTime() > fiveMinAgo && !seenSessions.has(pv.sessionId)) {
+          seenSessions.add(pv.sessionId);
+          activeFromDb.push({
+            id: 'rt_' + pv.sessionId,
+            sessionId: pv.sessionId,
+            visitorId: pv.visitorId,
+            lastActive: pv.timestamp,
+            currentPath: pv.path,
+            pageTitle: pv.title,
+            device: pv.device,
+            browser: pv.browser,
+            location: `${pv.city || 'São Paulo'} - ${pv.state || 'SP'}`,
+            source:
+              pv.source === 'google'
+                ? 'Google Orgânico'
+                : pv.source === 'instagram'
+                ? 'Instagram'
+                : pv.source === 'whatsapp'
+                ? 'WhatsApp'
+                : 'Acesso Direto',
+          });
+          if (activeFromDb.length >= 20) break;
         }
       }
+      if (activeFromDb.length > 0) {
+        memoryRealtime = activeFromDb;
+      }
 
-      const durationSeconds = Math.floor(20 + Math.random() * 320);
-
-      const pv: PageViewRecord = {
-        id: 'pv_' + Math.random().toString(36).substring(2, 9),
-        timestamp: visitTimestamp.toISOString(),
-        sessionId,
-        visitorId,
-        path: page.path,
-        title: page.title,
-        referrer: source === 'google' ? 'https://www.google.com.br/' : source === 'instagram' ? 'https://instagram.com/mbpersonaliza' : '',
-        source,
-        device,
-        browser,
-        os,
-        country: 'Brasil',
-        state: chosenLoc.state,
-        city: chosenLoc.city,
-        durationSeconds,
-        isNewVisitor,
+      window.dispatchEvent(new CustomEvent('mb_analytics_updated'));
+      return { success: true };
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err?.message || 'Erro de comunicação com PostgreSQL ao carregar métricas.',
       };
-      pageviews.push(pv);
-
-      // Track realistic events
-      if (Math.random() < 0.18) {
-        // WhatsApp click event
-        events.push({
-          id: 'ev_' + Math.random().toString(36).substring(2, 9),
-          timestamp: new Date(visitTimestamp.getTime() + 15000).toISOString(),
-          sessionId,
-          visitorId,
-          eventName: 'clique_whatsapp',
-          category: 'Conversão',
-          label: page.title,
-          path: page.path,
-        });
-      }
-
-      if (page.path.includes('/produtos/') && Math.random() < 0.45) {
-        events.push({
-          id: 'ev_' + Math.random().toString(36).substring(2, 9),
-          timestamp: visitTimestamp.toISOString(),
-          sessionId,
-          visitorId,
-          eventName: 'visualizacao_produto',
-          category: 'Catálogo',
-          label: page.title,
-          path: page.path,
-        });
-      }
-
-      if (page.path === '/orcamento' || (page.path.includes('/produtos/') && Math.random() < 0.12)) {
-        events.push({
-          id: 'ev_' + Math.random().toString(36).substring(2, 9),
-          timestamp: new Date(visitTimestamp.getTime() + 45000).toISOString(),
-          sessionId,
-          visitorId,
-          eventName: 'solicitacao_orcamento',
-          category: 'Conversão',
-          label: 'Formulário de Cotação',
-          path: page.path,
-          value: 1250,
-        });
-      }
-
-      if (page.path === '/catalogo-digital' || Math.random() < 0.06) {
-        events.push({
-          id: 'ev_' + Math.random().toString(36).substring(2, 9),
-          timestamp: new Date(visitTimestamp.getTime() + 30000).toISOString(),
-          sessionId,
-          visitorId,
-          eventName: 'download_catalogo',
-          category: 'Materiais',
-          label: 'Catálogo PDF MB 2026',
-          path: page.path,
-        });
-      }
     }
-  }
+  },
 
-  return { pageviews, events };
-}
-
-export const AnalyticsService = {
-  // Init and retrieve raw records
+  // Retrieve raw records hydrated in memory
   getPageviews(): PageViewRecord[] {
-    try {
-      const stored = localStorage.getItem(ANALYTICS_STORAGE_KEYS.PAGEVIEWS);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 50) return parsed;
-      }
-    } catch {
-      // ignore
-    }
-    const { pageviews, events } = generateSeedData();
-    try {
-      localStorage.setItem(ANALYTICS_STORAGE_KEYS.PAGEVIEWS, JSON.stringify(pageviews));
-      localStorage.setItem(ANALYTICS_STORAGE_KEYS.EVENTS, JSON.stringify(events));
-    } catch {
-      // ignore storage quota error
-    }
-    return pageviews;
+    return memoryPageviews;
   },
 
   getEvents(): AnalyticsEventRecord[] {
-    try {
-      const stored = localStorage.getItem(ANALYTICS_STORAGE_KEYS.EVENTS);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch {
-      // ignore
-    }
-    const { pageviews, events } = generateSeedData();
-    try {
-      localStorage.setItem(ANALYTICS_STORAGE_KEYS.PAGEVIEWS, JSON.stringify(pageviews));
-      localStorage.setItem(ANALYTICS_STORAGE_KEYS.EVENTS, JSON.stringify(events));
-    } catch {
-      // ignore
-    }
-    return events;
+    return memoryEvents;
   },
 
-  // Track live real user pageview
+  // Track live real user pageview in PostgreSQL
   trackPageView(path: string, title?: string, referrer?: string): void {
     try {
       const visitorId = getOrCreateVisitorId();
@@ -316,26 +171,28 @@ export const AnalyticsService = {
         state: 'SP',
         city: 'São Paulo',
         durationSeconds: 15,
-        isNewVisitor: !localStorage.getItem('mb_analytics_seen_before'),
+        isNewVisitor: !memorySeenBefore,
       };
 
-      localStorage.setItem('mb_analytics_seen_before', 'true');
+      memorySeenBefore = true;
 
-      const pageviews = this.getPageviews();
-      pageviews.unshift(record);
-      // Keep up to 8000 records to prevent localStorage overflow
-      if (pageviews.length > 8000) pageviews.length = 8000;
-      localStorage.setItem(ANALYTICS_STORAGE_KEYS.PAGEVIEWS, JSON.stringify(pageviews));
+      memoryPageviews.unshift(record);
+      if (memoryPageviews.length > 8000) memoryPageviews.length = 8000;
 
-      // Update realtime visitor active state
       this.recordRealtimeActivity(record);
       window.dispatchEvent(new CustomEvent('mb_analytics_updated'));
+
+      authFetch('/api/analytics/pageview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(record),
+      }).catch(() => {});
     } catch (e) {
       console.warn('Analytics tracking error:', e);
     }
   },
 
-  // Track live user actions / conversions
+  // Track live user actions / conversions in PostgreSQL
   trackEvent(
     eventName: AnalyticsEventRecord['eventName'],
     category = 'Interação',
@@ -359,106 +216,50 @@ export const AnalyticsService = {
         metadata,
       };
 
-      const events = this.getEvents();
-      events.unshift(record);
-      if (events.length > 6000) events.length = 6000;
-      localStorage.setItem(ANALYTICS_STORAGE_KEYS.EVENTS, JSON.stringify(events));
+      memoryEvents.unshift(record);
+      if (memoryEvents.length > 6000) memoryEvents.length = 6000;
       window.dispatchEvent(new CustomEvent('mb_analytics_updated'));
+
+      authFetch('/api/analytics/event', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(record),
+      }).catch(() => {});
     } catch (e) {
       console.warn('Event tracking error:', e);
     }
   },
 
-  // Realtime activity log
+  // Realtime activity log (in-memory current active window)
   recordRealtimeActivity(pv: PageViewRecord): void {
-    try {
-      const currentList: RealtimeVisitor[] = this.getRealtimeVisitors();
-      const filtered = currentList.filter((v) => v.sessionId !== pv.sessionId);
-      const newVisitor: RealtimeVisitor = {
-        id: 'rt_' + pv.sessionId,
-        sessionId: pv.sessionId,
-        visitorId: pv.visitorId,
-        lastActive: pv.timestamp,
-        currentPath: pv.path,
-        pageTitle: pv.title,
-        device: pv.device,
-        browser: pv.browser,
-        location: `${pv.city} - ${pv.state}`,
-        source: pv.source === 'google' ? 'Google Orgânico' : pv.source === 'instagram' ? 'Instagram' : pv.source === 'whatsapp' ? 'WhatsApp' : 'Acesso Direto',
-      };
-      filtered.unshift(newVisitor);
-      // Keep up to 20 recent active visitors
-      if (filtered.length > 20) filtered.length = 20;
-      localStorage.setItem(ANALYTICS_STORAGE_KEYS.REALTIME, JSON.stringify(filtered));
-    } catch {
-      // ignore
-    }
+    const filtered = memoryRealtime.filter((v) => v.sessionId !== pv.sessionId);
+    const newVisitor: RealtimeVisitor = {
+      id: 'rt_' + pv.sessionId,
+      sessionId: pv.sessionId,
+      visitorId: pv.visitorId,
+      lastActive: pv.timestamp,
+      currentPath: pv.path,
+      pageTitle: pv.title,
+      device: pv.device,
+      browser: pv.browser,
+      location: `${pv.city} - ${pv.state}`,
+      source:
+        pv.source === 'google'
+          ? 'Google Orgânico'
+          : pv.source === 'instagram'
+          ? 'Instagram'
+          : pv.source === 'whatsapp'
+          ? 'WhatsApp'
+          : 'Acesso Direto',
+    };
+    filtered.unshift(newVisitor);
+    if (filtered.length > 20) filtered.length = 20;
+    memoryRealtime = filtered;
   },
 
   getRealtimeVisitors(): RealtimeVisitor[] {
-    try {
-      const stored = localStorage.getItem(ANALYTICS_STORAGE_KEYS.REALTIME);
-      if (stored) {
-        const list: RealtimeVisitor[] = JSON.parse(stored);
-        const fiveMinAgo = Date.now() - 5 * 60 * 1000;
-        // Keep those active in the last 5 minutes
-        const active = list.filter((v) => new Date(v.lastActive).getTime() > fiveMinAgo);
-        if (active.length > 0) return active;
-      }
-    } catch {
-      // ignore
-    }
-    // Return realistic active live simulated snapshot
-    return [
-      {
-        id: 'rt_sim_1',
-        sessionId: 's_active_1',
-        visitorId: 'v_sp_441',
-        lastActive: new Date().toISOString(),
-        currentPath: '/produtos/copo-termico-inox-473ml',
-        pageTitle: 'Copo Térmico Inox 473ml com Gravação Laser',
-        device: 'celular',
-        browser: 'Chrome',
-        location: 'São Paulo - SP',
-        source: 'Instagram MB',
-      },
-      {
-        id: 'rt_sim_2',
-        sessionId: 's_active_2',
-        visitorId: 'v_rj_882',
-        lastActive: new Date(Date.now() - 45000).toISOString(),
-        currentPath: '/catalogo',
-        pageTitle: 'Catálogo de Brindes Personalizados',
-        device: 'computador',
-        browser: 'Edge',
-        location: 'Rio de Janeiro - RJ',
-        source: 'Google Orgânico',
-      },
-      {
-        id: 'rt_sim_3',
-        sessionId: 's_active_3',
-        visitorId: 'v_mg_109',
-        lastActive: new Date(Date.now() - 110000).toISOString(),
-        currentPath: '/orcamento',
-        pageTitle: 'Solicitar Cotação / Orçamento Rápido',
-        device: 'celular',
-        browser: 'Safari',
-        location: 'Belo Horizonte - MG',
-        source: 'WhatsApp Comercial',
-      },
-      {
-        id: 'rt_sim_4',
-        sessionId: 's_active_4',
-        visitorId: 'v_sp_993',
-        lastActive: new Date(Date.now() - 190000).toISOString(),
-        currentPath: '/catalogo-digital',
-        pageTitle: 'Catálogo Digital PDF MB Personaliza',
-        device: 'computador',
-        browser: 'Chrome',
-        location: 'Campinas - SP',
-        source: 'Acesso Direto',
-      },
-    ];
+    const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+    return memoryRealtime.filter((v) => new Date(v.lastActive).getTime() > fiveMinAgo);
   },
 
   // Core Secured Report Generator
@@ -628,11 +429,11 @@ export const AnalyticsService = {
 
     // Pageviews
     const pageViewsComp = calcMetricComparison(currentPVs.length, prevPVs.length);
-    const avgPagesPerVisitor = currentUniqueVisitors > 0 ? Number((currentPVs.length / currentUniqueVisitors).toFixed(1)) : 1.0;
+    const avgPagesPerVisitor = currentUniqueVisitors > 0 ? Number((currentPVs.length / currentUniqueVisitors).toFixed(1)) : 0;
 
     // Average duration
     const totalDuration = (currentPVs || []).reduce((acc, pv) => acc + (pv?.durationSeconds || 45), 0);
-    const avgSessionDurationSeconds = (currentPVs || []).length > 0 ? Math.round(totalDuration / (currentPVs || []).length) : 85;
+    const avgSessionDurationSeconds = (currentPVs || []).length > 0 ? Math.round(totalDuration / (currentPVs || []).length) : 0;
 
     // Bounce Rate (Sessões com 1 visualização / total de sessões)
     const sessionPvCounts: Record<string, number> = {};
@@ -640,21 +441,21 @@ export const AnalyticsService = {
       sessionPvCounts[pv.sessionId] = (sessionPvCounts[pv.sessionId] || 0) + 1;
     });
     const bounceSessions = Object.values(sessionPvCounts).filter((c) => c === 1).length;
-    const currentBounceRate = currentSessions > 0 ? Number(((bounceSessions / currentSessions) * 100).toFixed(1)) : 38.5;
+    const currentBounceRate = currentSessions > 0 ? Number(((bounceSessions / currentSessions) * 100).toFixed(1)) : 0;
 
     const prevSessionPvCounts: Record<string, number> = {};
     prevPVs.forEach((pv) => {
       prevSessionPvCounts[pv.sessionId] = (prevSessionPvCounts[pv.sessionId] || 0) + 1;
     });
     const prevBounceSessions = Object.values(prevSessionPvCounts).filter((c) => c === 1).length;
-    const prevBounceRate = prevSessions > 0 ? Number(((prevBounceSessions / prevSessions) * 100).toFixed(1)) : 42.0;
+    const prevBounceRate = prevSessions > 0 ? Number(((prevBounceSessions / prevSessions) * 100).toFixed(1)) : 0;
     const bounceRateComp = calcMetricComparison(currentBounceRate, prevBounceRate);
 
     // New vs Returning Visitors
     const newVisitorsCount = currentPVs.filter((pv) => pv.isNewVisitor).length;
     const returningVisitorsCount = Math.max(0, currentPVs.length - newVisitorsCount);
-    const newVisitorsPercent = currentPVs.length > 0 ? Number(((newVisitorsCount / currentPVs.length) * 100).toFixed(1)) : 65.0;
-    const returningVisitorsPercent = currentPVs.length > 0 ? Number(((returningVisitorsCount / currentPVs.length) * 100).toFixed(1)) : 35.0;
+    const newVisitorsPercent = currentPVs.length > 0 ? Number(((newVisitorsCount / currentPVs.length) * 100).toFixed(1)) : 0;
+    const returningVisitorsPercent = currentPVs.length > 0 ? Number(((returningVisitorsCount / currentPVs.length) * 100).toFixed(1)) : 0;
 
     const prevNewCount = prevPVs.filter((pv) => pv.isNewVisitor).length;
     const prevReturningCount = Math.max(0, prevPVs.length - prevNewCount);
@@ -887,9 +688,9 @@ export const AnalyticsService = {
 
     const realtimeList = this.getRealtimeVisitors();
 
-    // Audience Demographics & Buyer Profiling (Intelligence for Marketing & Sales Targeting)
-    const baseVisitors = Math.max(currentUniqueVisitors, 100);
-    const estimatedBuyers = Math.max(Math.round(baseVisitors * 0.048), 12);
+    // Audience Demographics & Buyer Profiling derived strictly from tracked visitors
+    const baseVisitors = Math.max(currentUniqueVisitors, 0);
+    const estimatedBuyers = currentUniqueVisitors > 0 ? Math.round(baseVisitors * 0.048) : 0;
 
     const genders: GenderDemographicStat[] = [
       {

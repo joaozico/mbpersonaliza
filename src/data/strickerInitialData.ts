@@ -10,9 +10,9 @@ import {
 } from '../types/stricker';
 
 export const INITIAL_STRICKER_CONFIG: StrickerConfig = {
-  accessKey: 'DEMO_STRICKER_ACCESS_KEY_2026',
-  sessionToken: 'sess_spot_demo_9847239847129837',
-  tokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+  accessKey: '',
+  sessionToken: '',
+  tokenExpiresAt: undefined,
   environment: 'sandbox',
   apiUrl: 'https://ws.spotgifts.com.br/api/v1SSL/',
   soapWsdlUrl: 'https://ws.spotgifts.com.br/strickerservice.svc?WSDL',

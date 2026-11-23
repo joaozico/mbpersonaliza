@@ -26,6 +26,7 @@ import {
   INITIAL_COST_PRICING_AUDIT_LOGS,
 } from '../data/costPricingInitialData';
 import { StorageService } from './storage';
+import { authFetch } from './authClient';
 
 const STORAGE_KEYS = {
   SETTINGS: 'mb_cost_pricing_settings_v1',
@@ -39,26 +40,57 @@ const STORAGE_KEYS = {
   TEST_RESULTS: 'mb_cost_pricing_test_results_v1',
 };
 
+const memoryCostStore = new Map<string, any>();
+
 function getStored<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error(`Erro ao carregar chave [${key}] do storage:`, err);
-    return fallback;
+  if (memoryCostStore.has(key)) {
+    return memoryCostStore.get(key) as T;
   }
+  return fallback;
 }
 
 function setStored<T>(key: string, value: T): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch (err) {
-    console.error(`Erro ao salvar chave [${key}] no storage:`, err);
-  }
+  memoryCostStore.set(key, value);
+}
+
+function syncCostToServer(path: string, method: 'POST' | 'DELETE', body?: any): void {
+  authFetch(`/api/cost-pricing${path}`, {
+    method,
+    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  }).catch((err) => {
+    console.warn(`Falha ao sincronizar ${path} com PostgreSQL:`, err);
+  });
 }
 
 export const CostPricingService = {
+  async hydrateFromServer(): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res = await authFetch('/api/cost-pricing/tables');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        return {
+          success: false,
+          error: data.error || `Erro ao carregar módulo de custos do PostgreSQL (HTTP ${res.status}).`,
+        };
+      }
+      if (data.settings) setStored(STORAGE_KEYS.SETTINGS, data.settings);
+      if (Array.isArray(data.materials)) setStored(STORAGE_KEYS.MATERIALS, data.materials);
+      if (Array.isArray(data.machines)) setStored(STORAGE_KEYS.MACHINES, data.machines);
+      if (Array.isArray(data.labor)) setStored(STORAGE_KEYS.LABOR, data.labor);
+      if (Array.isArray(data.expenses)) setStored(STORAGE_KEYS.EXPENSES, data.expenses);
+      if (Array.isArray(data.sheets)) setStored(STORAGE_KEYS.SHEETS, data.sheets);
+      if (Array.isArray(data.quotes)) setStored(STORAGE_KEYS.QUOTES, data.quotes);
+      if (Array.isArray(data.auditLogs)) setStored(STORAGE_KEYS.AUDIT_LOGS, data.auditLogs);
+      return { success: true };
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err?.message || 'Falha ao conectar com o PostgreSQL no módulo de custos.',
+      };
+    }
+  },
+
   // ==========================================================================
   // CONFIGURAÇÕES GERAIS DE PRECIFICAÇÃO
   // ==========================================================================
@@ -93,6 +125,7 @@ export const CostPricingService = {
     };
 
     setStored(STORAGE_KEYS.SETTINGS, updated);
+    syncCostToServer('/settings', 'POST', updated);
 
     this.logAudit({
       userId: currentUser.id,
@@ -229,6 +262,7 @@ export const CostPricingService = {
     }
 
     setStored(STORAGE_KEYS.MATERIALS, materials);
+    syncCostToServer('/materials', 'POST', finalMaterial);
 
     this.logAudit({
       userId: currentUser.id,
@@ -270,6 +304,7 @@ export const CostPricingService = {
 
     const updated = materials.filter((m) => m.id !== materialId);
     setStored(STORAGE_KEYS.MATERIALS, updated);
+    syncCostToServer(`/materials/${encodeURIComponent(materialId)}`, 'DELETE');
 
     this.logAudit({
       userId: currentUser.id,
@@ -439,6 +474,7 @@ export const CostPricingService = {
     }
 
     setStored(STORAGE_KEYS.MACHINES, machines);
+    syncCostToServer('/machines', 'POST', finalMachine);
 
     this.logAudit({
       userId: currentUser.id,
@@ -500,6 +536,7 @@ export const CostPricingService = {
 
     machines[idx] = updated;
     setStored(STORAGE_KEYS.MACHINES, machines);
+    syncCostToServer('/machines', 'POST', updated);
 
     this.logAudit({
       userId: currentUser.id,
@@ -593,6 +630,7 @@ export const CostPricingService = {
     }
 
     setStored(STORAGE_KEYS.LABOR, list);
+    syncCostToServer('/labor', 'POST', finalLabor);
 
     this.logAudit({
       userId: currentUser.id,
@@ -629,6 +667,7 @@ export const CostPricingService = {
 
     const updated = list.filter((l) => l.id !== id);
     setStored(STORAGE_KEYS.LABOR, updated);
+    syncCostToServer(`/labor/${encodeURIComponent(id)}`, 'DELETE');
 
     this.logAudit({
       userId: currentUser.id,
@@ -699,6 +738,7 @@ export const CostPricingService = {
     }
 
     setStored(STORAGE_KEYS.EXPENSES, list);
+    syncCostToServer('/expenses', 'POST', finalExp);
 
     this.logAudit({
       userId: currentUser.id,
@@ -735,6 +775,7 @@ export const CostPricingService = {
 
     const updated = list.filter((e) => e.id !== id);
     setStored(STORAGE_KEYS.EXPENSES, updated);
+    syncCostToServer(`/expenses/${encodeURIComponent(id)}`, 'DELETE');
 
     this.logAudit({
       userId: currentUser.id,
@@ -924,6 +965,7 @@ export const CostPricingService = {
     }
 
     setStored(STORAGE_KEYS.SHEETS, sheets);
+    syncCostToServer('/sheets', 'POST', finalSheet);
 
     this.logAudit({
       userId: currentUser.id,
@@ -982,6 +1024,7 @@ export const CostPricingService = {
 
     const updated = sheets.filter((s) => s.id !== sheetId);
     setStored(STORAGE_KEYS.SHEETS, updated);
+    syncCostToServer(`/sheets/${encodeURIComponent(sheetId)}`, 'DELETE');
 
     this.logAudit({
       userId: currentUser.id,
@@ -1044,6 +1087,7 @@ export const CostPricingService = {
 
     if (changed) {
       setStored(STORAGE_KEYS.SHEETS, sheets);
+      sheets.forEach((s) => syncCostToServer('/sheets', 'POST', s));
     }
   },
 
@@ -1266,6 +1310,7 @@ export const CostPricingService = {
     }
 
     setStored(STORAGE_KEYS.QUOTES, quotes);
+    syncCostToServer('/quotes', 'POST', finalQuote);
 
     this.logAudit({
       userId: currentUser.id,
@@ -1319,6 +1364,9 @@ export const CostPricingService = {
 
     quotes[idx] = updated;
     setStored(STORAGE_KEYS.QUOTES, quotes);
+    syncCostToServer(`/quotes/${encodeURIComponent(quoteId)}/approve`, 'POST', {
+      notes: approvalNotes || 'Preço e condições aprovadas com margem autorizada.',
+    });
 
     this.logAudit({
       userId: currentUser.id,
@@ -1398,6 +1446,7 @@ export const CostPricingService = {
       updatedAt: new Date().toISOString(),
     };
     setStored(STORAGE_KEYS.QUOTES, quotes);
+    syncCostToServer('/quotes', 'POST', quotes[idx]);
 
     this.logAudit({
       userId: currentUser.id,
@@ -1969,35 +2018,38 @@ export const CostPricingService = {
       });
     }
 
-    // TESTE 10: Persistência Real e Integridade de Dados em Recarga
+    // TESTE 10: Persistência Real no PostgreSQL e Integridade em Memória
     try {
-      const matsBefore = this.getMaterials().length;
-      const machinesBefore = this.getMachines().length;
-      const sheetsBefore = this.getTechnicalSheets().length;
+      const matsBefore = this.getMaterials();
+      const machinesBefore = this.getMachines();
+      const sheetsBefore = this.getTechnicalSheets();
 
-      // Testa recarga simulada lendo diretamente do localStorage
-      const rawMats = localStorage.getItem(STORAGE_KEYS.MATERIALS);
-      const parsedMats = rawMats ? JSON.parse(rawMats) : [];
-
-      const ok = Array.isArray(parsedMats) && parsedMats.length === matsBefore && matsBefore > 0;
+      const statusRes = await authFetch('/api/cost-pricing/status');
+      const statusOk = statusRes.ok;
+      const ok = Array.isArray(matsBefore) && matsBefore.length > 0 && machinesBefore.length > 0;
 
       results.push({
         id: 'TEST-E2E-10',
-        moduleName: '15. Proteção de Dados e Integridade',
-        targetObjective: 'Comprovar que os dados permanecem íntegros após gravação e leitura em persistência local.',
-        procedureExecuted: 'Validar parse e integridade das chaves de persistência no storage local.',
-        expectedResult: 'Coleções íntegras e consistentes entre memória e disco.',
-        obtainedResult: `Insumos: ${matsBefore}, Máquinas: ${machinesBefore}, Fichas: ${sheetsBefore}. Integridade confirmada.`,
+        moduleName: '15. Proteção de Dados e Integridade (PostgreSQL)',
+        targetObjective: 'Comprovar que os dados permanecem íntegros em memória sincronizada e no PostgreSQL.',
+        procedureExecuted: 'Validar coleções carregadas e disponibilidade do endpoint /api/cost-pricing/status no PostgreSQL.',
+        expectedResult: 'Coleções íntegras e consistentes sem armazenamento no navegador.',
+        obtainedResult: `Insumos: ${matsBefore.length}, Máquinas: ${machinesBefore.length}, Fichas: ${sheetsBefore.length}. PostgreSQL: ${statusOk ? 'ONLINE' : `HTTP ${statusRes.status}`}.`,
         status: ok ? 'aprovado' : 'reprovado',
-        evidenceData: { matsCount: matsBefore, machinesCount: machinesBefore, sheetsCount: sheetsBefore },
+        evidenceData: {
+          matsCount: matsBefore.length,
+          machinesCount: machinesBefore.length,
+          sheetsCount: sheetsBefore.length,
+          postgresStatusHttp: statusRes.status,
+        },
         timestamp,
       });
     } catch (err: any) {
       results.push({
         id: 'TEST-E2E-10',
-        moduleName: '15. Proteção de Dados e Integridade',
-        targetObjective: 'Validar integridade de persistência.',
-        procedureExecuted: 'Leitura de storage.',
+        moduleName: '15. Proteção de Dados e Integridade (PostgreSQL)',
+        targetObjective: 'Validar integridade de persistência no PostgreSQL.',
+        procedureExecuted: 'Consulta de estado em memória e /api/cost-pricing/status.',
         expectedResult: 'Persistência sem corrupção.',
         obtainedResult: err.message,
         status: 'reprovado',

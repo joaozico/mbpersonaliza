@@ -60,7 +60,7 @@ interface SearchResultItem {
   score?: number;
 }
 
-const RECENT_SEARCHES_KEY = 'mb_recent_global_searches';
+let recentSearchesCache: string[] = [];
 const MAX_RECENT_SEARCHES = 6;
 
 // Helper to highlight matching text
@@ -98,14 +98,7 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
   const [query, setQuery] = useState(initialQuery);
   const [activeFilter, setActiveFilter] = useState<SearchCategoryFilter>('all');
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [recentSearches, setRecentSearches] = useState<string[]>(() => {
-    try {
-      const stored = localStorage.getItem(RECENT_SEARCHES_KEY);
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => [...recentSearchesCache]);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const resultsContainerRef = useRef<HTMLDivElement>(null);
@@ -143,36 +136,28 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
     }
   }, [isOpen]);
 
-  // Save query to recents
+  // Save query to recents (strictly in memory)
   const saveRecentSearch = (term: string) => {
     const cleaned = term.trim();
     if (!cleaned || cleaned.length < 2) return;
-    try {
-      const updated = [cleaned, ...recentSearches.filter((s) => s.toLowerCase() !== cleaned.toLowerCase())].slice(
-        0,
-        MAX_RECENT_SEARCHES
-      );
-      setRecentSearches(updated);
-      localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated));
-    } catch {
-      // ignore
-    }
+    const updated = [cleaned, ...recentSearches.filter((s) => s.toLowerCase() !== cleaned.toLowerCase())].slice(
+      0,
+      MAX_RECENT_SEARCHES
+    );
+    recentSearchesCache = updated;
+    setRecentSearches(updated);
   };
 
   const removeRecentSearch = (e: React.MouseEvent, term: string) => {
     e.stopPropagation();
     const updated = recentSearches.filter((s) => s !== term);
+    recentSearchesCache = updated;
     setRecentSearches(updated);
-    try {
-      localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated));
-    } catch {}
   };
 
   const clearAllRecents = () => {
+    recentSearchesCache = [];
     setRecentSearches([]);
-    try {
-      localStorage.removeItem(RECENT_SEARCHES_KEY);
-    } catch {}
   };
 
   // Perform Global Search across all models

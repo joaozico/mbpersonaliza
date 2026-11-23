@@ -135,9 +135,12 @@ export const StrickerIntegrationTab: React.FC<StrickerIntegrationTabProps> = ({ 
       setRequestLogs(StrickerService.sync.getRequestLogs());
     };
 
-    // Sincroniza status do servidor (.env e worker de sincronização)
-    StrickerService.auth.syncWithServerConfig().then(() => {
+    // Hidrata configuração, produtos, pedidos e logs diretamente do PostgreSQL
+    StrickerService.hydrateFromServer().then((res) => {
       reload();
+      if (!res.success && res.error) {
+        setActiveNotification({ type: 'error', message: res.error });
+      }
     });
 
     window.addEventListener('mb_stricker_config_updated', reload);
@@ -331,6 +334,8 @@ export const StrickerIntegrationTab: React.FC<StrickerIntegrationTabProps> = ({ 
       setOrders(StrickerService.orders.getOrders());
       if (selectedOrder?.id === orderId) setSelectedOrder(res.order);
       showNotify('success', 'Maquete aprovada com sucesso! Pedido liberado para produção.');
+    } else {
+      showNotify('error', res.error || 'Erro ao aprovar maquete no PostgreSQL.');
     }
   };
 

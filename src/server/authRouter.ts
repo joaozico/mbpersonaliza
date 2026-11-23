@@ -28,6 +28,7 @@ import {
 } from '../db/repository.ts';
 import { isStaffRole, requireAuthSession } from '../middleware/auth.ts';
 import { INITIAL_PERMISSIONS_MATRIX } from '../data/initialData.ts';
+import { handleRouterError } from './dbErrorHelper.ts';
 
 export const authRouter = Router();
 
@@ -212,10 +213,7 @@ authRouter.post('/register', async (req: Request, res: Response) => {
     );
   } catch (err: any) {
     console.error('[Auth Register] Error:', err);
-    return res.status(500).json({
-      success: false,
-      error: 'Erro interno ao processar cadastro. Tente novamente.',
-    });
+    return handleRouterError(res, err, 'Erro interno ao processar cadastro. Tente novamente.');
   }
 });
 
@@ -243,7 +241,7 @@ authRouter.post('/login', async (req: Request, res: Response) => {
       });
     }
 
-    const isInactive = userRecord.isActive === false || userRecord.status === 'inativo';
+    const isInactive = userRecord.status === 'inativo';
     if (isInactive) {
       return res.status(403).json({
         success: false,
@@ -251,7 +249,7 @@ authRouter.post('/login', async (req: Request, res: Response) => {
       });
     }
 
-    const storedHash = userRecord.passwordHash || userRecord.password_hash;
+    const storedHash = userRecord.passwordHash;
     if (!verifyPassword(rawPassword, storedHash)) {
       return res.status(401).json({
         success: false,
@@ -269,10 +267,7 @@ authRouter.post('/login', async (req: Request, res: Response) => {
     return await issueSessionResponse(req, res, userRecord, 200, 'Autenticação realizada com sucesso.');
   } catch (err: any) {
     console.error('[Auth Login] Error:', err);
-    return res.status(500).json({
-      success: false,
-      error: 'Erro interno ao autenticar usuário.',
-    });
+    return handleRouterError(res, err, 'Erro interno ao autenticar usuário.');
   }
 });
 
@@ -329,10 +324,7 @@ authRouter.get('/me', async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error('[Auth Me] Error:', err);
-    return res.status(500).json({
-      success: false,
-      error: 'Falha ao consultar sessão atual.',
-    });
+    return handleRouterError(res, err, 'Falha ao consultar sessão atual.');
   }
 });
 
@@ -368,7 +360,7 @@ authRouter.put('/profile', requireAuthSession, async (req: Request, res: Respons
       }
       if (docCheck.normalized && docCheck.normalized !== onlyDigits(existing.cpfCnpj)) {
         const dup = await getUserByCpfCnpjFromDb(docCheck.normalized);
-        if (dup && (dup.uid || dup.id) !== authUser.id) {
+        if (dup && dup.id !== authUser.id) {
           return res.status(409).json({
             success: false,
             error: 'Já existe outro cadastro utilizando este CPF ou CNPJ.',
@@ -386,7 +378,7 @@ authRouter.put('/profile', requireAuthSession, async (req: Request, res: Respons
           error: 'A nova senha deve conter pelo menos 6 caracteres.',
         });
       }
-      const existingHash = existing.passwordHash || existing.password_hash;
+      const existingHash = existing.passwordHash;
       if (!currentPassword || !verifyPassword(String(currentPassword), existingHash)) {
         return res.status(400).json({
           success: false,
@@ -410,7 +402,7 @@ authRouter.put('/profile', requireAuthSession, async (req: Request, res: Respons
       favoriteProductIds: favoriteProductIds !== undefined ? favoriteProductIds : existing.favoriteProductIds,
       role: existing.role, // Locked: never escalatable via profile update
       customPermissions: existing.customPermissions, // Locked
-      isActive: existing.isActive !== false, // Locked
+      status: existing.status, // Locked
       ...(nextPasswordHash ? { passwordHash: nextPasswordHash } : {}),
     });
 
@@ -422,9 +414,6 @@ authRouter.put('/profile', requireAuthSession, async (req: Request, res: Respons
     });
   } catch (err: any) {
     console.error('[Auth Profile] Error:', err);
-    return res.status(500).json({
-      success: false,
-      error: 'Erro ao atualizar perfil.',
-    });
+    return handleRouterError(res, err, 'Erro ao atualizar perfil.');
   }
 });

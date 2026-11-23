@@ -1,7 +1,8 @@
 import { Router, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
-import { isDatabaseConfigured } from '../db/index.ts';
+import crypto from 'crypto';
+import { isDatabaseConfigured, testDatabaseConnection } from '../db/index.ts';
 import {
   seedInitialDataIfEmpty,
   getProductsFromDb,
@@ -10,9 +11,13 @@ import {
   getCategoriesFromDb,
   getSubcategoriesFromDb,
   upsertCategoryInDb,
+  hasCategoryProductsInDb,
+  deleteCategoryFromDb,
   upsertSubcategoryInDb,
+  deleteSubcategoryFromDb,
   getOrdersFromDb,
   upsertOrderInDb,
+  checkoutOrderAtomicInDb,
   getQuotesFromDb,
   upsertQuoteInDb,
   getUsersFromDb,
@@ -31,14 +36,23 @@ import {
   upsertStockMovementInDb,
   getBoletosFromDb,
   upsertBoletoInDb,
+  settleBoletoAtomicInDb,
   getFinancialAccountsFromDb,
   upsertFinancialAccountInDb,
   getPdvSalesFromDb,
   upsertPdvSaleInDb,
+  createPdvSaleAtomicInDb,
   getCashSessionsFromDb,
   upsertCashSessionInDb,
   getPaymentTransactionsFromDb,
   upsertPaymentTransactionInDb,
+  getCartFromDb,
+  saveCartToDb,
+  getFavoritesFromDb,
+  saveFavoritesToDb,
+  getAppOperationLogsFromDb,
+  insertAppOperationLogInDb,
+  getDatabaseCountsFromDb,
   ensureAdditiveTablesInPostgres,
   runControlledLocalStorageMigration,
 } from '../db/repository.ts';
@@ -46,6 +60,7 @@ import {
   canUserViewPrices,
   normalizePriceVisibilityMode,
   onlyDigits,
+  parseCookies,
   redactProductsForPriceVisibility,
   sanitizeUserForClient,
   validateCpfCnpj,
@@ -59,9 +74,68 @@ import {
   requirePermission,
   requireStaffSession,
 } from '../middleware/auth.ts';
+import { handleRouterError } from './dbErrorHelper.ts';
 import type { PermissionKey } from '../types.ts';
 
 export const databaseRouter = Router();
+
+const CART_COOKIE_NAME = 'mb_cart_sid';
+const CART_COOKIE_TTL_SECONDS = 60 * 60 * 24 * 30;
+const CART_SIGNING_SECRET =
+  process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+
+function signGuestCartId(sid: string): string {
+  const sig = crypto
+    .createHmac('sha256', CART_SIGNING_SECRET)
+    .update(sid)
+    .digest('hex');
+  return `${sid}.${sig}`;
+}
+
+function verifyGuestCartId(rawCookie?: string): string | null {
+  if (!rawCookie || typeof rawCookie !== 'string') return null;
+  const dotIdx = rawCookie.lastIndexOf('.');
+  if (dotIdx <= 0) return null;
+  const sid = rawCookie.slice(0, dotIdx);
+  const sig = rawCookie.slice(dotIdx + 1);
+  if (!sid || !sig) return null;
+  const expected = crypto
+    .createHmac('sha256', CART_SIGNING_SECRET)
+    .update(sid)
+    .digest('hex');
+  try {
+    const a = Buffer.from(sig, 'hex');
+    const b = Buffer.from(expected, 'hex');
+    if (a.length !== b.length) return null;
+    return crypto.timingSafeEqual(a, b) ? sid : null;
+  } catch {
+    return null;
+  }
+}
+
+function setGuestCartCookie(req: Request, res: Response, sid: string): void {
+  const proto = String(req.headers['x-forwarded-proto'] || '').toLowerCase();
+  const https = req.secure || proto.includes('https');
+  const signed = signGuestCartId(sid);
+  const parts = [
+    `${CART_COOKIE_NAME}=${encodeURIComponent(signed)}`,
+    'Path=/',
+    'HttpOnly',
+    `Max-Age=${CART_COOKIE_TTL_SECONDS}`,
+    https ? 'SameSite=None' : 'SameSite=Lax',
+  ];
+  if (https) {
+    parts.push('Secure', 'Partitioned');
+  }
+  const existing = res.getHeader('Set-Cookie');
+  const cookieStr = parts.join('; ');
+  if (existing) {
+    const arr = Array.isArray(existing) ? existing.map(String) : [String(existing)];
+    res.setHeader('Set-Cookie', [...arr, cookieStr]);
+  } else {
+    res.setHeader('Set-Cookie', cookieStr);
+  }
+}
 
 function isPlaceholderConfig(val?: string): boolean {
   if (!val || typeof val !== 'string') return false;
@@ -98,27 +172,22 @@ function isOwnRecord(record: any, user: { id: string; email: string }): boolean 
   return false;
 }
 
-// GET /api/db/status - Confirms database connectivity, engine, and counts (no secrets leaked)
+// GET /api/db/status - Real PostgreSQL check (SELECT 1 + identity query), returns HTTP 503 when offline
 databaseRouter.get('/status', async (_req: Request, res: Response) => {
-  const rawDbUrl = process.env.DATABASE_URL;
-  const hasValidDbUrl =
-    !!rawDbUrl &&
-    !isPlaceholderConfig(rawDbUrl) &&
-    (rawDbUrl.startsWith('postgres://') || rawDbUrl.startsWith('postgresql://'));
-  const rawHost = process.env.SQL_HOST;
-  const hasValidHost = !!rawHost && !isPlaceholderConfig(rawHost);
+  const check = await testDatabaseConnection();
 
-  const hasDbConfig =
-    hasValidDbUrl || (hasValidHost && (process.env.SQL_USER || process.env.SQL_ADMIN_USER));
-
-  if (!hasDbConfig) {
-    return res.json({
-      success: true,
+  if (!check.connected) {
+    return res.status(503).json({
+      success: false,
+      code: 'DB_UNAVAILABLE',
       database: 'PostgreSQL',
       connected: false,
-      status: 'pending_configuration',
-      message:
-        'Aguardando inserção das variáveis de ambiente de conexão no .env (DATABASE_URL ou SQL_HOST/SQL_USER).',
+      configured: check.configured,
+      status: check.status,
+      sslEnabled: check.sslEnabled,
+      connectionMode: check.connectionMode,
+      latencyMs: check.latencyMs,
+      error: check.error || 'PostgreSQL indisponível no momento.',
       counts: {
         products: 0,
         categories: 0,
@@ -131,33 +200,34 @@ databaseRouter.get('/status', async (_req: Request, res: Response) => {
 
   try {
     await seedInitialDataIfEmpty();
-    const products = (await getProductsFromDb()) || [];
-    const categories = (await getCategoriesFromDb()) || [];
-    const orders = (await getOrdersFromDb()) || [];
-    const quotes = (await getQuotesFromDb()) || [];
-    const users = (await getUsersFromDb()) || [];
+    const counts = await getDatabaseCountsFromDb();
 
-    res.json({
+    return res.json({
       success: true,
-      database: 'PostgreSQL (Cloud SQL / Hostinger VPS)',
+      database: 'PostgreSQL (Hostinger VPS)',
       connected: true,
+      configured: true,
       status: 'online',
-      counts: {
-        products: products.length,
-        categories: categories.length,
-        orders: orders.length,
-        quotes: quotes.length,
-        users: users.length,
+      databaseInfo: {
+        databaseName: check.currentDatabase,
+        databaseUser: check.currentUser,
+        serverVersion: check.version,
+        tableCount: check.publicTablesCount,
+        latencyMs: check.latencyMs,
+        sslEnabled: check.sslEnabled,
+        connectionMode: check.connectionMode,
       },
+      counts,
     });
   } catch (error: any) {
-    console.warn('[PostgreSQL Status] Conexão pendente ou em inicialização:', error.message);
-    res.json({
-      success: true,
+    return res.status(503).json({
+      success: false,
+      code: 'DB_UNAVAILABLE',
       database: 'PostgreSQL',
       connected: false,
+      configured: true,
       status: 'offline_or_unreachable',
-      error: error.message || 'Falha ao conectar no banco',
+      error: error?.message || 'Falha ao consultar tabelas no PostgreSQL.',
       counts: {
         products: 0,
         categories: 0,
@@ -300,9 +370,9 @@ databaseRouter.get('/init', async (req: Request, res: Response) => {
       currentUsageCount: cp.currentUsageCount ?? cp.currentUses ?? 0,
       maxUsagePerCustomer: cp.maxUsagePerCustomer ?? cp.limitPerCustomer ?? 1,
       targetType: cp.targetType ?? cp.applicableType ?? 'all_store',
-      targetProductIds: cp.allowedProductIds || [],
-      targetCategoryIds: cp.allowedCategoryIds || [],
-      specificCustomerIds: cp.allowedCustomerIds || [],
+      targetProductIds: cp.allowedProductIds || cp.targetProductIds || [],
+      targetCategoryIds: cp.allowedCategoryIds || cp.targetCategoryIds || [],
+      specificCustomerIds: cp.allowedCustomerIds || cp.specificCustomerIds || [],
       canCombineWithPromotions: cp.canCombineWithPromotions ?? cp.allowCumulative ?? true,
     }));
 
@@ -358,10 +428,70 @@ databaseRouter.get('/init', async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     console.error('Failed to initialize database sync:', error);
-    return res.status(500).json({
-      success: false,
-      error: error?.message || 'Database temporarily unavailable',
-    });
+    return handleRouterError(res, error, 'PostgreSQL temporariamente indisponível.');
+  }
+});
+
+// Cart (Logged user by userId; guest by HMAC-signed HttpOnly cookie mb_cart_sid)
+databaseRouter.get('/cart', async (req: Request, res: Response) => {
+  try {
+    if (req.authUser) {
+      const items = await getCartFromDb(`user:${req.authUser.id}`);
+      return res.json({ success: true, items });
+    }
+    const cookies = parseCookies(req);
+    const sid = verifyGuestCartId(cookies[CART_COOKIE_NAME]);
+    if (!sid) {
+      const freshSid = `gst_${crypto.randomBytes(12).toString('hex')}`;
+      setGuestCartCookie(req, res, freshSid);
+      return res.json({ success: true, items: [] });
+    }
+    const items = await getCartFromDb(`guest:${sid}`);
+    return res.json({ success: true, items });
+  } catch (error: any) {
+    return handleRouterError(res, error, 'Erro ao consultar carrinho no PostgreSQL.');
+  }
+});
+
+databaseRouter.put('/cart', async (req: Request, res: Response) => {
+  try {
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (req.authUser) {
+      await saveCartToDb(`user:${req.authUser.id}`, items);
+      return res.json({ success: true, items });
+    }
+    const cookies = parseCookies(req);
+    let sid = verifyGuestCartId(cookies[CART_COOKIE_NAME]);
+    if (!sid) {
+      sid = `gst_${crypto.randomBytes(12).toString('hex')}`;
+      setGuestCartCookie(req, res, sid);
+    }
+    await saveCartToDb(`guest:${sid}`, items);
+    return res.json({ success: true, items });
+  } catch (error: any) {
+    return handleRouterError(res, error, 'Erro ao salvar carrinho no PostgreSQL.');
+  }
+});
+
+// Favorites (Authenticated user)
+databaseRouter.get('/favorites', requireAuthSession, async (req: Request, res: Response) => {
+  try {
+    const productIds = await getFavoritesFromDb(`user:${req.authUser!.id}`);
+    return res.json({ success: true, productIds });
+  } catch (error: any) {
+    return handleRouterError(res, error, 'Erro ao carregar favoritos no PostgreSQL.');
+  }
+});
+
+databaseRouter.put('/favorites', requireAuthSession, async (req: Request, res: Response) => {
+  try {
+    const productIds = Array.isArray(req.body?.productIds)
+      ? req.body.productIds.map(String)
+      : [];
+    await saveFavoritesToDb(`user:${req.authUser!.id}`, productIds);
+    return res.json({ success: true, productIds });
+  } catch (error: any) {
+    return handleRouterError(res, error, 'Erro ao salvar favoritos no PostgreSQL.');
   }
 });
 
@@ -374,9 +504,14 @@ databaseRouter.get('/products', async (req: Request, res: Response) => {
     const allowed = canUserViewPrices(req.authUser, priceVisibilityMode);
     const safeProducts = redactProductsForPriceVisibility(raw, allowed);
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-    res.json({ success: true, canViewPrices: allowed, priceVisibility: priceVisibilityMode, products: safeProducts });
+    return res.json({
+      success: true,
+      canViewPrices: allowed,
+      priceVisibility: priceVisibilityMode,
+      products: safeProducts,
+    });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    return handleRouterError(res, error, 'Erro ao consultar produtos no PostgreSQL.');
   }
 });
 
@@ -386,9 +521,9 @@ databaseRouter.post(
   async (req: Request, res: Response) => {
     try {
       const saved = await upsertProductInDb(req.body);
-      res.json({ success: true, product: saved });
+      return res.json({ success: true, product: saved });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      return handleRouterError(res, error, 'Erro ao gravar produto no PostgreSQL.');
     }
   }
 );
@@ -399,9 +534,9 @@ databaseRouter.delete(
   async (req: Request, res: Response) => {
     try {
       await deleteProductFromDb(req.params.id);
-      res.json({ success: true, message: 'Produto excluído do PostgreSQL' });
+      return res.json({ success: true, message: 'Produto excluído do PostgreSQL' });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      return handleRouterError(res, error, 'Erro ao excluir produto no PostgreSQL.');
     }
   }
 );
@@ -411,9 +546,9 @@ databaseRouter.get('/categories', async (_req: Request, res: Response) => {
   try {
     await seedInitialDataIfEmpty();
     const data = await getCategoriesFromDb();
-    res.json({ success: true, categories: data });
+    return res.json({ success: true, categories: data });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    return handleRouterError(res, error, 'Erro ao consultar categorias no PostgreSQL.');
   }
 });
 
@@ -423,9 +558,29 @@ databaseRouter.post(
   async (req: Request, res: Response) => {
     try {
       const saved = await upsertCategoryInDb(req.body);
-      res.json({ success: true, category: saved });
+      return res.json({ success: true, category: saved });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      return handleRouterError(res, error, 'Erro ao gravar categoria no PostgreSQL.');
+    }
+  }
+);
+
+databaseRouter.delete(
+  '/categories/:id',
+  requirePermission('canManageCategories'),
+  async (req: Request, res: Response) => {
+    try {
+      const hasProducts = await hasCategoryProductsInDb(req.params.id);
+      if (hasProducts) {
+        return res.status(409).json({
+          success: false,
+          error: 'Não é possível excluir categoria que possui produtos vinculados.',
+        });
+      }
+      await deleteCategoryFromDb(req.params.id);
+      return res.json({ success: true, message: 'Categoria excluída do PostgreSQL.' });
+    } catch (error: any) {
+      return handleRouterError(res, error, 'Erro ao excluir categoria no PostgreSQL.');
     }
   }
 );
@@ -436,14 +591,27 @@ databaseRouter.post(
   async (req: Request, res: Response) => {
     try {
       const saved = await upsertSubcategoryInDb(req.body);
-      res.json({ success: true, subcategory: saved });
+      return res.json({ success: true, subcategory: saved });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      return handleRouterError(res, error, 'Erro ao gravar subcategoria no PostgreSQL.');
     }
   }
 );
 
-// Orders
+databaseRouter.delete(
+  '/subcategories/:id',
+  requirePermission('canManageCategories'),
+  async (req: Request, res: Response) => {
+    try {
+      await deleteSubcategoryFromDb(req.params.id);
+      return res.json({ success: true, message: 'Subcategoria excluída do PostgreSQL.' });
+    } catch (error: any) {
+      return handleRouterError(res, error, 'Erro ao excluir subcategoria no PostgreSQL.');
+    }
+  }
+);
+
+// Orders & Atomic Checkout
 databaseRouter.get('/orders', requireAuthSession, async (req: Request, res: Response) => {
   try {
     const authUser = req.authUser!;
@@ -463,7 +631,48 @@ databaseRouter.get('/orders', requireAuthSession, async (req: Request, res: Resp
       orders: all.filter((o: any) => isOwnRecord(o, authUser)),
     });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    return handleRouterError(res, error, 'Erro ao consultar pedidos no PostgreSQL.');
+  }
+});
+
+databaseRouter.post('/orders/checkout', requireAuthSession, async (req: Request, res: Response) => {
+  try {
+    const authUser = req.authUser!;
+    const { order, initialBoletos = [], initialFinancialAccount } = req.body || {};
+    if (!order || !order.id || !order.code || !Array.isArray(order.items) || order.items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Dados do pedido inválidos ou carrinho vazio.',
+      });
+    }
+
+    const safeOrder = isStaffRole(authUser.role)
+      ? order
+      : {
+          ...order,
+          clientId: authUser.id,
+          clientEmail: authUser.email,
+          orderStatus: 'novo',
+          paymentStatus: 'pendente',
+        };
+
+    const result = await checkoutOrderAtomicInDb({
+      order: safeOrder,
+      operatorName: authUser.name || 'Checkout Loja',
+      initialBoletos: Array.isArray(initialBoletos) ? initialBoletos : [],
+      initialFinancialAccount: initialFinancialAccount || undefined,
+    });
+
+    // Clear user's persisted cart after atomic checkout succeeds
+    await saveCartToDb(`user:${authUser.id}`, []).catch(() => {});
+
+    return res.status(result.duplicated ? 200 : 201).json({
+      success: true,
+      duplicated: result.duplicated,
+      order: result.order,
+    });
+  } catch (error: any) {
+    return handleRouterError(res, error, 'Erro ao processar checkout atômico no PostgreSQL.');
   }
 });
 
@@ -481,7 +690,6 @@ databaseRouter.post('/orders', requireAuthSession, async (req: Request, res: Res
           error: 'Clientes não podem alterar pedidos já registrados.',
         });
       }
-      // Enforce ownership and initial statuses on customer-created order
       const saved = await upsertOrderInDb({
         ...payload,
         clientId: authUser.id,
@@ -500,9 +708,9 @@ databaseRouter.post('/orders', requireAuthSession, async (req: Request, res: Res
     }
 
     const saved = await upsertOrderInDb(payload);
-    res.json({ success: true, order: saved });
+    return res.json({ success: true, order: saved });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    return handleRouterError(res, error, 'Erro ao gravar pedido no PostgreSQL.');
   }
 });
 
@@ -522,7 +730,7 @@ databaseRouter.get('/quotes', requireAuthSession, async (req: Request, res: Resp
       quotes: all.filter((q: any) => isOwnRecord(q, authUser)),
     });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    return handleRouterError(res, error, 'Erro ao consultar orçamentos no PostgreSQL.');
   }
 });
 
@@ -565,9 +773,9 @@ databaseRouter.post('/quotes', async (req: Request, res: Response) => {
     }
 
     const saved = await upsertQuoteInDb(payload);
-    res.json({ success: true, quote: saved });
+    return res.json({ success: true, quote: saved });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    return handleRouterError(res, error, 'Erro ao gravar orçamento no PostgreSQL.');
   }
 });
 
@@ -578,9 +786,12 @@ databaseRouter.get(
   async (_req: Request, res: Response) => {
     try {
       const data = await getUsersFromDb();
-      res.json({ success: true, users: (data || []).map((u: any) => sanitizeUserForClient(u)) });
+      return res.json({
+        success: true,
+        users: (data || []).map((u: any) => sanitizeUserForClient(u)),
+      });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      return handleRouterError(res, error, 'Erro ao consultar usuários no PostgreSQL.');
     }
   }
 );
@@ -607,7 +818,7 @@ databaseRouter.post(
           return res.status(400).json({ success: false, error: docCheck.message });
         }
         const dupDoc = await getUserByCpfCnpjFromDb(docCheck.normalized);
-        if (dupDoc && (dupDoc.uid || dupDoc.id) !== uid) {
+        if (dupDoc && dupDoc.id !== uid) {
           return res.status(409).json({
             success: false,
             error: 'Já existe outro usuário cadastrado com este CPF/CNPJ.',
@@ -616,14 +827,13 @@ databaseRouter.post(
       }
 
       const dupEmail = await getUserByEmailFromDb(cleanEmail);
-      if (dupEmail && (dupEmail.uid || dupEmail.id) !== uid) {
+      if (dupEmail && dupEmail.id !== uid) {
         return res.status(409).json({
           success: false,
           error: 'Já existe outro usuário cadastrado com este e-mail.',
         });
       }
 
-      // Only admin can assign/modify admin role
       if (payload.role === 'admin' && req.authUser?.role !== 'admin') {
         return res.status(403).json({
           success: false,
@@ -632,9 +842,12 @@ databaseRouter.post(
       }
 
       const saved = await upsertUserInDb(payload);
-      res.json({ success: true, user: saved.map((u: any) => sanitizeUserForClient(u)) });
+      return res.json({
+        success: true,
+        user: saved.map((u: any) => sanitizeUserForClient(u)),
+      });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      return handleRouterError(res, error, 'Erro ao gravar usuário no PostgreSQL.');
     }
   }
 );
@@ -646,9 +859,9 @@ databaseRouter.get(
   async (_req: Request, res: Response) => {
     try {
       const data = await getCouponsFromDb();
-      res.json({ success: true, coupons: data });
+      return res.json({ success: true, coupons: data });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      return handleRouterError(res, error, 'Erro ao consultar cupons no PostgreSQL.');
     }
   }
 );
@@ -659,9 +872,9 @@ databaseRouter.post(
   async (req: Request, res: Response) => {
     try {
       const saved = await upsertCouponInDb(req.body);
-      res.json({ success: true, coupon: saved });
+      return res.json({ success: true, coupon: saved });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      return handleRouterError(res, error, 'Erro ao gravar cupom no PostgreSQL.');
     }
   }
 );
@@ -690,7 +903,11 @@ databaseRouter.get('/settings/:key', async (req: Request, res: Response) => {
           error: 'Acesso negado a esta configuração interna.',
         });
       }
-      if (key === 'gateways' && !hasServerPermission(req, 'canManagePaymentGateways') && !hasServerPermission(req, 'canAccessPDV')) {
+      if (
+        key === 'gateways' &&
+        !hasServerPermission(req, 'canManagePaymentGateways') &&
+        !hasServerPermission(req, 'canAccessPDV')
+      ) {
         return res.status(403).json({ success: false, error: 'Permissão insuficiente.' });
       }
     }
@@ -699,9 +916,9 @@ databaseRouter.get('/settings/:key', async (req: Request, res: Response) => {
     if (key === 'company' && (!req.authUser || !isStaffRole(req.authUser.role))) {
       return res.json({ success: true, key, value: sanitizeCompanySettingsForPublic(value) });
     }
-    res.json({ success: true, key, value });
+    return res.json({ success: true, key, value });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    return handleRouterError(res, error, 'Erro ao consultar configuração no PostgreSQL.');
   }
 });
 
@@ -724,9 +941,9 @@ databaseRouter.post('/settings/:key', requireStaffSession, async (req: Request, 
     }
 
     await saveSystemSettingsToDb(key, req.body.value);
-    res.json({ success: true, key, message: 'Configurações salvas no PostgreSQL' });
+    return res.json({ success: true, key, message: 'Configurações salvas no PostgreSQL' });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    return handleRouterError(res, error, 'Erro ao salvar configuração no PostgreSQL.');
   }
 });
 
@@ -734,18 +951,18 @@ databaseRouter.post('/settings/:key', requireStaffSession, async (req: Request, 
 databaseRouter.get('/backups', requireAdminSession, async (_req: Request, res: Response) => {
   try {
     const data = await getBackupsFromDb();
-    res.json({ success: true, backups: data });
+    return res.json({ success: true, backups: data });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    return handleRouterError(res, error, 'Erro ao consultar backups no PostgreSQL.');
   }
 });
 
 databaseRouter.post('/backups', requireAdminSession, async (req: Request, res: Response) => {
   try {
     const saved = await recordBackupInDb(req.body);
-    res.json({ success: true, backup: saved });
+    return res.json({ success: true, backup: saved });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    return handleRouterError(res, error, 'Erro ao gravar registro de backup no PostgreSQL.');
   }
 });
 
@@ -756,9 +973,9 @@ databaseRouter.get(
   async (_req: Request, res: Response) => {
     try {
       const data = await getStockMovementsFromDb();
-      res.json({ success: true, stockMovements: data });
+      return res.json({ success: true, stockMovements: data });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      return handleRouterError(res, error, 'Erro ao consultar movimentações de estoque.');
     }
   }
 );
@@ -769,9 +986,9 @@ databaseRouter.post('/stock-movements', requireStaffSession, async (req: Request
       return res.status(403).json({ success: false, error: 'Permissão de estoque ou PDV necessária.' });
     }
     const saved = await upsertStockMovementInDb(req.body);
-    res.json({ success: true, stockMovement: saved });
+    return res.json({ success: true, stockMovement: saved });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    return handleRouterError(res, error, 'Erro ao gravar movimentação de estoque.');
   }
 });
 
@@ -802,7 +1019,7 @@ databaseRouter.get('/boletos', requireAuthSession, async (req: Request, res: Res
     );
     return res.json({ success: true, boletos: mine });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    return handleRouterError(res, error, 'Erro ao consultar boletos no PostgreSQL.');
   }
 });
 
@@ -813,12 +1030,42 @@ databaseRouter.post('/boletos', requireStaffSession, async (req: Request, res: R
       !hasServerPermission(req, 'canViewReceivables') &&
       !hasServerPermission(req, 'canConfigureBoletoRules')
     ) {
-      return res.status(403).json({ success: false, error: 'Permissão financeira necessária para gravar boletos.' });
+      return res.status(403).json({
+        success: false,
+        error: 'Permissão financeira necessária para gravar boletos.',
+      });
     }
     const saved = await upsertBoletoInDb(req.body);
-    res.json({ success: true, boleto: saved });
+    return res.json({ success: true, boleto: saved });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    return handleRouterError(res, error, 'Erro ao gravar boleto no PostgreSQL.');
+  }
+});
+
+databaseRouter.post('/boletos/:id/settle', requireStaffSession, async (req: Request, res: Response) => {
+  try {
+    if (
+      !hasServerPermission(req, 'canViewFinancialModule') &&
+      !hasServerPermission(req, 'canViewReceivables') &&
+      !hasServerPermission(req, 'canReceivePayment')
+    ) {
+      return res.status(403).json({
+        success: false,
+        error: 'Permissão financeira necessária para liquidar boletos.',
+      });
+    }
+    const result = await settleBoletoAtomicInDb({
+      boletoId: req.params.id,
+      paidDate: req.body?.paidDate,
+      bankAccountId: req.body?.bankAccountId,
+      operatorName: req.authUser!.name,
+    });
+    if (result.notFound) {
+      return res.status(404).json({ success: false, error: 'Boleto não encontrado.' });
+    }
+    return res.json({ success: true, ...result });
+  } catch (error: any) {
+    return handleRouterError(res, error, 'Erro ao liquidar boleto no PostgreSQL.');
   }
 });
 
@@ -829,9 +1076,9 @@ databaseRouter.get(
   async (_req: Request, res: Response) => {
     try {
       const data = await getFinancialAccountsFromDb();
-      res.json({ success: true, financialAccounts: data });
+      return res.json({ success: true, financialAccounts: data });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      return handleRouterError(res, error, 'Erro ao consultar contas financeiras no PostgreSQL.');
     }
   }
 );
@@ -846,9 +1093,9 @@ databaseRouter.post('/financial-accounts', requireStaffSession, async (req: Requ
       return res.status(403).json({ success: false, error: 'Permissão financeira necessária.' });
     }
     const saved = await upsertFinancialAccountInDb(req.body);
-    res.json({ success: true, financialAccount: saved });
+    return res.json({ success: true, financialAccount: saved });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    return handleRouterError(res, error, 'Erro ao gravar conta financeira no PostgreSQL.');
   }
 });
 
@@ -859,9 +1106,9 @@ databaseRouter.get(
   async (_req: Request, res: Response) => {
     try {
       const data = await getPdvSalesFromDb();
-      res.json({ success: true, pdvSales: data.map((s: any) => s.rawData || s) });
+      return res.json({ success: true, pdvSales: data.map((s: any) => s.rawData || s) });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      return handleRouterError(res, error, 'Erro ao consultar vendas PDV no PostgreSQL.');
     }
   }
 );
@@ -872,9 +1119,30 @@ databaseRouter.post(
   async (req: Request, res: Response) => {
     try {
       const saved = await upsertPdvSaleInDb(req.body);
-      res.json({ success: true, pdvSale: saved });
+      return res.json({ success: true, pdvSale: saved });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      return handleRouterError(res, error, 'Erro ao gravar venda PDV no PostgreSQL.');
+    }
+  }
+);
+
+databaseRouter.post(
+  '/pdv-sales/atomic',
+  requirePermission('canAccessPDV'),
+  async (req: Request, res: Response) => {
+    try {
+      const { sale, cashSessionId, transactions } = req.body || {};
+      if (!sale || !sale.id || !sale.code) {
+        return res.status(400).json({ success: false, error: 'Dados da venda PDV inválidos.' });
+      }
+      const result = await createPdvSaleAtomicInDb({
+        sale,
+        cashSessionId,
+        transactions: Array.isArray(transactions) ? transactions : [],
+      });
+      return res.status(result.duplicated ? 200 : 201).json({ success: true, ...result });
+    } catch (error: any) {
+      return handleRouterError(res, error, 'Erro ao processar venda PDV atômica no PostgreSQL.');
     }
   }
 );
@@ -885,9 +1153,9 @@ databaseRouter.get(
   async (_req: Request, res: Response) => {
     try {
       const data = await getCashSessionsFromDb();
-      res.json({ success: true, cashSessions: data.map((cs: any) => cs.rawData || cs) });
+      return res.json({ success: true, cashSessions: data.map((cs: any) => cs.rawData || cs) });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      return handleRouterError(res, error, 'Erro ao consultar sessões de caixa.');
     }
   }
 );
@@ -898,9 +1166,9 @@ databaseRouter.post(
   async (req: Request, res: Response) => {
     try {
       const saved = await upsertCashSessionInDb(req.body);
-      res.json({ success: true, cashSession: saved });
+      return res.json({ success: true, cashSession: saved });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      return handleRouterError(res, error, 'Erro ao gravar sessão de caixa.');
     }
   }
 );
@@ -913,21 +1181,95 @@ databaseRouter.get('/payment-transactions', requireStaffSession, async (req: Req
       !hasServerPermission(req, 'canViewFinancialModule') &&
       !hasServerPermission(req, 'canAccessPDV')
     ) {
-      return res.status(403).json({ success: false, error: 'Acesso negado às transações financeiras.' });
+      return res.status(403).json({
+        success: false,
+        error: 'Acesso negado às transações financeiras.',
+      });
     }
     const data = await getPaymentTransactionsFromDb();
-    res.json({ success: true, paymentTransactions: data.map((tx: any) => tx.rawData || tx) });
+    return res.json({
+      success: true,
+      paymentTransactions: data.map((tx: any) => tx.rawData || tx),
+    });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    return handleRouterError(res, error, 'Erro ao consultar transações de pagamento.');
   }
 });
 
 databaseRouter.post('/payment-transactions', requireAuthSession, async (req: Request, res: Response) => {
   try {
-    const saved = await upsertPaymentTransactionInDb(req.body);
-    res.json({ success: true, paymentTransaction: saved });
+    const authUser = req.authUser!;
+    const payload = req.body || {};
+
+    if (isStaffRole(authUser.role)) {
+      if (
+        !hasServerPermission(req, 'canViewFinancialTransactions') &&
+        !hasServerPermission(req, 'canViewFinancialModule') &&
+        !hasServerPermission(req, 'canAccessPDV') &&
+        !hasServerPermission(req, 'canManageOrders')
+      ) {
+        return res.status(403).json({
+          success: false,
+          error: 'Permissão insuficiente para registrar transação de pagamento.',
+        });
+      }
+      const saved = await upsertPaymentTransactionInDb(payload);
+      return res.json({ success: true, paymentTransaction: saved });
+    }
+
+    // Customer flow: must reference an existing order owned by this customer and cannot force approved status
+    if (!payload.orderId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Clientes só podem registrar transações vinculadas a um pedido próprio.',
+      });
+    }
+    const orders = await getOrdersFromDb();
+    const targetOrder = orders.find((o: any) => o.id === payload.orderId);
+    if (!targetOrder || !isOwnRecord(targetOrder, authUser)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Pedido não encontrado ou não pertence à conta autenticada.',
+      });
+    }
+
+    const safeTx = {
+      ...payload,
+      status: 'pendente',
+      origin: 'loja_online',
+    };
+    const saved = await upsertPaymentTransactionInDb(safeTx);
+    return res.json({ success: true, paymentTransaction: saved });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    return handleRouterError(res, error, 'Erro ao gravar transação de pagamento.');
+  }
+});
+
+// Application Operation Logs (Admin audit / operation logs)
+databaseRouter.get('/logs', requireAdminSession, async (_req: Request, res: Response) => {
+  try {
+    const logs = await getAppOperationLogsFromDb(200);
+    return res.json({ success: true, logs });
+  } catch (error: any) {
+    return handleRouterError(res, error, 'Erro ao consultar logs operacionais no PostgreSQL.');
+  }
+});
+
+databaseRouter.post('/logs', requireAuthSession, async (req: Request, res: Response) => {
+  try {
+    const { module = 'app', level = 'info', action = 'event', message = '', details } = req.body || {};
+    const saved = await insertAppOperationLogInDb({
+      module: String(module),
+      level,
+      actorId: req.authUser?.id,
+      actorRole: req.authUser?.role,
+      action: String(action),
+      message: String(message),
+      details,
+    });
+    return res.status(201).json({ success: true, log: saved });
+  } catch (error: any) {
+    return handleRouterError(res, error, 'Erro ao registrar log operacional no PostgreSQL.');
   }
 });
 
@@ -965,7 +1307,7 @@ databaseRouter.get('/vps-preflight', requireAdminSession, async (_req: Request, 
       (rawDbUrl.startsWith('postgres://') || rawDbUrl.startsWith('postgresql://'));
     const hasValidHost = !!process.env.SQL_HOST && !isPlaceholderConfig(process.env.SQL_HOST);
 
-    res.json({
+    return res.json({
       success: true,
       timestamp: new Date().toISOString(),
       environment: process.env.NODE_ENV || 'development',
@@ -977,7 +1319,7 @@ databaseRouter.get('/vps-preflight', requireAdminSession, async (_req: Request, 
           ? process.env.SQL_HOST?.startsWith('/')
             ? 'UNIX_SOCKET'
             : 'SQL_HOST_TCP'
-          : 'LOCAL_STORAGE_FALLBACK',
+          : 'NOT_CONFIGURED',
         sslEnabled:
           process.env.SQL_SSL === 'true' ||
           process.env.SSL_MODE === 'require' ||
@@ -992,16 +1334,16 @@ databaseRouter.get('/vps-preflight', requireAdminSession, async (_req: Request, 
       },
     });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error?.message || 'Erro no diagnóstico VPS' });
+    return handleRouterError(res, error, 'Erro no diagnóstico VPS.');
   }
 });
 
 databaseRouter.post('/ensure-additive-tables', requireAdminSession, async (_req: Request, res: Response) => {
   try {
-    const result = await ensureAdditiveTablesInPostgres();
-    res.json({ success: true, ...result });
+    const result = await ensureAdditiveTablesInPostgres(true);
+    return res.json({ success: true, ...result });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error?.message || 'Falha ao verificar tabelas aditivas' });
+    return handleRouterError(res, error, 'Falha ao verificar tabelas aditivas.');
   }
 });
 
@@ -1009,11 +1351,8 @@ databaseRouter.post('/migrate-local-storage', requireAdminSession, async (req: R
   const { snapshot = {}, dryRun = true } = req.body || {};
   try {
     const report = await runControlledLocalStorageMigration(snapshot, Boolean(dryRun));
-    res.json(report);
+    return res.json(report);
   } catch (error: any) {
-    res.status(500).json({
-      success: false,
-      error: error?.message || 'Erro ao executar validação/migração controlada.',
-    });
+    return handleRouterError(res, error, 'Erro ao executar validação/migração controlada.');
   }
 });

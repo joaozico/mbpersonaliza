@@ -6,102 +6,133 @@ import {
   getServerBackupConfig,
   saveServerBackupConfig,
   getServerBackupHistory,
-  saveServerBackupHistory,
   executeServerBackup,
+  deleteServerBackup,
   BACKUPS_DIR,
-} from './backupSchedulerWorker';
-import { BackupScheduleConfig } from '../types';
+} from './backupSchedulerWorker.ts';
+import { BackupScheduleConfig } from '../types.ts';
 import { requireAdminSession } from '../middleware/auth.ts';
+import {
+  getBackupsFromDb,
+  restoreDatabaseFromBackupPayloadInDb,
+} from '../db/repository.ts';
+import { handleRouterError } from './dbErrorHelper.ts';
 
 export const backupRouter = Router();
 backupRouter.use(requireAdminSession);
 
 // GET /api/backup/config
-backupRouter.get('/config', (req: Request, res: Response) => {
+backupRouter.get('/config', async (_req: Request, res: Response) => {
   try {
-    const config = getServerBackupConfig();
-    res.json({ success: true, config });
+    const config = await getServerBackupConfig();
+    return res.json({ success: true, config });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message || 'Erro ao obter configurações' });
+    return handleRouterError(res, err, 'Erro ao obter configurações de backup no PostgreSQL.');
   }
 });
 
 // POST /api/backup/config
-backupRouter.post('/config', (req: Request, res: Response) => {
+backupRouter.post('/config', async (req: Request, res: Response) => {
   try {
     const newConfig: BackupScheduleConfig = req.body;
     if (!newConfig || typeof newConfig !== 'object') {
       return res.status(400).json({ success: false, error: 'Configuração inválida.' });
     }
-    saveServerBackupConfig(newConfig);
-    const updated = getServerBackupConfig();
-    res.json({ success: true, config: updated, message: 'Configuração de backup agendado salva com sucesso!' });
+    const updated = await saveServerBackupConfig(newConfig);
+    return res.json({
+      success: true,
+      config: updated,
+      message: 'Configuração de backup agendado salva no PostgreSQL com sucesso!',
+    });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message || 'Erro ao salvar configurações' });
+    return handleRouterError(res, err, 'Erro ao salvar configurações de backup no PostgreSQL.');
   }
 });
 
 // GET /api/backup/history
-backupRouter.get('/history', (req: Request, res: Response) => {
+backupRouter.get('/history', async (_req: Request, res: Response) => {
   try {
-    const history = getServerBackupHistory();
-    res.json({ success: true, history });
+    const history = await getServerBackupHistory();
+    return res.json({ success: true, history });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message || 'Erro ao obter histórico' });
+    return handleRouterError(res, err, 'Erro ao obter histórico de backups do PostgreSQL.');
   }
 });
 
 // POST /api/backup/export
 backupRouter.post('/export', async (req: Request, res: Response) => {
   try {
-    const { trigger = 'manual', clientPayload } = req.body;
-    const result = await executeServerBackup(trigger, clientPayload);
+    const { trigger = 'manual' } = req.body || {};
+    const validTrigger =
+      trigger === 'scheduled' || trigger === 'disaster_recovery_preflight' ? trigger : 'manual';
+    const result = await executeServerBackup(validTrigger);
     if (!result.success) {
       return res.status(500).json({ success: false, error: result.error });
     }
-    res.json({
+    return res.json({
       success: true,
       entry: result.entry,
       jsonString: result.jsonString,
-      message: 'Backup de recuperação gerado com sucesso!',
+      message: 'Backup oficial do PostgreSQL gerado e salvo com sucesso!',
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message || 'Erro ao exportar backup' });
+    return handleRouterError(res, err, 'Erro ao exportar backup do PostgreSQL.');
   }
 });
 
 // GET /api/backup/download/:filename
-backupRouter.get('/download/:filename', (req: Request, res: Response) => {
+backupRouter.get('/download/:filename', async (req: Request, res: Response) => {
   try {
     const { filename } = req.params;
-    // Sanitização para evitar path traversal
     const safeFilename = path.basename(filename);
-    const filePath = path.join(BACKUPS_DIR, safeFilename);
 
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ success: false, error: 'Arquivo de backup não encontrado no servidor.' });
+    if (!safeFilename || safeFilename !== filename || !safeFilename.endsWith('.json')) {
+      return res.status(400).json({ success: false, error: 'Nome de arquivo de backup inválido.' });
+    }
+
+    const resolvedDir = path.resolve(BACKUPS_DIR);
+    const resolvedFile = path.resolve(resolvedDir, safeFilename);
+    if (!resolvedFile.startsWith(resolvedDir + path.sep)) {
+      return res.status(400).json({ success: false, error: 'Caminho de download fora do diretório permitido.' });
+    }
+
+    if (fs.existsSync(resolvedFile)) {
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
+      return fs.createReadStream(resolvedFile).pipe(res);
+    }
+
+    // Fallback para o payload persistido no PostgreSQL caso arquivo tenha sido podado do disco
+    const dbBackups = await getBackupsFromDb(true);
+    const found = dbBackups.find((b) => path.basename(b.filename) === safeFilename && b.payload);
+    if (!found) {
+      return res.status(404).json({
+        success: false,
+        error: 'Arquivo de backup não encontrado no servidor ou no PostgreSQL.',
+      });
     }
 
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
-    const fileStream = fs.createReadStream(filePath);
-    fileStream.pipe(res);
+    return res.send(JSON.stringify(found.payload, null, 2));
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message || 'Erro ao baixar arquivo' });
+    return handleRouterError(res, err, 'Erro ao baixar arquivo de backup.');
   }
 });
 
 // POST /api/backup/verify
 backupRouter.post('/verify', (req: Request, res: Response) => {
   try {
-    const { jsonString } = req.body;
+    const { jsonString } = req.body || {};
     if (!jsonString) {
-      return res.status(400).json({ success: false, valid: false, errors: ['Nenhum conteúdo fornecido.'] });
+      return res
+        .status(400)
+        .json({ success: false, valid: false, errors: ['Nenhum conteúdo fornecido.'] });
     }
 
     let parsed: any;
     try {
-      parsed = JSON.parse(jsonString);
+      parsed = typeof jsonString === 'string' ? JSON.parse(jsonString) : jsonString;
     } catch (err: any) {
       return res.json({
         success: true,
@@ -123,11 +154,14 @@ backupRouter.post('/verify', (req: Request, res: Response) => {
 
     const statedChecksum = metadata?.security?.checksumSha256 || '';
     const rawDataJson = JSON.stringify(data || {});
-    const calculatedChecksum = crypto.createHash('sha256').update(rawDataJson + 'mb_personaliza_salt').digest('hex');
+    const calculatedChecksum = crypto
+      .createHash('sha256')
+      .update(rawDataJson + 'mb_personaliza_salt')
+      .digest('hex');
 
-    const checksumMatches = statedChecksum === calculatedChecksum;
+    const checksumMatches = Boolean(statedChecksum) && statedChecksum === calculatedChecksum;
 
-    res.json({
+    return res.json({
       success: true,
       valid: errors.length === 0,
       checksumMatches,
@@ -142,29 +176,68 @@ backupRouter.post('/verify', (req: Request, res: Response) => {
       errors,
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message || 'Erro ao verificar integridade' });
+    return handleRouterError(res, err, 'Erro ao verificar integridade do backup.');
+  }
+});
+
+// POST /api/backup/restore
+backupRouter.post('/restore', async (req: Request, res: Response) => {
+  try {
+    const { jsonString, allowUnverified = false } = req.body || {};
+    if (!jsonString) {
+      return res.status(400).json({ success: false, error: 'Payload de backup ausente.' });
+    }
+
+    let parsed: any;
+    try {
+      parsed = typeof jsonString === 'string' ? JSON.parse(jsonString) : jsonString;
+    } catch (err: any) {
+      return res.status(400).json({ success: false, error: `JSON inválido: ${err.message}` });
+    }
+
+    if (!parsed?.data || typeof parsed.data !== 'object') {
+      return res.status(400).json({ success: false, error: 'Estrutura do arquivo de backup inválida.' });
+    }
+
+    const statedChecksum = parsed?.metadata?.security?.checksumSha256 || '';
+    const calculatedChecksum = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(parsed.data) + 'mb_personaliza_salt')
+      .digest('hex');
+
+    if (!allowUnverified && (!statedChecksum || statedChecksum !== calculatedChecksum)) {
+      return res.status(400).json({
+        success: false,
+        code: 'CHECKSUM_MISMATCH',
+        error: 'Assinatura SHA-256 do backup não confere. Restauração bloqueada por segurança.',
+      });
+    }
+
+    // Backup prévio de segurança antes da restauração transacional
+    const preflight = await executeServerBackup('disaster_recovery_preflight');
+    const restoredCounts = await restoreDatabaseFromBackupPayloadInDb(parsed.data);
+
+    return res.json({
+      success: true,
+      restoredCounts,
+      preflightBackup: preflight.entry,
+      message: 'Restauração transacional no PostgreSQL concluída com sucesso!',
+    });
+  } catch (err: any) {
+    return handleRouterError(res, err, 'Erro ao restaurar backup no PostgreSQL.');
   }
 });
 
 // DELETE /api/backup/:id
-backupRouter.delete('/:id', (req: Request, res: Response) => {
+backupRouter.delete('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const history = getServerBackupHistory();
-    const entry = history.find((h) => h.id === id);
-
-    if (entry) {
-      const filePath = path.join(BACKUPS_DIR, entry.filename);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
+    const removed = await deleteServerBackup(id);
+    if (!removed) {
+      return res.status(404).json({ success: false, error: 'Backup não encontrado.' });
     }
-
-    const updated = history.filter((h) => h.id !== id);
-    saveServerBackupHistory(updated);
-
-    res.json({ success: true, message: 'Registro de backup removido com sucesso.' });
+    return res.json({ success: true, message: 'Registro de backup removido com sucesso do PostgreSQL.' });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message || 'Erro ao excluir backup' });
+    return handleRouterError(res, err, 'Erro ao excluir backup no PostgreSQL.');
   }
 });

@@ -5,6 +5,7 @@ import { StrickerStockService } from './StrickerStockService';
 import { StrickerCustomizationService } from './StrickerCustomizationService';
 import { StrickerOrderService } from './StrickerOrderService';
 import { StrickerSyncService } from './StrickerSyncService';
+import { authFetch } from '../authClient';
 
 export class StrickerService {
   public static auth = StrickerAuthService;
@@ -15,6 +16,43 @@ export class StrickerService {
   public static customization = StrickerCustomizationService;
   public static orders = StrickerOrderService;
   public static sync = StrickerSyncService;
+
+  /**
+   * Hidrata configuração, catálogo, tabelas de personalização, pedidos e logs direto do PostgreSQL
+   */
+  public static async hydrateFromServer(): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res = await authFetch('/api/stricker/bootstrap');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        return {
+          success: false,
+          error: data.error || `Erro ao carregar módulo Stricker do PostgreSQL (HTTP ${res.status}).`,
+        };
+      }
+      if (data.config) {
+        StrickerAuthService.setConfigFromServer(data.config);
+      }
+      if (Array.isArray(data.products) && data.products.length > 0) {
+        StrickerProductService.setProductsFromServer(data.products);
+      }
+      if (Array.isArray(data.customizationTables) && data.customizationTables.length > 0) {
+        StrickerCustomizationService.setCustomizationTablesFromServer(data.customizationTables);
+      }
+      if (Array.isArray(data.orders)) {
+        StrickerOrderService.setOrdersFromServer(data.orders);
+      }
+      if (Array.isArray(data.syncLogs) || Array.isArray(data.requestLogs)) {
+        StrickerSyncService.setLogsFromServer(data.syncLogs || [], data.requestLogs || []);
+      }
+      return { success: true };
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err?.message || 'Falha ao conectar com o PostgreSQL no módulo Stricker.',
+      };
+    }
+  }
 
   /**
    * Exporta catálogo da Stricker em formatos de Download Direto (JSON, CSV ou XML)

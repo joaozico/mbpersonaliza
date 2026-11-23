@@ -118,6 +118,15 @@ export const CostPricingModuleView: React.FC<CostPricingModuleViewProps> = ({ cu
     setTestResults(CostPricingService.getStoredTestResults());
   };
 
+  useEffect(() => {
+    CostPricingService.hydrateFromServer().then((res) => {
+      reloadData();
+      if (!res.success && res.error) {
+        setNotification({ type: 'error', message: res.error });
+      }
+    });
+  }, []);
+
   // Checagem de Permissão de Acesso ao Módulo
   const canViewModule =
     currentUser.role === 'admin' ||

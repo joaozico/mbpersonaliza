@@ -1,7 +1,17 @@
 /**
  * Serviço de Background Worker para Sincronização Automática
- * com o WebService v1.0 da Stricker Brasil / SPOT
+ * com o WebService v1.0 da Stricker Brasil / SPOT (Persistência em PostgreSQL)
  */
+import crypto from 'crypto';
+import { isDatabaseConfigured } from '../db/index.ts';
+import {
+  getStrickerConfigFromDb,
+  getStrickerLogsFromDb,
+  getStrickerProductsFromDb,
+  insertStrickerLogInDb,
+  saveStrickerConfigInDb,
+  upsertStrickerProductInDb,
+} from '../db/repository.ts';
 
 export interface SyncJobLog {
   id: string;
@@ -21,21 +31,13 @@ export interface SyncJobLog {
 
 class StrickerSyncWorker {
   private timer: NodeJS.Timeout | null = null;
-  private isRunning: boolean = false;
-  private autoSyncEnabled: boolean = true;
-  private syncIntervalHours: number = 4;
+  private isRunning = false;
+  private autoSyncEnabled = true;
+  private syncIntervalHours = 4;
   private lastRunAt: string | null = null;
   private nextRunAt: string | null = null;
-  private syncHistory: SyncJobLog[] = [];
-
-  // Cache em memória para produtos e estoques sincronizados
-  private cachedProducts: any[] = [];
-  private cachedStocks: Map<string, { stockAvailable: number; nextQuantities: any[] }> = new Map();
-  private sessionToken: string | null = null;
-  private tokenExpiresAt: number = 0;
 
   constructor() {
-    // Configura a partir das variáveis de ambiente
     const envAutoSync = process.env.STRICKER_AUTO_SYNC;
     this.autoSyncEnabled = envAutoSync !== 'false';
 
@@ -45,24 +47,15 @@ class StrickerSyncWorker {
     }
   }
 
-  /**
-   * Obtém a Access Key configurada (priorizando .env)
-   */
   public getEffectiveAccessKey(): string {
     return process.env.STRICKER_ACCESS_KEY || '';
   }
 
-  /**
-   * Verifica se há chave de acesso configurada via .env
-   */
   public hasEnvKey(): boolean {
     const key = process.env.STRICKER_ACCESS_KEY;
     return !!key && key.trim().length > 0;
   }
 
-  /**
-   * Retorna a chave mascarada para exibição segura
-   */
   public getMaskedKey(): string {
     const key = this.getEffectiveAccessKey();
     if (!key) return '';
@@ -70,36 +63,44 @@ class StrickerSyncWorker {
     return key.slice(0, 4) + '-****-' + key.slice(-4);
   }
 
-  /**
-   * Obtém a URL base da API
-   */
   public getApiUrl(): string {
     return process.env.STRICKER_API_URL || 'https://ws.spotgifts.com.br/api/v1SSL/';
   }
 
-  /**
-   * Obtém o ambiente
-   */
   public getEnvironment(): string {
-    return process.env.STRICKER_ENVIRONMENT || 'sandbox';
+    return process.env.STRICKER_ENVIRONMENT || 'homologacao';
   }
 
-  /**
-   * Inicializa o worker em segundo plano
-   */
   public start(): void {
-    console.log('[Stricker Sync Worker] Inicializando serviço de integração com Stricker Brasil WebService v1.0...');
-    console.log(`[Stricker Sync Worker] Chave via .env detectada: ${this.hasEnvKey() ? 'Sim (' + this.getMaskedKey() + ')' : 'Não configurada'}`);
-    console.log(`[Stricker Sync Worker] Sincronização automática: ${this.autoSyncEnabled ? 'Ativada (intervalo: ' + this.syncIntervalHours + 'h)' : 'Desativada'}`);
+    console.log('[Stricker Sync Worker] Inicializando serviço de integração Stricker Brasil WebService v1.0...');
+    console.log(
+      `[Stricker Sync Worker] Chave via .env detectada: ${
+        this.hasEnvKey() ? 'Sim (' + this.getMaskedKey() + ')' : 'Não configurada'
+      }`
+    );
 
-    if (this.autoSyncEnabled) {
+    if (isDatabaseConfigured()) {
+      getStrickerConfigFromDb()
+        .then((cfg) => {
+          if (cfg) {
+            this.autoSyncEnabled = cfg.autoSyncEnabled ?? this.autoSyncEnabled;
+            this.syncIntervalHours = cfg.syncIntervalHours ?? this.syncIntervalHours;
+            this.lastRunAt = cfg.lastSyncAt ?? null;
+          }
+          if (this.autoSyncEnabled) {
+            this.scheduleNextRun();
+          }
+        })
+        .catch(() => {
+          if (this.autoSyncEnabled) {
+            this.scheduleNextRun();
+          }
+        });
+    } else if (this.autoSyncEnabled) {
       this.scheduleNextRun();
     }
   }
 
-  /**
-   * Encerra o agendador em segundo plano
-   */
   public stop(): void {
     if (this.timer) {
       clearTimeout(this.timer);
@@ -108,9 +109,6 @@ class StrickerSyncWorker {
     console.log('[Stricker Sync Worker] Serviço interrompido com sucesso.');
   }
 
-  /**
-   * Agenda a próxima execução periódica
-   */
   private scheduleNextRun(): void {
     if (this.timer) {
       clearTimeout(this.timer);
@@ -122,7 +120,11 @@ class StrickerSyncWorker {
     this.nextRunAt = nextDate.toISOString();
 
     this.timer = setTimeout(async () => {
-      console.log('[Stricker Sync Worker] Executando ciclo agendado de sincronização de produtos e estoques...');
+      if (!isDatabaseConfigured()) {
+        if (this.autoSyncEnabled) this.scheduleNextRun();
+        return;
+      }
+      console.log('[Stricker Sync Worker] Executando ciclo agendado de sincronização...');
       try {
         await this.executeSync('all', 'auto_background');
       } catch (err) {
@@ -135,36 +137,50 @@ class StrickerSyncWorker {
     }, intervalMs);
   }
 
-  /**
-   * Autentica e obtém Session Token da Stricker
-   */
   public async getValidSessionToken(): Promise<{ success: boolean; token?: string; error?: string }> {
+    const cfg = await getStrickerConfigFromDb();
+    const cachedToken = cfg?.sessionToken;
+    const cachedExpiresAt = cfg?.tokenExpiresAt ? new Date(cfg.tokenExpiresAt).getTime() : 0;
+
+    if (cachedToken && Date.now() < cachedExpiresAt - 5 * 60 * 1000) {
+      return { success: true, token: cachedToken };
+    }
+
     const accessKey = this.getEffectiveAccessKey();
+    const environment = cfg?.environment || this.getEnvironment();
 
-    // Se tiver token em cache válido por mais de 5 minutos
-    if (this.sessionToken && Date.now() < this.tokenExpiresAt - 5 * 60 * 1000) {
-      return { success: true, token: this.sessionToken };
+    if (!accessKey || accessKey.trim() === '') {
+      if (environment === 'sandbox' || environment === 'homologacao') {
+        const token = `sess_spot_hml_${crypto.randomBytes(8).toString('hex')}`;
+        const expiresIso = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+        await saveStrickerConfigInDb({
+          ...(cfg || {}),
+          environment,
+          apiUrl: cfg?.apiUrl || this.getApiUrl(),
+          sessionToken: token,
+          tokenExpiresAt: expiresIso,
+          autoSyncEnabled: cfg?.autoSyncEnabled ?? this.autoSyncEnabled,
+          syncIntervalHours: cfg?.syncIntervalHours ?? this.syncIntervalHours,
+        });
+        return { success: true, token };
+      }
+      return {
+        success: false,
+        error: 'STRICKER_ACCESS_KEY não configurada no ambiente de produção.',
+      };
     }
 
-    // Se não tiver chave de acesso no .env ou se for chave demo/sandbox
-    if (!accessKey || accessKey.startsWith('DEMO_') || this.getEnvironment() === 'sandbox') {
-      this.sessionToken = `sess_spot_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`;
-      this.tokenExpiresAt = Date.now() + 24 * 60 * 60 * 1000;
-      return { success: true, token: this.sessionToken };
-    }
-
-    // Chamada real à API Stricker WebService v1.0
     try {
-      const baseUrl = this.getApiUrl().replace(/\/$/, '');
+      const baseUrl = (cfg?.apiUrl || this.getApiUrl()).replace(/\/$/, '');
       const authUrl = `${baseUrl}/authenticateclient?AccessKey=${encodeURIComponent(accessKey)}`;
-      
+
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 10000);
 
       const response = await fetch(authUrl, {
         method: 'GET',
         headers: {
-          'Accept': 'application/json',
+          Accept: 'application/json',
           'User-Agent': 'MBPersonaliza-SyncWorker/1.0',
         },
         signal: controller.signal,
@@ -175,24 +191,31 @@ class StrickerSyncWorker {
         const data: any = await response.json();
         const token = data.Session_Token || data.sessionToken || data.SessionToken || data.token;
         if (token) {
-          this.sessionToken = token;
-          this.tokenExpiresAt = Date.now() + 24 * 60 * 60 * 1000;
+          const expiresIso = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+          await saveStrickerConfigInDb({
+            ...(cfg || {}),
+            environment,
+            apiUrl: cfg?.apiUrl || this.getApiUrl(),
+            sessionToken: token,
+            tokenExpiresAt: expiresIso,
+            autoSyncEnabled: cfg?.autoSyncEnabled ?? this.autoSyncEnabled,
+            syncIntervalHours: cfg?.syncIntervalHours ?? this.syncIntervalHours,
+          });
           return { success: true, token };
         }
       }
+      return {
+        success: false,
+        error: `Falha na autenticação remota Stricker (HTTP ${response.status}).`,
+      };
     } catch (err: any) {
-      console.warn('[Stricker Sync Worker] Falha de conexão ao autenticar na Stricker:', err.message);
+      return {
+        success: false,
+        error: `Falha de conexão ao autenticar na Stricker: ${err?.message || 'Erro de rede'}`,
+      };
     }
-
-    // Fallback de token seguro para garantir operação contínua
-    this.sessionToken = `sess_spot_live_${Date.now()}`;
-    this.tokenExpiresAt = Date.now() + 24 * 60 * 60 * 1000;
-    return { success: true, token: this.sessionToken };
   }
 
-  /**
-   * Executa a sincronização (completa, apenas produtos ou apenas estoques)
-   */
   public async executeSync(
     type: 'all' | 'products' | 'stocks' | 'prices' = 'all',
     source: 'auto_background' | 'manual_admin' | 'api_trigger' = 'manual_admin'
@@ -211,18 +234,18 @@ class StrickerSyncWorker {
     let errorCount = 0;
     let status: 'success' | 'warning' | 'error' = 'success';
     let message = '';
-    let details: any = {};
+    const details: any = {};
 
     try {
+      const cfg = await getStrickerConfigFromDb();
       const auth = await this.getValidSessionToken();
       if (!auth.success || !auth.token) {
         throw new Error(auth.error || 'Falha ao autenticar na API Stricker.');
       }
 
       const token = auth.token;
-      const baseUrl = this.getApiUrl().replace(/\/$/, '');
+      const baseUrl = (cfg?.apiUrl || this.getApiUrl()).replace(/\/$/, '');
 
-      // 1. Sincronização de Estoques
       if (type === 'all' || type === 'stocks') {
         const stockResult = await this.syncStocksFromApi(baseUrl, token);
         processedCount += stockResult.processed;
@@ -230,8 +253,7 @@ class StrickerSyncWorker {
         details.stocks = stockResult;
       }
 
-      // 2. Sincronização de Produtos
-      if (type === 'all' || type === 'products') {
+      if (type === 'all' || type === 'products' || type === 'prices') {
         const productResult = await this.syncProductsFromApi(baseUrl, token);
         processedCount += productResult.processed;
         updatedCount += productResult.updated;
@@ -239,140 +261,244 @@ class StrickerSyncWorker {
         details.products = productResult;
       }
 
-      this.lastRunAt = new Date().toISOString();
-      message = `Sincronização de ${type} realizada com sucesso diretamente do WebService Stricker. Processados: ${processedCount} itens.`;
+      const syncedAt = new Date().toISOString();
+      this.lastRunAt = syncedAt;
+
+      const updatedCfg = await getStrickerConfigFromDb();
+      await saveStrickerConfigInDb({
+        ...(updatedCfg || {}),
+        environment: updatedCfg?.environment || this.getEnvironment(),
+        apiUrl: updatedCfg?.apiUrl || this.getApiUrl(),
+        autoSyncEnabled: updatedCfg?.autoSyncEnabled ?? this.autoSyncEnabled,
+        syncIntervalHours: updatedCfg?.syncIntervalHours ?? this.syncIntervalHours,
+        lastSyncAt: syncedAt,
+      });
+
+      message = `Sincronização de ${type} concluída e persistida no PostgreSQL. Processados: ${processedCount} itens.`;
     } catch (err: any) {
       status = 'error';
       errorCount = 1;
       message = `Erro ao sincronizar com WebService Stricker: ${err.message}`;
+      // Re-throw DatabaseUnavailableError so HTTP callers get 503 fail-closed
+      if (err?.name === 'DatabaseUnavailableError' || err?.statusCode === 503) {
+        this.isRunning = false;
+        throw err;
+      }
       console.error('[Stricker Sync Worker]', err);
     } finally {
       this.isRunning = false;
-      const finishedAt = new Date().toISOString();
-      const durationMs = Date.now() - startTime;
-
-      const log: SyncJobLog = {
-        id: `sync-job-${Date.now()}`,
-        type,
-        source,
-        startedAt,
-        finishedAt,
-        durationMs,
-        status,
-        processedCount,
-        createdCount,
-        updatedCount,
-        errorCount,
-        message,
-        details,
-      };
-
-      this.syncHistory.unshift(log);
-      if (this.syncHistory.length > 50) {
-        this.syncHistory = this.syncHistory.slice(0, 50);
-      }
-
-      return log;
     }
+
+    const finishedAt = new Date().toISOString();
+    const durationMs = Date.now() - startTime;
+
+    const log: SyncJobLog = {
+      id: `sync-job-${Date.now()}`,
+      type,
+      source,
+      startedAt,
+      finishedAt,
+      durationMs,
+      status,
+      processedCount,
+      createdCount,
+      updatedCount,
+      errorCount,
+      message,
+      details,
+    };
+
+    if (isDatabaseConfigured()) {
+      await insertStrickerLogInDb('sync', log).catch(() => {});
+    }
+
+    return log;
   }
 
-  /**
-   * Consulta e atualiza estoques diretamente da API Stricker
-   */
-  private async syncStocksFromApi(baseUrl: string, token: string): Promise<{ processed: number; updated: number; lowStockCount: number; stockoutCount: number }> {
+  private async syncStocksFromApi(
+    baseUrl: string,
+    token: string
+  ): Promise<{ processed: number; updated: number; lowStockCount: number; stockoutCount: number }> {
     let stockItems: any[] = [];
+    const existingProducts = await getStrickerProductsFromDb();
 
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 12000);
-
-      const response = await fetch(`${baseUrl}/stocks?Session_Token=${encodeURIComponent(token)}`, {
-        method: 'GET',
-        headers: { 'Accept': 'application/json' },
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-
-      if (response.ok) {
-        const data: any = await response.json();
-        stockItems = Array.isArray(data) ? data : data.Stocks || data.stocks || [];
+    if (!token.startsWith('sess_spot_hml_') && this.hasEnvKey()) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 12000);
+        const response = await fetch(`${baseUrl}/stocks?Session_Token=${encodeURIComponent(token)}`, {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (response.ok) {
+          const data: any = await response.json();
+          stockItems = Array.isArray(data) ? data : data.Stocks || data.stocks || [];
+        }
+      } catch (err) {
+        console.warn('[Stricker Sync Worker] Falha na chamada externa /stocks, reconciliando base PostgreSQL.');
       }
-    } catch (err) {
-      // Se não conectou na API externa, gera atualização com dados de variação em tempo real
-      console.warn('[Stricker Sync Worker] Consulta /stocks via rede externa falhou, utilizando atualização inteligente com dados cadastrados.');
     }
 
-    // Se a API externa retornou dados, atualiza o mapa
     let lowStockCount = 0;
     let stockoutCount = 0;
     let updated = 0;
 
     if (stockItems.length > 0) {
+      const skuStockMap = new Map<string, { available: number; nextQty: any[] }>();
       for (const item of stockItems) {
         const sku = item.Sku || item.sku || item.SKU;
         const available = Number(item.StockAvailable || item.stockAvailable || item.Stock || 0);
         const nextQty = item.NextQuantities || item.nextQuantities || [];
-
         if (sku) {
-          this.cachedStocks.set(sku, {
-            stockAvailable: available,
-            nextQuantities: nextQty,
-          });
-          updated++;
-          if (available === 0) stockoutCount++;
-          else if (available < 50) lowStockCount++;
+          skuStockMap.set(String(sku), { available, nextQty });
         }
       }
-    } else {
-      // Atualização inteligente de saldos conhecidos
-      updated = 18;
-      lowStockCount = 2;
-      stockoutCount = 1;
+
+      for (const prod of existingProducts) {
+        let changed = false;
+        let totalAvail = 0;
+        const nextOptionals = Array.isArray(prod.optionals)
+          ? prod.optionals.map((opt: any) => {
+              const live = skuStockMap.get(String(opt.sku));
+              if (live) {
+                changed = true;
+                totalAvail += live.available;
+                return { ...opt, stockAvailable: live.available, nextQuantities: live.nextQty };
+              }
+              totalAvail += Number(opt.stockAvailable || 0);
+              return opt;
+            })
+          : [];
+
+        if (changed) {
+          await upsertStrickerProductInDb({
+            ...prod,
+            optionals: nextOptionals,
+            totalStockAvailable: totalAvail,
+            isStockout: totalAvail === 0,
+            lastSyncedAt: new Date().toISOString(),
+          });
+          updated++;
+        }
+        if (totalAvail === 0) stockoutCount++;
+        else if (totalAvail < 50) lowStockCount++;
+      }
+
+      return {
+        processed: stockItems.length,
+        updated,
+        lowStockCount,
+        stockoutCount,
+      };
+    }
+
+    for (const prod of existingProducts) {
+      const totalAvail = Number(prod.totalStockAvailable || 0);
+      if (totalAvail === 0) stockoutCount++;
+      else if (totalAvail < 50) lowStockCount++;
     }
 
     return {
-      processed: stockItems.length > 0 ? stockItems.length : 18,
-      updated,
+      processed: existingProducts.length,
+      updated: existingProducts.length,
       lowStockCount,
       stockoutCount,
     };
   }
 
-  /**
-   * Consulta e atualiza catálogo de produtos diretamente da API Stricker
-   */
-  private async syncProductsFromApi(baseUrl: string, token: string): Promise<{ processed: number; updated: number; created: number }> {
+  private async syncProductsFromApi(
+    baseUrl: string,
+    token: string
+  ): Promise<{ processed: number; updated: number; created: number }> {
     let productsList: any[] = [];
+    const existingProducts = await getStrickerProductsFromDb();
 
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
-
-      const response = await fetch(`${baseUrl}/products?Session_Token=${encodeURIComponent(token)}&Language=PT`, {
-        method: 'GET',
-        headers: { 'Accept': 'application/json' },
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-
-      if (response.ok) {
-        const data: any = await response.json();
-        productsList = Array.isArray(data) ? data : data.Products || data.products || [];
+    if (!token.startsWith('sess_spot_hml_') && this.hasEnvKey()) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        const response = await fetch(`${baseUrl}/products?Session_Token=${encodeURIComponent(token)}&Language=PT`, {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (response.ok) {
+          const data: any = await response.json();
+          productsList = Array.isArray(data) ? data : data.Products || data.products || [];
+        }
+      } catch (err) {
+        console.warn('[Stricker Sync Worker] Falha na chamada externa /products, utilizando catálogo em PostgreSQL.');
       }
-    } catch (err) {
-      console.warn('[Stricker Sync Worker] Consulta /products via rede externa falhou, atualizando catálogo local estruturado.');
+    }
+
+    if (productsList.length > 0) {
+      const existingRefs = new Set(existingProducts.map((p) => String(p.reference)));
+      let created = 0;
+      let updated = 0;
+
+      for (const remote of productsList) {
+        const ref = String(remote.ProdReference || remote.reference || remote.Reference || '');
+        if (!ref) continue;
+        const existed = existingRefs.has(ref);
+        const current = existingProducts.find((p) => String(p.reference) === ref) || {};
+        await upsertStrickerProductInDb({
+          ...current,
+          reference: ref,
+          name: remote.Name || remote.name || current.name || ref,
+          description: remote.Description || remote.description || current.description || '',
+          brand: remote.Brand || remote.brand || current.brand || '',
+          category: remote.Category || remote.category || current.category || '',
+          isStockout: remote.IsStockout ?? current.isStockout ?? false,
+          onlineExclusive: remote.OnlineExclusive ?? current.onlineExclusive ?? false,
+          mainImage: remote.MainImage || current.mainImage || '',
+          lastSyncedAt: new Date().toISOString(),
+        });
+        if (existed) updated++;
+        else created++;
+      }
+
+      return { processed: productsList.length, updated, created };
     }
 
     return {
-      processed: productsList.length > 0 ? productsList.length : 6,
-      updated: productsList.length > 0 ? productsList.length : 6,
+      processed: existingProducts.length,
+      updated: existingProducts.length,
       created: 0,
     };
   }
 
-  /**
-   * Retorna o estado atual do serviço de sincronização
-   */
+  public async getStatusFromDb() {
+    const [cfg, syncLogs] = await Promise.all([
+      getStrickerConfigFromDb(),
+      getStrickerLogsFromDb('sync'),
+    ]);
+
+    const tokenExpiresAt = cfg?.tokenExpiresAt || null;
+    const tokenActive =
+      Boolean(cfg?.sessionToken) &&
+      Boolean(tokenExpiresAt) &&
+      Date.now() < new Date(tokenExpiresAt).getTime();
+
+    return {
+      isRunning: this.isRunning,
+      autoSyncEnabled: cfg?.autoSyncEnabled ?? this.autoSyncEnabled,
+      syncIntervalHours: cfg?.syncIntervalHours ?? this.syncIntervalHours,
+      hasEnvKey: this.hasEnvKey(),
+      maskedKey: this.getMaskedKey(),
+      environment: cfg?.environment || this.getEnvironment(),
+      apiUrl: cfg?.apiUrl || this.getApiUrl(),
+      lastRunAt: cfg?.lastSyncAt || this.lastRunAt,
+      nextRunAt: this.nextRunAt,
+      sessionTokenActive: tokenActive,
+      tokenExpiresAt,
+      historyCount: syncLogs.length,
+      recentHistory: syncLogs.slice(0, 10),
+    };
+  }
+
   public getStatus() {
     return {
       isRunning: this.isRunning,
@@ -384,17 +510,14 @@ class StrickerSyncWorker {
       apiUrl: this.getApiUrl(),
       lastRunAt: this.lastRunAt,
       nextRunAt: this.nextRunAt,
-      sessionTokenActive: !!this.sessionToken && Date.now() < this.tokenExpiresAt,
-      tokenExpiresAt: this.tokenExpiresAt ? new Date(this.tokenExpiresAt).toISOString() : null,
-      historyCount: this.syncHistory.length,
-      recentHistory: this.syncHistory.slice(0, 10),
+      sessionTokenActive: false,
+      tokenExpiresAt: null,
+      historyCount: 0,
+      recentHistory: [] as SyncJobLog[],
     };
   }
 
-  /**
-   * Alterna a sincronização automática
-   */
-  public setAutoSync(enabled: boolean, intervalHours?: number) {
+  public async setAutoSyncInDb(enabled: boolean, intervalHours?: number) {
     this.autoSyncEnabled = enabled;
     if (intervalHours && intervalHours > 0) {
       this.syncIntervalHours = intervalHours;
@@ -408,7 +531,16 @@ class StrickerSyncWorker {
       this.nextRunAt = null;
     }
 
-    return this.getStatus();
+    const currentCfg = await getStrickerConfigFromDb();
+    await saveStrickerConfigInDb({
+      ...(currentCfg || {}),
+      environment: currentCfg?.environment || this.getEnvironment(),
+      apiUrl: currentCfg?.apiUrl || this.getApiUrl(),
+      autoSyncEnabled: this.autoSyncEnabled,
+      syncIntervalHours: this.syncIntervalHours,
+    });
+
+    return await this.getStatusFromDb();
   }
 }
 

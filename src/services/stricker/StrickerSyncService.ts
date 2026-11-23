@@ -12,81 +12,93 @@ import { StrickerProductService } from './StrickerProductService';
 import { StrickerStockService } from './StrickerStockService';
 import { authFetch } from '../authClient';
 
-const STORAGE_KEYS = {
-  SYNC_LOGS: 'mb_stricker_sync_logs_v1',
-  REQUEST_LOGS: 'mb_stricker_request_logs_v1',
-};
+let memorySyncLogs: StrickerSyncLog[] | null = null;
+let memoryRequestLogs: StrickerRequestLog[] | null = null;
 
 export class StrickerSyncService {
   private static isSyncing: boolean = false;
 
   /**
-   * Obtém histórico de logs de sincronização
+   * Atualiza cache em memória de logs a partir do PostgreSQL
    */
-  public static getSyncLogs(): StrickerSyncLog[] {
-    try {
-      const data = localStorage.getItem(STORAGE_KEYS.SYNC_LOGS);
-      if (data) {
-        const parsed = JSON.parse(data);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch (e) {
-      console.error('Erro ao ler logs de sincronização:', e);
+  public static setLogsFromServer(
+    syncLogs: StrickerSyncLog[],
+    requestLogs: StrickerRequestLog[]
+  ): void {
+    if (Array.isArray(syncLogs)) {
+      memorySyncLogs = syncLogs.slice(0, 100);
     }
-    return INITIAL_STRICKER_SYNC_LOGS;
+    if (Array.isArray(requestLogs)) {
+      memoryRequestLogs = requestLogs.slice(0, 100);
+    }
+    window.dispatchEvent(new Event('mb_stricker_logs_updated'));
   }
 
   /**
-   * Registra um novo log de sincronização
+   * Obtém histórico de logs de sincronização
+   */
+  public static getSyncLogs(): StrickerSyncLog[] {
+    if (memorySyncLogs !== null) {
+      return [...memorySyncLogs];
+    }
+    return [...INITIAL_STRICKER_SYNC_LOGS];
+  }
+
+  /**
+   * Registra um novo log de sincronização no cache em memória e PostgreSQL
    */
   public static addSyncLog(log: StrickerSyncLog): void {
     const logs = this.getSyncLogs();
     logs.unshift(log);
-    const trimmed = logs.slice(0, 100);
-    try {
-      localStorage.setItem(STORAGE_KEYS.SYNC_LOGS, JSON.stringify(trimmed));
-      window.dispatchEvent(new Event('mb_stricker_logs_updated'));
-    } catch (e) {
-      console.error('Erro ao salvar log de sincronização:', e);
-    }
+    memorySyncLogs = logs.slice(0, 100);
+    window.dispatchEvent(new Event('mb_stricker_logs_updated'));
+
+    authFetch('/api/stricker/logs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ logType: 'sync', log }),
+    }).catch((err) => {
+      console.error('Erro ao gravar sync log Stricker no PostgreSQL:', err);
+    });
   }
 
   /**
    * Obtém histórico de requisições à API
    */
   public static getRequestLogs(): StrickerRequestLog[] {
-    try {
-      const data = localStorage.getItem(STORAGE_KEYS.REQUEST_LOGS);
-      if (data) {
-        const parsed = JSON.parse(data);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch (e) {
-      console.error('Erro ao ler logs de requisição:', e);
+    if (memoryRequestLogs !== null) {
+      return [...memoryRequestLogs];
     }
-    return INITIAL_STRICKER_REQUEST_LOGS;
+    return [...INITIAL_STRICKER_REQUEST_LOGS];
   }
 
   /**
-   * Registra log de requisição protegendo credenciais (mascarando tokens e chaves)
+   * Registra log de requisição protegendo credenciais e persistindo no PostgreSQL
    */
   public static addRequestLog(reqLog: StrickerRequestLog): void {
     const logs = this.getRequestLogs();
-    const safePayload = reqLog.safePayload ? JSON.parse(JSON.stringify(reqLog.safePayload)) : undefined;
-    if (safePayload && safePayload.token) safePayload.token = 'sess_spot_***';
-    if (safePayload && safePayload.accessKey) safePayload.accessKey = 'stricker_sec_***';
+    const safePayload = reqLog.safePayload
+      ? JSON.parse(JSON.stringify(reqLog.safePayload))
+      : undefined;
+    if (safePayload && safePayload.token) safePayload.token = '***';
+    if (safePayload && safePayload.accessKey) safePayload.accessKey = '***';
 
-    logs.unshift({
+    const sanitizedLog: StrickerRequestLog = {
       ...reqLog,
       safePayload,
+    };
+
+    logs.unshift(sanitizedLog);
+    memoryRequestLogs = logs.slice(0, 100);
+    window.dispatchEvent(new Event('mb_stricker_logs_updated'));
+
+    authFetch('/api/stricker/logs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ logType: 'request', log: sanitizedLog }),
+    }).catch((err) => {
+      console.error('Erro ao gravar request log Stricker no PostgreSQL:', err);
     });
-    const trimmed = logs.slice(0, 100);
-    try {
-      localStorage.setItem(STORAGE_KEYS.REQUEST_LOGS, JSON.stringify(trimmed));
-      window.dispatchEvent(new Event('mb_stricker_logs_updated'));
-    } catch (e) {
-      console.error('Erro ao salvar log de requisição:', e);
-    }
   }
 
   /**
@@ -119,13 +131,11 @@ export class StrickerSyncService {
     const startTime = Date.now();
 
     try {
-      // 1. Garante autenticação válida
       const auth = await StrickerAuthService.getValidSessionToken();
       if (!auth.success) {
         throw new Error(auth.error || 'Falha de autenticação com a Stricker.');
       }
 
-      // 2. Chama rota backend de sincronização
       const response = await authFetch('/api/stricker/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -136,19 +146,18 @@ export class StrickerSyncService {
       const durationMs = Date.now() - startTime;
       const finishedAt = new Date().toISOString();
 
-      if (data.success) {
-        // Atualiza datas de última sincronização
+      if (response.ok && data.success) {
         const updateFields: any = {
           lastSyncAt: finishedAt,
         };
         if (type === 'all' || type === 'products') updateFields.lastProductsSyncDate = finishedAt;
         if (type === 'all' || type === 'stocks') updateFields.lastStockSyncDate = finishedAt;
         if (type === 'all' || type === 'prices') updateFields.lastPricesSyncDate = finishedAt;
-        if (type === 'all' || type === 'customizations') updateFields.lastCustomizationsSyncDate = finishedAt;
+        if (type === 'all' || type === 'customizations')
+          updateFields.lastCustomizationsSyncDate = finishedAt;
         if (type === 'all' || type === 'orders') updateFields.lastOrdersSyncDate = finishedAt;
         StrickerAuthService.saveConfig(updateFields);
 
-        // 3. Atualiza estoques no frontend caso envolva estoques
         if (type === 'all' || type === 'stocks') {
           try {
             const stockRes = await authFetch('/api/stricker/stocks');
@@ -174,7 +183,6 @@ export class StrickerSyncService {
           }
         }
 
-        // 4. Se produtos foram atualizados, sincroniza todos os produtos com o catálogo da loja
         const config = StrickerAuthService.getConfig();
         StrickerProductService.syncAllPublishedProductsToStore(config.autoPublishToStore);
 
@@ -190,14 +198,16 @@ export class StrickerSyncService {
           skippedCount: data.skippedCount || 0,
           errorCount: data.errorCount || 0,
           status: data.errorCount > 0 ? 'warning' : 'success',
-          details: data.details || `Sincronização de ${type} concluída diretamente do WebService Stricker / SPOT.`,
+          details:
+            data.details ||
+            `Sincronização de ${type} concluída diretamente do WebService Stricker / SPOT.`,
         };
 
         this.addSyncLog(log);
         return log;
-      } else {
-        throw new Error(data.error || 'Erro retornado pela sincronização.');
       }
+
+      throw new Error(data.error || 'Erro retornado pela sincronização.');
     } catch (err: any) {
       const durationMs = Date.now() - startTime;
       const finishedAt = new Date().toISOString();

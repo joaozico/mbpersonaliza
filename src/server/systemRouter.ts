@@ -1,7 +1,10 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import {
+  getAllSystemSettingsFromDb,
   getPriceVisibilityFromDb,
+  getSystemSettingsFromDb,
   savePriceVisibilityToDb,
+  saveSystemSettingsToDb,
 } from '../db/repository.ts';
 import {
   hasServerPermission,
@@ -9,6 +12,7 @@ import {
   requirePermission,
 } from '../middleware/auth.ts';
 import { normalizePriceVisibilityMode } from './authUtils.ts';
+import { handleRouterError, isDbUnavailableError } from './dbErrorHelper.ts';
 
 export interface ServerMaintenanceState {
   enabled: boolean;
@@ -29,7 +33,7 @@ export interface ServerMaintenanceState {
   };
 }
 
-let currentMaintenanceState: ServerMaintenanceState = {
+const DEFAULT_MAINTENANCE_STATE: ServerMaintenanceState = {
   enabled: false,
   title: 'Sistema em Manutenção',
   headline: 'Estamos realizando melhorias no sistema.',
@@ -43,29 +47,48 @@ let currentMaintenanceState: ServerMaintenanceState = {
   updatedAt: new Date().toISOString(),
 };
 
+function sanitizeCompanyForPublic(company: any) {
+  if (!company || typeof company !== 'object') return company;
+  const { pixKey: _pk, bankInfo: _bi, ...safe } = company;
+  return safe;
+}
+
 export const systemRouter = Router();
 
-// GET /api/system/maintenance - Public read of maintenance banner state
-systemRouter.get('/maintenance', (_req: Request, res: Response) => {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-  res.json({
-    success: true,
-    maintenance: currentMaintenanceState,
-    serverTime: new Date().toISOString(),
-  });
+// GET /api/system/maintenance - Persisted in PostgreSQL system_settings('maintenance')
+systemRouter.get('/maintenance', async (_req: Request, res: Response) => {
+  try {
+    const saved = await getSystemSettingsFromDb<Partial<ServerMaintenanceState>>('maintenance');
+    const maintenance: ServerMaintenanceState = {
+      ...DEFAULT_MAINTENANCE_STATE,
+      ...(saved || {}),
+      enabled: Boolean(saved?.enabled),
+    };
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    return res.json({
+      success: true,
+      maintenance,
+      serverTime: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    return handleRouterError(res, err, 'Erro ao consultar estado de manutenção no PostgreSQL.');
+  }
 });
 
-// POST /api/system/maintenance - Server-verified permission only (no header/IP bypass)
+// POST /api/system/maintenance - Server-verified permission only, persisted in PostgreSQL
 systemRouter.post(
   '/maintenance',
   requirePermission('canManageMaintenanceMode'),
-  (req: Request, res: Response) => {
-    const payload = req.body;
-    if (typeof payload === 'object' && payload !== null) {
+  async (req: Request, res: Response) => {
+    try {
+      const payload = req.body || {};
       const actor = req.authUser!;
-      currentMaintenanceState = {
-        ...currentMaintenanceState,
-        ...payload,
+      const existing = await getSystemSettingsFromDb<Partial<ServerMaintenanceState>>('maintenance');
+
+      const nextState: ServerMaintenanceState = {
+        ...DEFAULT_MAINTENANCE_STATE,
+        ...(existing || {}),
+        ...(typeof payload === 'object' && payload !== null ? payload : {}),
         enabled: Boolean(payload.enabled),
         updatedAt: new Date().toISOString(),
         updatedBy: {
@@ -75,24 +98,53 @@ systemRouter.post(
           role: actor.role,
         },
       };
+
+      await saveSystemSettingsToDb('maintenance', nextState);
+
+      console.log(
+        `[SERVER MAINTENANCE] Modo de manutenção ${
+          nextState.enabled ? 'ATIVADO' : 'DESATIVADO'
+        } por ${actor.email} às ${nextState.updatedAt}`
+      );
+
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      return res.json({
+        success: true,
+        maintenance: nextState,
+        message: nextState.enabled
+          ? 'Modo de manutenção ativado com sucesso no servidor.'
+          : 'Modo de manutenção desativado com sucesso no servidor.',
+      });
+    } catch (err: any) {
+      return handleRouterError(res, err, 'Erro ao salvar modo de manutenção no PostgreSQL.');
     }
-
-    console.log(
-      `[SERVER MAINTENANCE] Modo de manutenção ${
-        currentMaintenanceState.enabled ? 'ATIVADO' : 'DESATIVADO'
-      } por ${req.authUser?.email} às ${currentMaintenanceState.updatedAt}`
-    );
-
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-    res.json({
-      success: true,
-      maintenance: currentMaintenanceState,
-      message: currentMaintenanceState.enabled
-        ? 'Modo de manutenção ativado com sucesso no servidor.'
-        : 'Modo de manutenção desativado com sucesso no servidor.',
-    });
   }
 );
+
+// GET /api/system/settings - Public storefront safe settings summary from PostgreSQL
+systemRouter.get('/settings', async (_req: Request, res: Response) => {
+  try {
+    const allSettings = await getAllSystemSettingsFromDb();
+    const priceVisibility = normalizePriceVisibilityMode(allSettings.price_visibility);
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    return res.json({
+      success: true,
+      settings: {
+        company: sanitizeCompanyForPublic(allSettings.company),
+        layout: allSettings.layout || null,
+        delivery: allSettings.delivery || null,
+        maintenance: {
+          ...DEFAULT_MAINTENANCE_STATE,
+          ...(allSettings.maintenance || {}),
+          enabled: Boolean(allSettings.maintenance?.enabled),
+        },
+        priceVisibility,
+      },
+    });
+  } catch (err: any) {
+    return handleRouterError(res, err, 'Erro ao consultar configurações públicas no PostgreSQL.');
+  }
+});
 
 // GET /api/system/price-visibility - Current product price visibility mode
 systemRouter.get('/price-visibility', async (_req: Request, res: Response) => {
@@ -105,10 +157,7 @@ systemRouter.get('/price-visibility', async (_req: Request, res: Response) => {
       priceVisibility: mode,
     });
   } catch (err: any) {
-    return res.status(500).json({
-      success: false,
-      error: err?.message || 'Erro ao consultar visibilidade dos preços.',
-    });
+    return handleRouterError(res, err, 'Erro ao consultar visibilidade dos preços.');
   }
 });
 
@@ -125,11 +174,7 @@ const handleSavePriceVisibility = async (req: Request, res: Response) => {
 
     const mode = normalizePriceVisibilityMode(rawMode);
     const actor = req.authUser!;
-    const saved = await savePriceVisibilityToDb(mode, {
-      id: actor.id,
-      name: actor.name,
-      email: actor.email,
-    });
+    const saved = await savePriceVisibilityToDb(mode, actor.email || actor.name || 'Sistema');
 
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     return res.json({
@@ -143,10 +188,7 @@ const handleSavePriceVisibility = async (req: Request, res: Response) => {
           : 'Configuração salva: preços visíveis para todos os visitantes.',
     });
   } catch (err: any) {
-    return res.status(500).json({
-      success: false,
-      error: err?.message || 'Erro ao salvar visibilidade dos preços.',
-    });
+    return handleRouterError(res, err, 'Erro ao salvar visibilidade dos preços.');
   }
 };
 
@@ -163,18 +205,19 @@ systemRouter.post(
 
 /**
  * Middleware para proteger APIs quando o Modo de Manutenção estiver ativo
- * Usa exclusivamente a sessão autenticada no servidor (req.authUser).
+ * Lê exclusivamente do PostgreSQL e usa a sessão autenticada no servidor (req.authUser).
  */
-export function maintenanceApiMiddleware(req: Request, res: Response, next: NextFunction) {
-  if (!currentMaintenanceState.enabled) {
+export async function maintenanceApiMiddleware(req: Request, res: Response, next: NextFunction) {
+  if (!req.path.startsWith('/api/')) {
     return next();
   }
 
   const isExemptRoute =
-    req.path.startsWith('/api/system/maintenance') ||
-    req.path.startsWith('/api/system/price-visibility') ||
+    req.path.startsWith('/api/system/') ||
     req.path.startsWith('/api/health') ||
-    req.path.startsWith('/api/auth');
+    req.path.startsWith('/api/auth') ||
+    req.path.startsWith('/api/db/status') ||
+    req.path.startsWith('/api/db/vps-preflight');
 
   if (isExemptRoute) {
     return next();
@@ -191,19 +234,27 @@ export function maintenanceApiMiddleware(req: Request, res: Response, next: Next
     return next();
   }
 
-  if (req.path.startsWith('/api/')) {
+  try {
+    const maint = await getSystemSettingsFromDb<Partial<ServerMaintenanceState>>('maintenance');
+    if (!maint || !maint.enabled) {
+      return next();
+    }
+
     res.setHeader('Retry-After', '300');
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     return res.status(503).json({
       error: 'Sistema temporariamente em manutenção para atualizações.',
       maintenance: true,
-      title: currentMaintenanceState.title,
-      headline: currentMaintenanceState.headline,
-      message: currentMaintenanceState.message,
-      returnAt: currentMaintenanceState.returnAt,
+      title: maint.title || DEFAULT_MAINTENANCE_STATE.title,
+      headline: maint.headline || DEFAULT_MAINTENANCE_STATE.headline,
+      message: maint.message || DEFAULT_MAINTENANCE_STATE.message,
+      returnAt: maint.returnAt || '',
       serverTime: new Date().toISOString(),
     });
+  } catch (err) {
+    if (isDbUnavailableError(err)) {
+      return next();
+    }
+    return next();
   }
-
-  next();
 }

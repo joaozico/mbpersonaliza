@@ -12,6 +12,9 @@ import {
   getPermissionsMatrixFromDb,
 } from '../db/repository.ts';
 
+import { INITIAL_PERMISSIONS_MATRIX } from '../data/initialData.ts';
+import { isDbUnavailableError } from '../server/dbErrorHelper.ts';
+
 declare global {
   namespace Express {
     interface Request {
@@ -19,6 +22,7 @@ declare global {
       authTokenHash?: string | null;
       effectivePermissions?: RolePermissions;
       permissionsMatrix?: Record<UserRole, RolePermissions>;
+      dbUnavailable?: boolean;
     }
   }
 }
@@ -41,11 +45,15 @@ export function extractSessionToken(req: Request): string | null {
 }
 
 export async function attachSessionUser(req: Request, _res: Response, next: NextFunction) {
+  req.permissionsMatrix = INITIAL_PERMISSIONS_MATRIX;
+  req.authUser = null;
+  req.authTokenHash = null;
+  req.effectivePermissions = resolveEffectivePermissions(null, INITIAL_PERMISSIONS_MATRIX);
+  req.dbUnavailable = false;
+
   try {
     const matrix = await getPermissionsMatrixFromDb();
     req.permissionsMatrix = matrix;
-    req.authUser = null;
-    req.authTokenHash = null;
     req.effectivePermissions = resolveEffectivePermissions(null, matrix);
 
     const rawToken = extractSessionToken(req);
@@ -69,7 +77,11 @@ export async function attachSessionUser(req: Request, _res: Response, next: Next
     req.effectivePermissions = resolveEffectivePermissions(sanitized, matrix);
     return next();
   } catch (err) {
-    console.warn('[Auth Middleware] Session attach warning:', err);
+    if (isDbUnavailableError(err)) {
+      req.dbUnavailable = true;
+    } else {
+      console.warn('[Auth Middleware] Session attach warning:', err);
+    }
     return next();
   }
 }

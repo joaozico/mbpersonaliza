@@ -15,6 +15,8 @@ import { uploadRouter } from "./src/server/uploadRouter";
 
 import { databaseRouter } from "./src/server/databaseRouter";
 import { authRouter } from "./src/server/authRouter";
+import { analyticsRouter } from "./src/server/analyticsRouter";
+import { isDbUnavailableError } from "./src/server/dbErrorHelper";
 import { attachSessionUser, requirePermission } from "./src/middleware/auth";
 import { seedInitialDataIfEmpty } from "./src/db/repository";
 import { closePool } from "./src/db";
@@ -101,6 +103,9 @@ async function startServer() {
   // Módulo de Cupons de Desconto & Campanhas Promocionais
   app.use("/api/coupons", couponRouter);
 
+  // Analytics & Métricas do Site (PostgreSQL)
+  app.use("/api/analytics", analyticsRouter);
+
   // Stricker / SPOT Webservice API Proxy Routes
   app.use("/api/stricker", strickerRouter);
   // Postman & Official Endpoint Compatibility Aliases
@@ -108,6 +113,21 @@ async function startServer() {
   app.use("/api/v1", strickerRouter);
   app.use("/downloads/v1SSL", strickerRouter);
   app.use("/downloads/v1", strickerRouter);
+
+  // Global API error handler (fail-closed HTTP 503 when PostgreSQL unavailable)
+  app.use("/api", (err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (isDbUnavailableError(err)) {
+      return res.status(503).json({
+        success: false,
+        code: "DB_UNAVAILABLE",
+        error: err?.message || "Banco de dados PostgreSQL indisponível.",
+      });
+    }
+    return res.status(err?.status || 500).json({
+      success: false,
+      error: err?.message || "Erro interno no servidor.",
+    });
+  });
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

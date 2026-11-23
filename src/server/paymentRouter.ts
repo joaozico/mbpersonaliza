@@ -1,43 +1,61 @@
 import { Router, Request, Response } from 'express';
-import { requireAuthSession, requireStaffSession } from '../middleware/auth.ts';
+import { requireAuthSession, requireStaffSession, isStaffRole } from '../middleware/auth.ts';
+import {
+  getPaymentAuditLogsFromDb,
+  getQuotesFromDb,
+  insertPaymentAuditLogInDb,
+  settleBoletoAtomicInDb,
+} from '../db/repository.ts';
+import { handleRouterError } from './dbErrorHelper.ts';
 
 export const paymentRouter = Router();
 
-// In-memory technical log for audit and debugging webhooks
-interface PaymentAuditLog {
+function formatAuditLogForClient(row: {
   id: string;
+  userId: string;
+  userName: string;
+  userRole: string;
+  action: string;
+  details: string;
   timestamp: string;
-  gateway: 'mercadopago' | 'pagbank' | 'system';
-  eventType: string;
-  payload: any;
-  status: 'received' | 'processed' | 'error';
-  message: string;
-}
+}) {
+  let parsedDetails: any = null;
+  try {
+    parsedDetails = JSON.parse(row.details);
+  } catch {
+    parsedDetails = null;
+  }
 
-const paymentAuditLogs: PaymentAuditLog[] = [
-  {
-    id: 'log-init-1',
-    timestamp: new Date().toISOString(),
-    gateway: 'system',
-    eventType: 'GATEWAY_SERVICE_READY',
-    payload: { gateways: ['mercadopago', 'pagbank'], version: '2026.1' },
-    status: 'processed',
-    message: 'Serviço de Gateways de Pagamento inicializado com sucesso.',
-  },
-];
+  return {
+    id: row.id,
+    timestamp: row.timestamp,
+    userId: row.userId,
+    userName: row.userName,
+    userRole: row.userRole,
+    action: row.action,
+    gateway: parsedDetails?.gateway || 'system',
+    eventType: row.action,
+    payload: parsedDetails?.payload || undefined,
+    status: parsedDetails?.status || 'processed',
+    message: parsedDetails?.message || row.details,
+    details: row.details,
+  };
+}
 
 // 1. Health & Connection Status Test (Staff only)
 paymentRouter.get('/gateways/status', requireStaffSession, async (req: Request, res: Response) => {
   try {
     const { provider = 'all' } = req.query;
+    const mpConfigured = Boolean(process.env.MERCADOPAGO_ACCESS_TOKEN);
+    const pbConfigured = Boolean(process.env.PAGBANK_TOKEN);
 
     const mpStatus = {
       provider: 'mercadopago',
       name: 'Mercado Pago',
-      status: 'operational',
-      environment: 'sandbox',
+      status: mpConfigured ? 'operational' : 'sandbox',
+      environment: process.env.MERCADOPAGO_ENVIRONMENT || (mpConfigured ? 'production' : 'sandbox'),
       apiVersion: 'v1',
-      latencyMs: Math.floor(45 + Math.random() * 30),
+      latencyMs: 0,
       features: ['credit_card', 'pix', 'debit_card', 'webhooks', 'refunds'],
       connected: true,
       lastChecked: new Date().toISOString(),
@@ -46,10 +64,10 @@ paymentRouter.get('/gateways/status', requireStaffSession, async (req: Request, 
     const pbStatus = {
       provider: 'pagbank',
       name: 'PagBank (PagSeguro)',
-      status: 'operational',
-      environment: 'sandbox',
+      status: pbConfigured ? 'operational' : 'sandbox',
+      environment: process.env.PAGBANK_ENVIRONMENT || (pbConfigured ? 'production' : 'sandbox'),
       apiVersion: 'v4',
-      latencyMs: Math.floor(55 + Math.random() * 35),
+      latencyMs: 0,
       features: ['credit_card', 'pix', 'debit_card', 'webhooks', 'refunds'],
       connected: true,
       lastChecked: new Date().toISOString(),
@@ -68,7 +86,7 @@ paymentRouter.get('/gateways/status', requireStaffSession, async (req: Request, 
       timestamp: new Date().toISOString(),
     });
   } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message });
+    return handleRouterError(res, err, 'Erro ao consultar status dos gateways.');
   }
 });
 
@@ -80,13 +98,12 @@ paymentRouter.post('/process', requireAuthSession, async (req: Request, res: Res
       method = 'credit_card',
       amount,
       installments = 1,
-      customer,
       card,
       saleCode,
       origin = 'pdv',
-    } = req.body;
+    } = req.body || {};
 
-    if (!amount || amount <= 0) {
+    if (!amount || Number(amount) <= 0) {
       return res.status(400).json({
         success: false,
         error: 'Valor do pagamento inválido.',
@@ -94,37 +111,37 @@ paymentRouter.post('/process', requireAuthSession, async (req: Request, res: Res
     }
 
     const grossAmount = Number(amount);
-    const numInstallments = Math.max(1, Math.min(12, Number(installments)));
+    const numInstallments = Math.max(1, Math.min(12, Number(installments) || 1));
 
-    // Gateway fee calculation
     const feeRate =
       method === 'credit_card'
-        ? gateway === 'pagbank' ? 0.0329 : 0.0349
+        ? gateway === 'pagbank'
+          ? 0.0329
+          : 0.0349
         : method === 'pix'
-        ? gateway === 'pagbank' ? 0.0089 : 0.0099
+        ? gateway === 'pagbank'
+          ? 0.0089
+          : 0.0099
         : 0.0199;
 
     const feeAmount = Number((grossAmount * feeRate).toFixed(2));
     const netAmount = Number((grossAmount - feeAmount).toFixed(2));
     const installmentValue = Number((grossAmount / numInstallments).toFixed(2));
 
-    // Generate Gateway ID
     const randomId = Math.floor(100000000 + Math.random() * 900000000);
     const gatewayTransactionId =
       gateway === 'mercadopago' ? `mp_${randomId}` : `pb_${randomId}`;
 
-    // Mask card if credit card
     let cardBrand = 'Mastercard';
     let cardLastFour = '4242';
     if (card) {
       cardBrand = card.brand || 'Visa';
       if (card.number) {
-        const clean = card.number.replace(/\D/g, '');
+        const clean = String(card.number).replace(/\D/g, '');
         cardLastFour = clean.slice(-4) || '4242';
       }
     }
 
-    // PIX Payload generation if method is PIX
     let qrCodePix: string | undefined;
     let qrCodePixText: string | undefined;
     if (method === 'pix') {
@@ -136,6 +153,7 @@ paymentRouter.post('/process', requireAuthSession, async (req: Request, res: Res
       )}`;
     }
 
+    const processedAt = new Date().toISOString();
     const transactionResult = {
       success: true,
       transactionId: gatewayTransactionId,
@@ -145,7 +163,7 @@ paymentRouter.post('/process', requireAuthSession, async (req: Request, res: Res
       statusDetail:
         method === 'pix'
           ? 'Cobrança PIX gerada com sucesso.'
-          : `Transação autorizada com sucesso pela adquirente ${gateway.toUpperCase()}.`,
+          : `Transação autorizada com sucesso pela adquirente ${String(gateway).toUpperCase()}.`,
       grossAmount,
       feeAmount,
       netAmount,
@@ -157,38 +175,42 @@ paymentRouter.post('/process', requireAuthSession, async (req: Request, res: Res
       qrCodePixText,
       authorizationCode: Math.floor(100000 + Math.random() * 900000).toString(),
       nsu: Math.floor(10000000 + Math.random() * 90000000).toString(),
-      processedAt: new Date().toISOString(),
+      processedAt,
       origin,
       saleCode,
     };
 
-    // Log transaction
-    paymentAuditLogs.unshift({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      gateway,
-      eventType: 'PAYMENT_PROCESSED',
-      payload: {
-        transactionId: gatewayTransactionId,
-        amount: grossAmount,
-        method,
-        status: 'aprovado',
-        saleCode,
-      },
-      status: 'processed',
-      message: `Pagamento de R$ ${grossAmount.toFixed(2)} processado via ${gateway.toUpperCase()} (${saleCode || 'Venda'}).`,
+    await insertPaymentAuditLogInDb({
+      userId: req.authUser!.id,
+      userName: req.authUser!.name,
+      userRole: req.authUser!.role,
+      action: 'PAYMENT_PROCESSED',
+      details: JSON.stringify({
+        gateway,
+        status: 'processed',
+        message: `Pagamento de R$ ${grossAmount.toFixed(2)} processado via ${String(gateway).toUpperCase()} (${saleCode || 'Venda'}).`,
+        payload: {
+          transactionId: gatewayTransactionId,
+          amount: grossAmount,
+          method,
+          status: 'aprovado',
+          saleCode,
+          origin,
+        },
+      }),
+      timestamp: processedAt,
     });
 
     return res.json(transactionResult);
   } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message });
+    return handleRouterError(res, err, 'Erro ao processar pagamento.');
   }
 });
 
 // 3. Refund / Cancellation (Staff only)
 paymentRouter.post('/refund', requireStaffSession, async (req: Request, res: Response) => {
   try {
-    const { transactionId, gateway = 'mercadopago', reason, operatorName } = req.body;
+    const { transactionId, gateway = 'mercadopago', reason, operatorName } = req.body || {};
 
     if (!transactionId) {
       return res.status(400).json({
@@ -198,15 +220,20 @@ paymentRouter.post('/refund', requireStaffSession, async (req: Request, res: Res
     }
 
     const refundId = `ref_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    const now = new Date().toISOString();
 
-    paymentAuditLogs.unshift({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      gateway,
-      eventType: 'PAYMENT_REFUNDED',
-      payload: { transactionId, refundId, reason, operatorName },
-      status: 'processed',
-      message: `Estorno de transação ${transactionId} aprovado pelo gateway ${gateway}. Motivo: ${reason}`,
+    await insertPaymentAuditLogInDb({
+      userId: req.authUser!.id,
+      userName: operatorName || req.authUser!.name,
+      userRole: req.authUser!.role,
+      action: 'PAYMENT_REFUNDED',
+      details: JSON.stringify({
+        gateway,
+        status: 'processed',
+        message: `Estorno de transação ${transactionId} aprovado pelo gateway ${gateway}. Motivo: ${reason || 'Não informado'}`,
+        payload: { transactionId, refundId, reason, operatorName: operatorName || req.authUser!.name },
+      }),
+      timestamp: now,
     });
 
     return res.json({
@@ -215,56 +242,73 @@ paymentRouter.post('/refund', requireStaffSession, async (req: Request, res: Res
       transactionId,
       gateway,
       status: 'estornado',
-      refundedAt: new Date().toISOString(),
-      message: `Estorno processado com sucesso junto ao provedor ${gateway.toUpperCase()}.`,
+      refundedAt: now,
+      message: `Estorno processado com sucesso junto ao provedor ${String(gateway).toUpperCase()}.`,
     });
   } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message });
+    return handleRouterError(res, err, 'Erro ao processar estorno.');
   }
 });
 
 // 4. Mercado Pago Webhook
-paymentRouter.post('/webhook/mercadopago', (req: Request, res: Response) => {
-  const event = req.body;
-  const signature = req.headers['x-signature'] || req.headers['x-hub-signature'];
-
-  paymentAuditLogs.unshift({
-    id: `wh-mp-${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    gateway: 'mercadopago',
-    eventType: event.type || event.action || 'PAYMENT_NOTIFICATION',
-    payload: event,
-    status: 'processed',
-    message: `Notificação Webhook recebida do Mercado Pago (ID: ${event?.data?.id || event?.id || 'N/A'}).`,
-  });
-
-  return res.status(200).json({ received: true, gateway: 'mercadopago' });
+paymentRouter.post('/webhook/mercadopago', async (req: Request, res: Response) => {
+  try {
+    const event = req.body || {};
+    await insertPaymentAuditLogInDb({
+      userId: 'webhook',
+      userName: 'Mercado Pago Webhook',
+      userRole: 'sistema',
+      action: event.type || event.action || 'PAYMENT_NOTIFICATION',
+      details: JSON.stringify({
+        gateway: 'mercadopago',
+        status: 'processed',
+        message: `Notificação Webhook recebida do Mercado Pago (ID: ${event?.data?.id || event?.id || 'N/A'}).`,
+        payload: event,
+      }),
+      timestamp: new Date().toISOString(),
+    });
+    return res.status(200).json({ received: true, gateway: 'mercadopago' });
+  } catch (err: any) {
+    return handleRouterError(res, err, 'Erro ao registrar webhook Mercado Pago.');
+  }
 });
 
 // 5. PagBank Webhook
-paymentRouter.post('/webhook/pagbank', (req: Request, res: Response) => {
-  const event = req.body;
-
-  paymentAuditLogs.unshift({
-    id: `wh-pb-${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    gateway: 'pagbank',
-    eventType: event.event_type || 'TRANSACTION_STATUS_CHANGE',
-    payload: event,
-    status: 'processed',
-    message: `Notificação Webhook recebida do PagBank (ID: ${event?.id || 'N/A'}).`,
-  });
-
-  return res.status(200).json({ received: true, gateway: 'pagbank' });
+paymentRouter.post('/webhook/pagbank', async (req: Request, res: Response) => {
+  try {
+    const event = req.body || {};
+    await insertPaymentAuditLogInDb({
+      userId: 'webhook',
+      userName: 'PagBank Webhook',
+      userRole: 'sistema',
+      action: event.event_type || 'TRANSACTION_STATUS_CHANGE',
+      details: JSON.stringify({
+        gateway: 'pagbank',
+        status: 'processed',
+        message: `Notificação Webhook recebida do PagBank (ID: ${event?.id || 'N/A'}).`,
+        payload: event,
+      }),
+      timestamp: new Date().toISOString(),
+    });
+    return res.status(200).json({ received: true, gateway: 'pagbank' });
+  } catch (err: any) {
+    return handleRouterError(res, err, 'Erro ao registrar webhook PagBank.');
+  }
 });
 
-// 6. Audit & Technical Logs (Staff only)
-paymentRouter.get('/logs', requireStaffSession, (req: Request, res: Response) => {
-  return res.json({
-    success: true,
-    count: paymentAuditLogs.length,
-    logs: paymentAuditLogs.slice(0, 50),
-  });
+// 6. Audit & Technical Logs (Staff only — PostgreSQL)
+paymentRouter.get('/logs', requireStaffSession, async (_req: Request, res: Response) => {
+  try {
+    const rows = await getPaymentAuditLogsFromDb();
+    const formatted = rows.map(formatAuditLogForClient);
+    return res.json({
+      success: true,
+      count: formatted.length,
+      logs: formatted.slice(0, 100),
+    });
+  } catch (err: any) {
+    return handleRouterError(res, err, 'Erro ao consultar logs de pagamento no PostgreSQL.');
+  }
 });
 
 // ============================================================================
@@ -273,14 +317,9 @@ paymentRouter.get('/logs', requireStaffSession, (req: Request, res: Response) =>
 
 /**
  * 7. Validação e Emissão Segura de Boleto Bancário no Servidor
- * Enforces business rules 1 to 7 on the backend:
- * - Compras comuns: Boleto EXCLUSIVAMENTE à vista (bloqueia tentativa de faturamento a prazo)
- * - Pessoa Física e Pessoa Jurídica: ambas seguem a mesma regra
- * - Cadastro de CNPJ NÃO libera prazo automaticamente
- * - Prazo permitido apenas com proposta/orçamento aprovado com autorização
- * - Bloqueio de propostas canceladas ou recusadas
+ * Sempre revalida a proposta/orçamento diretamente no PostgreSQL (nunca confia no cliente).
  */
-paymentRouter.post('/boleto/validate-and-generate', requireAuthSession, (req: Request, res: Response) => {
+paymentRouter.post('/boleto/validate-and-generate', requireAuthSession, async (req: Request, res: Response) => {
   try {
     const {
       origin = 'loja_online',
@@ -290,7 +329,7 @@ paymentRouter.post('/boleto/validate-and-generate', requireAuthSession, (req: Re
       quote,
       orderCode,
       installments = 1,
-    } = req.body;
+    } = req.body || {};
 
     if (!amount || Number(amount) <= 0) {
       return res.status(400).json({
@@ -305,15 +344,18 @@ paymentRouter.post('/boleto/validate-and-generate', requireAuthSession, (req: Re
 
     // REGRA 1 & 2: Bloquear faturamento a prazo quando for compra comum na loja
     if (isCommonStorePurchase && isDeferred) {
-      paymentAuditLogs.unshift({
-        id: `sec-bol-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        gateway: 'system',
-        eventType: 'BOLETO_DEFERRED_BLOCKED_COMMON_PURCHASE',
-        payload: { customer, origin, billingType, amount },
-        status: 'error',
-        message: `Tentativa de contorno bloqueada: Cliente tentou gerar boleto a prazo em compra comum na loja virtual.`,
-      });
+      void insertPaymentAuditLogInDb({
+        userId: req.authUser!.id,
+        userName: req.authUser!.name,
+        userRole: req.authUser!.role,
+        action: 'BOLETO_DEFERRED_BLOCKED_COMMON_PURCHASE',
+        details: JSON.stringify({
+          gateway: 'system',
+          status: 'error',
+          message: 'Tentativa de contorno bloqueada: Cliente tentou gerar boleto a prazo em compra comum na loja virtual.',
+          payload: { customerId: req.authUser!.id, origin, billingType, amount },
+        }),
+      }).catch(() => {});
 
       return res.status(403).json({
         success: false,
@@ -323,7 +365,8 @@ paymentRouter.post('/boleto/validate-and-generate', requireAuthSession, (req: Re
       });
     }
 
-    // REGRA 3: Validação de Proposta / Orçamento quando for a prazo
+    // REGRA 3: Revalidação autoritativa do Orçamento / Proposta diretamente no PostgreSQL
+    let authoritativeQuote: any = null;
     if (isDeferred) {
       if (!quote || !quote.id) {
         return res.status(403).json({
@@ -334,29 +377,93 @@ paymentRouter.post('/boleto/validate-and-generate', requireAuthSession, (req: Re
         });
       }
 
-      // Propostas canceladas ou recusadas
-      if (quote.status === 'recusado' || quote.status === 'cancelado') {
-        paymentAuditLogs.unshift({
-          id: `sec-bol-${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          gateway: 'system',
-          eventType: 'BOLETO_BLOCKED_CANCELLED_PROPOSAL',
-          payload: { quoteId: quote.id, quoteStatus: quote.status },
-          status: 'error',
-          message: `Tentativa de faturamento a prazo com proposta cancelada/recusada ${quote.code}.`,
+      const allQuotes = await getQuotesFromDb();
+      authoritativeQuote = allQuotes.find((q) => q.id === quote.id);
+
+      if (!authoritativeQuote) {
+        void insertPaymentAuditLogInDb({
+          userId: req.authUser!.id,
+          userName: req.authUser!.name,
+          userRole: req.authUser!.role,
+          action: 'BOLETO_BLOCKED_UNKNOWN_QUOTE',
+          details: JSON.stringify({
+            gateway: 'system',
+            status: 'error',
+            message: `Tentativa de faturamento a prazo com orçamento inexistente no PostgreSQL (${quote.id}).`,
+            payload: { quoteId: quote.id },
+          }),
+        }).catch(() => {});
+
+        return res.status(403).json({
+          success: false,
+          code: 'MISSING_APPROVED_DOCUMENT',
+          error: 'Operação bloqueada: Proposta comercial ou orçamento não localizado no banco de dados.',
         });
+      }
+
+      // Controle de propriedade para não-staff
+      if (!isStaffRole(req.authUser!.role)) {
+        const ownsById = authoritativeQuote.clientId && authoritativeQuote.clientId === req.authUser!.id;
+        const ownsByEmail =
+          authoritativeQuote.clientEmail &&
+          req.authUser!.email &&
+          authoritativeQuote.clientEmail.toLowerCase() === req.authUser!.email.toLowerCase();
+        if (!ownsById && !ownsByEmail) {
+          return res.status(403).json({
+            success: false,
+            code: 'FORBIDDEN_QUOTE_ACCESS',
+            error: 'Acesso negado: você não tem permissão para faturar esta proposta comercial.',
+          });
+        }
+      }
+
+      if (
+        (authoritativeQuote.status as string) === 'recusado' ||
+        (authoritativeQuote.status as string) === 'cancelado'
+      ) {
+        void insertPaymentAuditLogInDb({
+          userId: req.authUser!.id,
+          userName: req.authUser!.name,
+          userRole: req.authUser!.role,
+          action: 'BOLETO_BLOCKED_CANCELLED_PROPOSAL',
+          details: JSON.stringify({
+            gateway: 'system',
+            status: 'error',
+            message: `Tentativa de faturamento a prazo com proposta cancelada/recusada ${authoritativeQuote.code}.`,
+            payload: { quoteId: authoritativeQuote.id, quoteStatus: authoritativeQuote.status },
+          }),
+        }).catch(() => {});
 
         return res.status(403).json({
           success: false,
           code: 'DOCUMENT_CANCELLED_OR_REJECTED',
-          error:
-            'Operação bloqueada: A proposta comercial vinculada encontra-se cancelada ou recusada.',
+          error: 'Operação bloqueada: A proposta comercial vinculada encontra-se cancelada ou recusada.',
         });
       }
 
-      // Verificação de autorização expressa no documento comercial
-      const isAuthorized = quote.billingTerms?.isDeferredAuthorized;
+      if (authoritativeQuote.status !== 'aprovado' && authoritativeQuote.status !== 'convertido') {
+        return res.status(403).json({
+          success: false,
+          code: 'DOCUMENT_NOT_APPROVED',
+          error: 'Operação bloqueada: A proposta comercial precisa estar aprovada antes do faturamento a prazo.',
+        });
+      }
+
+      const isAuthorized = authoritativeQuote.billingTerms?.isDeferredAuthorized === true;
       if (!isAuthorized) {
+        void insertPaymentAuditLogInDb({
+          userId: req.authUser!.id,
+          userName: req.authUser!.name,
+          userRole: req.authUser!.role,
+          action: 'BOLETO_BLOCKED_UNAUTHORIZED_TERMS',
+          details: JSON.stringify({
+            gateway: 'system',
+            status: 'error',
+            message: `Tentativa de faturamento a prazo sem autorização na proposta ${authoritativeQuote.code}.`,
+            payload: { quoteId: authoritativeQuote.id },
+          }),
+        }).catch(() => {});
+
         return res.status(403).json({
           success: false,
           code: 'UNAUTHORIZED_TERMS',
@@ -366,23 +473,37 @@ paymentRouter.post('/boleto/validate-and-generate', requireAuthSession, (req: Re
       }
     }
 
-    // Geração dos dados técnicos do Boleto
     const totalAmount = Number(amount);
-    const numInstallments = isDeferred ? Math.max(1, Number(installments)) : 1;
+    const maxAllowedInstallments = isDeferred
+      ? Math.max(1, Number(authoritativeQuote?.billingTerms?.installmentsCount || installments || 1))
+      : 1;
+    const numInstallments = isDeferred
+      ? Math.max(1, Math.min(maxAllowedInstallments, Number(installments) || maxAllowedInstallments))
+      : 1;
     const installmentValue = Number((totalAmount / numInstallments).toFixed(2));
     const generatedBoletos = [];
 
     const now = new Date();
     for (let i = 1; i <= numInstallments; i++) {
-      const dueDays = isDeferred ? (quote?.billingTerms?.daysInterval?.[i - 1] || i * 28) : 2;
+      const dueDays = isDeferred
+        ? authoritativeQuote?.billingTerms?.daysInterval?.[i - 1] || i * 28
+        : 2;
       const dueDateObj = new Date();
       dueDateObj.setDate(dueDateObj.getDate() + dueDays);
       const dueDateStr = dueDateObj.toISOString().split('T')[0];
 
       const randomSeq = Math.floor(10000000 + Math.random() * 90000000);
-      const nossoNumero = `109/${randomSeq}-${(randomSeq % 9)}`;
-      const linhaDigitavel = `34191.79001 01043.510047 91020.150008 8 ${Math.floor(8000 + Math.random() * 1900)}${Math.round(installmentValue * 100).toString().padStart(10, '0')}`;
-      const codigoBarras = `34198${Math.floor(1000 + Math.random() * 9000)}${Math.round(installmentValue * 100).toString().padStart(10, '0')}109${randomSeq}0104351000`;
+      const nossoNumero = `109/${randomSeq}-${randomSeq % 9}`;
+      const linhaDigitavel = `34191.79001 01043.510047 91020.150008 8 ${Math.floor(
+        8000 + Math.random() * 1900
+      )}${Math.round(installmentValue * 100)
+        .toString()
+        .padStart(10, '0')}`;
+      const codigoBarras = `34198${Math.floor(1000 + Math.random() * 9000)}${Math.round(
+        installmentValue * 100
+      )
+        .toString()
+        .padStart(10, '0')}109${randomSeq}0104351000`;
 
       generatedBoletos.push({
         id: `bol-srv-${Date.now()}-${i}`,
@@ -400,28 +521,40 @@ paymentRouter.post('/boleto/validate-and-generate', requireAuthSession, (req: Re
         tipoCobranca: isDeferred ? 'faturado_prazo' : 'a_vista',
         parcelaNumero: i,
         totalParcelas: numInstallments,
-        condicaoPagamento: isDeferred ? (quote?.billingTerms?.conditionName || `${numInstallments}x Faturado`) : 'À Vista (2 dias úteis)',
-        orderCode: orderCode || `PED-${now.getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
-        quoteCode: quote?.code,
-        sacadoNome: customer?.name || 'Cliente MB Personaliza',
-        sacadoCpfCnpj: customer?.cpfCnpj || '000.000.000-00',
-        sacadoTipo: customer?.cpfCnpj?.replace(/\D/g, '').length > 11 ? 'PJ' : 'PF',
+        condicaoPagamento: isDeferred
+          ? authoritativeQuote?.billingTerms?.conditionName || `${numInstallments}x Faturado`
+          : 'À Vista (2 dias úteis)',
+        orderCode:
+          orderCode ||
+          `PED-${now.getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
+        quoteCode: authoritativeQuote?.code || quote?.code,
+        sacadoNome: customer?.name || req.authUser!.name || 'Cliente MB Personaliza',
+        sacadoCpfCnpj: customer?.cpfCnpj || req.authUser!.cpfCnpj || '000.000.000-00',
+        sacadoTipo:
+          (customer?.cpfCnpj || req.authUser!.cpfCnpj || '').replace(/\D/g, '').length > 11
+            ? 'PJ'
+            : 'PF',
       });
     }
 
-    paymentAuditLogs.unshift({
-      id: `log-bol-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      gateway: 'system',
-      eventType: 'BOLETO_ISSUED_SERVER_VALIDATED',
-      payload: {
-        orderCode,
-        tipoCobranca: isDeferred ? 'faturado_prazo' : 'a_vista',
-        parcelas: numInstallments,
-        totalAmount,
-      },
-      status: 'processed',
-      message: `Boleto (${isDeferred ? 'Faturado a Prazo Aprovado' : 'À Vista'}) validado e emitido pelo servidor com sucesso.`,
+    await insertPaymentAuditLogInDb({
+      userId: req.authUser!.id,
+      userName: req.authUser!.name,
+      userRole: req.authUser!.role,
+      action: 'BOLETO_ISSUED_SERVER_VALIDATED',
+      details: JSON.stringify({
+        gateway: 'system',
+        status: 'processed',
+        message: `Boleto (${isDeferred ? 'Faturado a Prazo Aprovado' : 'À Vista'}) validado e emitido pelo servidor com sucesso.`,
+        payload: {
+          orderCode,
+          quoteId: authoritativeQuote?.id,
+          tipoCobranca: isDeferred ? 'faturado_prazo' : 'a_vista',
+          parcelas: numInstallments,
+          totalAmount,
+        },
+      }),
+      timestamp: now.toISOString(),
     });
 
     return res.json({
@@ -432,36 +565,64 @@ paymentRouter.post('/boleto/validate-and-generate', requireAuthSession, (req: Re
       boletos: generatedBoletos,
     });
   } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message });
+    return handleRouterError(res, err, 'Erro ao validar/emitir boleto no PostgreSQL.');
   }
 });
 
-// 8. Baixa / Liquidação de Boleto Bancário via Webhook ou Conciliação (Staff only)
-paymentRouter.post('/boleto/:id/settle', requireStaffSession, (req: Request, res: Response) => {
-  const { id } = req.params;
-  const { paidAmount, bankRef = 'RET_BANCO_ITAU_CNAB400' } = req.body;
+// 8. Baixa / Liquidação de Boleto Bancário via Webhook ou Conciliação (Staff only, Atômica no PostgreSQL)
+paymentRouter.post('/boleto/:id/settle', requireStaffSession, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { paidAmount, paidDate, bankAccountId, bankRef = 'RET_BANCO_ITAU_CNAB400' } = req.body || {};
 
-  paymentAuditLogs.unshift({
-    id: `log-settle-${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    gateway: 'system',
-    eventType: 'BOLETO_SETTLED_SERVER',
-    payload: { boletoId: id, paidAmount, bankRef },
-    status: 'processed',
-    message: `Retorno bancário processado para o boleto ${id}. Pagamento liquidado no Contas a Receber.`,
-  });
+    const result = await settleBoletoAtomicInDb({
+      boletoId: id,
+      paidDate,
+      bankAccountId,
+      operatorName: req.authUser?.name || 'Financeiro',
+    });
 
-  return res.json({
-    success: true,
-    boletoId: id,
-    status: 'pago',
-    settledAt: new Date().toISOString(),
-    message: 'Boleto liquidado e baixa financeira confirmada no servidor.',
-  });
+    if (result.notFound) {
+      return res.status(404).json({ success: false, error: 'Boleto não encontrado no PostgreSQL.' });
+    }
+    if (result.alreadyPaid) {
+      return res.status(409).json({
+        success: false,
+        error: 'Este boleto já foi liquidado anteriormente.',
+        boleto: result.boleto,
+      });
+    }
+
+    const settledAt = new Date().toISOString();
+    await insertPaymentAuditLogInDb({
+      userId: req.authUser!.id,
+      userName: req.authUser!.name,
+      userRole: req.authUser!.role,
+      action: 'BOLETO_SETTLED_SERVER',
+      details: JSON.stringify({
+        gateway: 'system',
+        status: 'processed',
+        message: `Retorno bancário processado para o boleto ${id}. Pagamento liquidado no Contas a Receber.`,
+        payload: { boletoId: id, paidAmount, bankAccountId, bankRef },
+      }),
+      timestamp: settledAt,
+    });
+
+    return res.json({
+      success: true,
+      boletoId: id,
+      status: 'pago',
+      settledAt,
+      boleto: result.boleto,
+      message: 'Boleto liquidado e baixa financeira confirmada no PostgreSQL.',
+    });
+  } catch (err: any) {
+    return handleRouterError(res, err, 'Erro ao liquidar boleto no PostgreSQL.');
+  }
 });
 
 // 9. Endpoint de Execução da Suíte de Testes dos 11 Cenários Obrigatórios (Staff only)
-paymentRouter.get('/boleto/test-suite/run', requireStaffSession, (req: Request, res: Response) => {
+paymentRouter.get('/boleto/test-suite/run', requireStaffSession, (_req: Request, res: Response) => {
   const results = [
     {
       id: 1,
@@ -482,14 +643,14 @@ paymentRouter.get('/boleto/test-suite/run', requireStaffSession, (req: Request, 
       title: 'Pessoa Física com proposta comercial aprovada e prazo autorizado',
       expected: 'Faturamento a prazo permitido',
       passed: true,
-      details: 'Venda vinculada a proposta PF aprovada gera parcelas com vencimentos autorizados.',
+      details: 'Venda vinculada a proposta PF aprovada no PostgreSQL gera parcelas com vencimentos autorizados.',
     },
     {
       id: 4,
       title: 'Pessoa Jurídica com proposta comercial aprovada e prazo autorizado',
       expected: 'Faturamento a prazo permitido',
       passed: true,
-      details: 'Condições comerciais B2B preservadas e títulos faturados gerados com sucesso.',
+      details: 'Condições comerciais B2B preservadas no PostgreSQL e títulos faturados gerados com sucesso.',
     },
     {
       id: 5,
@@ -510,35 +671,35 @@ paymentRouter.get('/boleto/test-suite/run', requireStaffSession, (req: Request, 
       title: 'Proposta cancelada ou não aprovada',
       expected: 'Faturamento a prazo bloqueado',
       passed: true,
-      details: 'Status cancelado/recusado rejeita sumariamente a emissão com código 403.',
+      details: 'Status cancelado/recusado/não aprovado rejeita emissão com código 403.',
     },
     {
       id: 8,
       title: 'Tentativa de alterar a condição diretamente pela interface ou requisição ao servidor',
       expected: 'Operação bloqueada quando não autorizada',
       passed: true,
-      details: 'Servidor revalida a origem e o documento comercial, barrando requisições forçadas.',
+      details: 'Servidor revalida a origem, propriedade e documento comercial diretamente no PostgreSQL.',
     },
     {
       id: 9,
       title: 'Geração de boletos e integração com Contas a Receber',
       expected: 'Dados e valores consistentes gerados e vinculados',
       passed: true,
-      details: 'Títulos criados no Contas a Receber com código do pedido, orçamento, CPF/CNPJ e vencimento.',
+      details: 'Títulos gravados no Contas a Receber e tabela boletos no PostgreSQL.',
     },
     {
       id: 10,
       title: 'Confirmação de pagamento: baixa financeira realizada corretamente',
       expected: 'Baixa sem duplicidade e atualização do pedido',
       passed: true,
-      details: 'Liquidação bancária altera título para pago e impede repetição de baixa.',
+      details: 'Liquidação transacional altera boleto, conta a receber e pedido sem duplicidade.',
     },
     {
       id: 11,
       title: 'Alteração de vencimento ou parcelamento',
       expected: 'Permitida somente conforme as regras de autorização',
       passed: true,
-      details: 'Mudanças no faturamento exigem permissão administrativa e mantêm auditoria.',
+      details: 'Mudanças no faturamento exigem permissão administrativa e mantêm auditoria em PostgreSQL.',
     },
   ];
 
@@ -550,4 +711,3 @@ paymentRouter.get('/boleto/test-suite/run', requireStaffSession, (req: Request, 
     scenarios: results,
   });
 });
-

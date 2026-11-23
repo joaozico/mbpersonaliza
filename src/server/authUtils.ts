@@ -86,7 +86,7 @@ export function setSessionCookie(
     https ? 'SameSite=None' : 'SameSite=Lax',
   ];
   if (https) {
-    parts.push('Secure');
+    parts.push('Secure', 'Partitioned');
   }
   res.setHeader('Set-Cookie', parts.join('; '));
 }
@@ -102,7 +102,7 @@ export function clearSessionCookie(req: Request, res: Response): void {
     https ? 'SameSite=None' : 'SameSite=Lax',
   ];
   if (https) {
-    parts.push('Secure');
+    parts.push('Secure', 'Partitioned');
   }
   res.setHeader('Set-Cookie', parts.join('; '));
 }
@@ -258,7 +258,7 @@ export function resolveEffectivePermissions(
 // ==========================================
 export function normalizePriceVisibilityMode(val: any): PriceVisibilityMode {
   const mode = typeof val === 'string' ? val : val?.mode;
-  return mode === 'all' ? 'all' : 'registered_only';
+  return mode === 'all' || mode === 'public' ? 'all' : 'registered_only';
 }
 
 export function canUserViewPrices(

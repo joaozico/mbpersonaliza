@@ -50,7 +50,6 @@ export class ErrorBoundary extends (React.Component as any) {
     try {
       StorageService.resetAllData();
     } catch {
-      localStorage.clear();
       window.location.href = '/';
     }
   };
@@ -66,7 +65,7 @@ export class ErrorBoundary extends (React.Component as any) {
             <div className="space-y-1">
               <h2 className="text-xl font-bold text-slate-900">Ops! Algo inesperado aconteceu</h2>
               <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                Ocorreu uma pequena instabilidade na visualização. Você pode tentar novamente, recarregar a página ou restaurar os dados padrão se houver cache corrompido no navegador.
+                Ocorreu uma pequena instabilidade na visualização. Você pode tentar novamente, recarregar a página ou restaurar o estado em memória e resincronizar com o servidor.
               </p>
             </div>
 
