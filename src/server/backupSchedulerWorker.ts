@@ -18,6 +18,7 @@ import {
   recordBackupInDb,
   saveSystemSettingsToDb,
 } from '../db/repository.ts';
+import { isDbUnavailableError } from './dbErrorHelper.ts';
 
 const BACKUPS_DIR = path.join(process.cwd(), 'data', 'backups');
 
@@ -338,7 +339,9 @@ export class BackupSchedulerWorker {
           await executeServerBackup('scheduled');
         }
       } catch (err) {
-        console.error('[BackupWorker] Erro no ciclo de verificação:', err);
+        if (!isDbUnavailableError(err)) {
+          console.error('[BackupWorker] Erro no ciclo de verificação:', err);
+        }
       }
     }, intervalMs);
   }

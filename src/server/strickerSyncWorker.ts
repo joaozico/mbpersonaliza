@@ -12,6 +12,7 @@ import {
   saveStrickerConfigInDb,
   upsertStrickerProductInDb,
 } from '../db/repository.ts';
+import { isDbUnavailableError } from './dbErrorHelper.ts';
 
 export interface SyncJobLog {
   id: string;
@@ -128,7 +129,9 @@ class StrickerSyncWorker {
       try {
         await this.executeSync('all', 'auto_background');
       } catch (err) {
-        console.error('[Stricker Sync Worker] Erro no ciclo agendado:', err);
+        if (!isDbUnavailableError(err)) {
+          console.error('[Stricker Sync Worker] Erro no ciclo agendado:', err);
+        }
       } finally {
         if (this.autoSyncEnabled) {
           this.scheduleNextRun();
@@ -284,7 +287,9 @@ class StrickerSyncWorker {
         this.isRunning = false;
         throw err;
       }
-      console.error('[Stricker Sync Worker]', err);
+      if (!isDbUnavailableError(err)) {
+        console.error('[Stricker Sync Worker]', err);
+      }
     } finally {
       this.isRunning = false;
     }

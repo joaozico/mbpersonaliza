@@ -74,7 +74,7 @@ import {
   requirePermission,
   requireStaffSession,
 } from '../middleware/auth.ts';
-import { handleRouterError } from './dbErrorHelper.ts';
+import { handleRouterError, isDbUnavailableError } from './dbErrorHelper.ts';
 import type { PermissionKey } from '../types.ts';
 
 export const databaseRouter = Router();
@@ -427,7 +427,9 @@ databaseRouter.get('/init', async (req: Request, res: Response) => {
       },
     });
   } catch (error: any) {
-    console.error('Failed to initialize database sync:', error);
+    if (!isDbUnavailableError(error)) {
+      console.error('Failed to initialize database sync:', error);
+    }
     return handleRouterError(res, error, 'PostgreSQL temporariamente indisponível.');
   }
 });

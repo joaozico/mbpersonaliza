@@ -28,7 +28,7 @@ import {
 } from '../db/repository.ts';
 import { isStaffRole, requireAuthSession } from '../middleware/auth.ts';
 import { INITIAL_PERMISSIONS_MATRIX } from '../data/initialData.ts';
-import { handleRouterError } from './dbErrorHelper.ts';
+import { handleRouterError, isDbUnavailableError } from './dbErrorHelper.ts';
 
 export const authRouter = Router();
 
@@ -212,7 +212,9 @@ authRouter.post('/register', async (req: Request, res: Response) => {
       'Cadastro realizado com sucesso! Bem-vindo à MB Personaliza.'
     );
   } catch (err: any) {
-    console.error('[Auth Register] Error:', err);
+    if (!isDbUnavailableError(err)) {
+      console.error('[Auth Register] Error:', err);
+    }
     return handleRouterError(res, err, 'Erro interno ao processar cadastro. Tente novamente.');
   }
 });
@@ -266,7 +268,9 @@ authRouter.post('/login', async (req: Request, res: Response) => {
 
     return await issueSessionResponse(req, res, userRecord, 200, 'Autenticação realizada com sucesso.');
   } catch (err: any) {
-    console.error('[Auth Login] Error:', err);
+    if (!isDbUnavailableError(err)) {
+      console.error('[Auth Login] Error:', err);
+    }
     return handleRouterError(res, err, 'Erro interno ao autenticar usuário.');
   }
 });
@@ -323,7 +327,9 @@ authRouter.get('/me', async (req: Request, res: Response) => {
       priceVisibility,
     });
   } catch (err: any) {
-    console.error('[Auth Me] Error:', err);
+    if (!isDbUnavailableError(err)) {
+      console.error('[Auth Me] Error:', err);
+    }
     return handleRouterError(res, err, 'Falha ao consultar sessão atual.');
   }
 });
@@ -413,7 +419,9 @@ authRouter.put('/profile', requireAuthSession, async (req: Request, res: Respons
       message: 'Perfil atualizado com sucesso.',
     });
   } catch (err: any) {
-    console.error('[Auth Profile] Error:', err);
+    if (!isDbUnavailableError(err)) {
+      console.error('[Auth Profile] Error:', err);
+    }
     return handleRouterError(res, err, 'Erro ao atualizar perfil.');
   }
 });

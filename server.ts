@@ -19,7 +19,7 @@ import { analyticsRouter } from "./src/server/analyticsRouter";
 import { isDbUnavailableError } from "./src/server/dbErrorHelper";
 import { attachSessionUser, requirePermission } from "./src/middleware/auth";
 import { seedInitialDataIfEmpty } from "./src/db/repository";
-import { closePool } from "./src/db";
+import { closePool, isDatabaseConfigured } from "./src/db";
 
 async function startServer() {
   const app = express();
@@ -40,10 +40,14 @@ async function startServer() {
   // Inicia worker de exportação agendada e recuperação de desastres
   backupSchedulerWorker.start();
 
-  // Inicializa seed de dados essenciais no PostgreSQL se vazio
-  seedInitialDataIfEmpty().catch((err) => {
-    console.warn('[Server] PostgreSQL initial check/seed:', err);
-  });
+  // Inicializa seed de dados essenciais no PostgreSQL se configurado e vazio
+  if (isDatabaseConfigured()) {
+    seedInitialDataIfEmpty().catch((err) => {
+      console.warn('[Server] PostgreSQL initial check/seed:', err?.message || err);
+    });
+  } else {
+    console.info('[Server] PostgreSQL aguardando configuração (DATABASE_URL / SQL_HOST). Rotas de banco em modo fail-closed (HTTP 503).');
+  }
 
   // API Health
   app.get("/api/health", (req, res) => {

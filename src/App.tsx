@@ -193,10 +193,12 @@ export default function App() {
 
       try {
         const res = await fetch('/api/system/maintenance', { cache: 'no-store' });
-        const data = await res.json();
-        if (active && data && data.maintenance) {
-          StorageService.setMaintenanceMemory(data.maintenance);
-          setCompanySettings(StorageService.getCompanySettings());
+        if (res.ok) {
+          const data = await res.json();
+          if (active && data && data.maintenance) {
+            StorageService.setMaintenanceMemory(data.maintenance);
+            setCompanySettings(StorageService.getCompanySettings());
+          }
         }
       } catch (err) {
         console.warn('Backend maintenance status sync notice:', err);
