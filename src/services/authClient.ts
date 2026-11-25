@@ -27,6 +27,25 @@ export async function authFetch(input: RequestInfo | URL, init: RequestInit = {}
   });
 }
 
+export async function safeParseJson<T = any>(res: Response): Promise<T | null> {
+  const contentType = (res.headers.get('content-type') || '').toLowerCase();
+  const text = await res.text();
+  if (!text || !text.trim()) return null;
+  const trimmed = text.trim();
+  if (
+    !contentType.includes('application/json') &&
+    !contentType.includes('+json') &&
+    (trimmed.startsWith('<!') || trimmed.startsWith('<html'))
+  ) {
+    return null;
+  }
+  try {
+    return JSON.parse(trimmed) as T;
+  } catch {
+    return null;
+  }
+}
+
 export interface AuthSessionResponse {
   success: boolean;
   authenticated?: boolean;
@@ -47,7 +66,11 @@ export async function bootstrapSession(): Promise<AuthSessionResponse> {
       method: 'GET',
       cache: 'no-store',
     });
-    const data = (await res.json()) as AuthSessionResponse;
+    const data = await safeParseJson<AuthSessionResponse>(res);
+    if (!data) {
+      memoryToken = null;
+      return { success: false, authenticated: false, user: null };
+    }
     if (!data.authenticated || !data.user) {
       memoryToken = null;
     }
@@ -72,7 +95,10 @@ export async function loginWithCredentials(payload: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const data = (await res.json()) as AuthSessionResponse;
+  const data = (await safeParseJson<AuthSessionResponse>(res)) || {
+    success: false,
+    error: 'Resposta inválida do servidor ao autenticar.',
+  };
   if (res.ok && data.success && data.token) {
     setAuthToken(data.token);
   }
@@ -93,7 +119,10 @@ export async function registerCustomer(payload: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const data = (await res.json()) as AuthSessionResponse;
+  const data = (await safeParseJson<AuthSessionResponse>(res)) || {
+    success: false,
+    error: 'Resposta inválida do servidor ao cadastrar.',
+  };
   if (res.ok && data.success && data.token) {
     setAuthToken(data.token);
   }
@@ -129,7 +158,7 @@ export async function updateMyProfile(payload: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  return await res.json();
+  return (await safeParseJson(res)) || { success: false, error: 'Resposta inválida do servidor.' };
 }
 
 export async function fetchPriceVisibility(): Promise<{
@@ -141,7 +170,7 @@ export async function fetchPriceVisibility(): Promise<{
     method: 'GET',
     cache: 'no-store',
   });
-  return await res.json();
+  return (await safeParseJson(res)) || { success: false };
 }
 
 export async function savePriceVisibility(mode: PriceVisibilityMode): Promise<{
@@ -156,5 +185,5 @@ export async function savePriceVisibility(mode: PriceVisibilityMode): Promise<{
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ mode }),
   });
-  return await res.json();
+  return (await safeParseJson(res)) || { success: false, error: 'Resposta inválida do servidor.' };
 }

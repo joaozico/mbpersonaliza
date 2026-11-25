@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { UserProfile } from '../types';
 import { StorageService } from '../services/storage';
 import { loginWithCredentials } from '../services/authClient';
@@ -88,7 +88,7 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
         noIndex={true}
       />
       {/* Back button */}
-      <div className="max-w-md w-full mx-auto mb-6 flex items-center justify-between">
+      <div className="max-w-md w-full mx-auto mb-6 flex items-center justify-between gap-3">
         <button
           type="button"
           onClick={() => onNavigate('home')}
@@ -105,8 +105,9 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
       </div>
 
       <div className="max-w-md w-full mx-auto space-y-6">
+
         {/* Main Login Card */}
-        <div className="bg-slate-900/90 backdrop-blur-md rounded-3xl border border-slate-800 p-6 sm:p-8 shadow-2xl space-y-6">
+        <div className="max-w-md w-full mx-auto bg-slate-900/90 backdrop-blur-md rounded-3xl border border-slate-800 p-6 sm:p-8 shadow-2xl space-y-6">
           {/* Logo & Header */}
           <div className="text-center space-y-3">
             <div className="flex justify-center">
@@ -233,7 +234,7 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
         </div>
 
         {/* Security and Support info */}
-        <div className="p-4 rounded-2xl bg-slate-800/40 border border-slate-800 text-slate-400 text-xs flex items-start gap-3">
+        <div className="max-w-md w-full mx-auto p-4 rounded-2xl bg-slate-800/40 border border-slate-800 text-slate-400 text-xs flex items-start gap-3">
           <Shield className="w-5 h-5 text-[#00AEEF] shrink-0 mt-0.5" />
           <div className="space-y-1">
             <p className="font-bold text-slate-300">Controle de Segurança de Acesso RBAC</p>
@@ -246,4 +247,3 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
     </div>
   );
 };
-

@@ -89,9 +89,13 @@ export const MaintenanceView: React.FC<MaintenanceViewProps> = ({
           cache: 'no-store',
         });
         if (res.ok) {
-          const data = await res.json();
-          if (data && data.maintenance) {
-            remoteEnabled = Boolean(data.maintenance.enabled);
+          const text = await res.text();
+          const trimmed = text.trim();
+          if (trimmed && !trimmed.startsWith('<')) {
+            const data = JSON.parse(trimmed);
+            if (data && data.maintenance) {
+              remoteEnabled = Boolean(data.maintenance.enabled);
+            }
           }
         }
       } catch {

@@ -1,6 +1,4 @@
 import { Router, Request, Response } from 'express';
-import fs from 'fs';
-import path from 'path';
 import crypto from 'crypto';
 import {
   getServerBackupConfig,
@@ -8,14 +6,10 @@ import {
   getServerBackupHistory,
   executeServerBackup,
   deleteServerBackup,
-  BACKUPS_DIR,
 } from './backupSchedulerWorker.ts';
 import { BackupScheduleConfig } from '../types.ts';
 import { requireAdminSession } from '../middleware/auth.ts';
-import {
-  getBackupsFromDb,
-  restoreDatabaseFromBackupPayloadInDb,
-} from '../db/repository.ts';
+import { restoreDatabaseFromBackupPayloadInDb } from '../db/repository.ts';
 import { handleRouterError } from './dbErrorHelper.ts';
 
 export const backupRouter = Router();
@@ -59,7 +53,38 @@ backupRouter.get('/history', async (_req: Request, res: Response) => {
   }
 });
 
-// POST /api/backup/export
+const DB_DOWNLOAD_BLOCKED_PAYLOAD = {
+  success: false,
+  code: 'DB_DOWNLOAD_DISABLED',
+  error: 'Download direto ou exportação do banco de dados PostgreSQL bloqueada por política de segurança.',
+};
+
+// Rotas de download/exportação direta do PostgreSQL bloqueadas permanentemente (inclusive para administradores)
+backupRouter.all('/postgres-package', (_req: Request, res: Response) => {
+  return res.status(403).json(DB_DOWNLOAD_BLOCKED_PAYLOAD);
+});
+
+backupRouter.all('/postgres-package/*', (_req: Request, res: Response) => {
+  return res.status(403).json(DB_DOWNLOAD_BLOCKED_PAYLOAD);
+});
+
+backupRouter.all('/pg-dump', (_req: Request, res: Response) => {
+  return res.status(403).json(DB_DOWNLOAD_BLOCKED_PAYLOAD);
+});
+
+backupRouter.all('/pg-dump/*', (_req: Request, res: Response) => {
+  return res.status(403).json(DB_DOWNLOAD_BLOCKED_PAYLOAD);
+});
+
+backupRouter.all('/download', (_req: Request, res: Response) => {
+  return res.status(403).json(DB_DOWNLOAD_BLOCKED_PAYLOAD);
+});
+
+backupRouter.all('/download/*', (_req: Request, res: Response) => {
+  return res.status(403).json(DB_DOWNLOAD_BLOCKED_PAYLOAD);
+});
+
+// POST /api/backup/export (Executa snapshot interno protegido no servidor — nunca retorna dump ao navegador)
 backupRouter.post('/export', async (req: Request, res: Response) => {
   try {
     const { trigger = 'manual' } = req.body || {};
@@ -72,51 +97,10 @@ backupRouter.post('/export', async (req: Request, res: Response) => {
     return res.json({
       success: true,
       entry: result.entry,
-      jsonString: result.jsonString,
-      message: 'Backup oficial do PostgreSQL gerado e salvo com sucesso!',
+      message: 'Snapshot interno de backup do PostgreSQL gerado e protegido no servidor com sucesso!',
     });
   } catch (err: any) {
-    return handleRouterError(res, err, 'Erro ao exportar backup do PostgreSQL.');
-  }
-});
-
-// GET /api/backup/download/:filename
-backupRouter.get('/download/:filename', async (req: Request, res: Response) => {
-  try {
-    const { filename } = req.params;
-    const safeFilename = path.basename(filename);
-
-    if (!safeFilename || safeFilename !== filename || !safeFilename.endsWith('.json')) {
-      return res.status(400).json({ success: false, error: 'Nome de arquivo de backup inválido.' });
-    }
-
-    const resolvedDir = path.resolve(BACKUPS_DIR);
-    const resolvedFile = path.resolve(resolvedDir, safeFilename);
-    if (!resolvedFile.startsWith(resolvedDir + path.sep)) {
-      return res.status(400).json({ success: false, error: 'Caminho de download fora do diretório permitido.' });
-    }
-
-    if (fs.existsSync(resolvedFile)) {
-      res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
-      return fs.createReadStream(resolvedFile).pipe(res);
-    }
-
-    // Fallback para o payload persistido no PostgreSQL caso arquivo tenha sido podado do disco
-    const dbBackups = await getBackupsFromDb(true);
-    const found = dbBackups.find((b) => path.basename(b.filename) === safeFilename && b.payload);
-    if (!found) {
-      return res.status(404).json({
-        success: false,
-        error: 'Arquivo de backup não encontrado no servidor ou no PostgreSQL.',
-      });
-    }
-
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
-    return res.send(JSON.stringify(found.payload, null, 2));
-  } catch (err: any) {
-    return handleRouterError(res, err, 'Erro ao baixar arquivo de backup.');
+    return handleRouterError(res, err, 'Erro ao gerar snapshot interno do PostgreSQL.');
   }
 });
 

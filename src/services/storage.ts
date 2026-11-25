@@ -82,6 +82,7 @@ import { criarBoletoTitulo, calcularDataVencimento } from '../utils/boletoGenera
 import {
   authFetch,
   logoutSession,
+  safeParseJson,
   savePriceVisibility as savePriceVisibilityApi,
   updateMyProfile,
 } from './authClient';
@@ -231,8 +232,8 @@ export const StorageService = {
     try {
       const res = await authFetch('/api/db/init', { cache: 'no-store' });
       if (!res.ok) return false;
-      const json = await res.json();
-      if (!json.success || !json.data) return false;
+      const json = await safeParseJson(res);
+      if (!json || !json.success || !json.data) return false;
 
       const {
         products,
@@ -390,7 +391,7 @@ export const StorageService = {
       try {
         const cartRes = await authFetch('/api/db/cart', { cache: 'no-store' });
         if (cartRes.ok) {
-          const cartJson = await cartRes.json();
+          const cartJson = await safeParseJson(cartRes);
           if (Array.isArray(cartJson?.items)) {
             memoryStore.set(STORAGE_KEYS.CART, cartJson.items);
           }
@@ -403,7 +404,7 @@ export const StorageService = {
         try {
           const favRes = await authFetch('/api/db/favorites', { cache: 'no-store' });
           if (favRes.ok) {
-            const favJson = await favRes.json();
+            const favJson = await safeParseJson(favRes);
             if (Array.isArray(favJson?.productIds)) {
               const map = getStored<Record<string, string[]>>(STORAGE_KEYS.FAVORITES, {});
               map[memoryCurrentUser.id] = favJson.productIds;
@@ -430,7 +431,7 @@ export const StorageService = {
   async getPostgresStatus(): Promise<any> {
     try {
       const res = await authFetch('/api/db/status');
-      return await res.json();
+      return (await safeParseJson(res)) || { success: false, error: 'Resposta inválida do servidor.' };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -439,7 +440,7 @@ export const StorageService = {
   async getVpsPreflightStatus(): Promise<any> {
     try {
       const res = await authFetch('/api/db/vps-preflight');
-      return await res.json();
+      return (await safeParseJson(res)) || { success: false, error: 'Resposta inválida do servidor.' };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -487,7 +488,7 @@ export const StorageService = {
       },
       body: JSON.stringify({ snapshot, dryRun }),
     });
-    return await res.json();
+    return (await safeParseJson(res)) || { success: false, error: 'Resposta inválida do servidor.' };
   },
   // Products
   getProducts(): Product[] {

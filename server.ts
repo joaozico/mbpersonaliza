@@ -101,6 +101,15 @@ async function startServer() {
   // Backup & Recuperação de Desastres (JSON Seguro e Agendado)
   app.use("/api/backup", backupRouter);
 
+  // Download / exportação externa do PostgreSQL desativada por política de segurança
+  app.use("/api/setup-postgres", (_req, res) => {
+    return res.status(403).json({
+      success: false,
+      code: "DB_DOWNLOAD_DISABLED",
+      error: "Funcionalidade de download do banco de dados PostgreSQL removida por política de segurança.",
+    });
+  });
+
   // Módulo de Orçamento de Custos e Precificação de Produtos
   app.use("/api/cost-pricing", costPricingRouter);
 
@@ -117,6 +126,15 @@ async function startServer() {
   app.use("/api/v1", strickerRouter);
   app.use("/downloads/v1SSL", strickerRouter);
   app.use("/downloads/v1", strickerRouter);
+
+  // Impede fallback de rotas /api/* inexistentes para index.html do SPA
+  app.use("/api", (_req, res) => {
+    return res.status(404).json({
+      success: false,
+      code: "API_ROUTE_NOT_FOUND",
+      error: "Rota de API não encontrada.",
+    });
+  });
 
   // Global API error handler (fail-closed HTTP 503 when PostgreSQL unavailable)
   app.use("/api", (err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

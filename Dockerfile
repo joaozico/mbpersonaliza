@@ -36,8 +36,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 
-# Adicionar curl para healthcheck do Docker Compose
-RUN apk add --no-cache curl tzdata
+# Adicionar curl, tzdata e postgresql-client (pg_dump, pg_restore, psql)
+RUN apk add --no-cache curl tzdata postgresql-client
 
 # Configurar timezone para América/São Paulo (Horário de Brasília)
 ENV TZ=America/Sao_Paulo

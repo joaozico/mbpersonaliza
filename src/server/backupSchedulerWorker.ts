@@ -146,7 +146,6 @@ export async function getServerBackupHistory(): Promise<BackupHistoryEntry[]> {
         orders: Number(row.counts?.orders || 0),
       },
       storedOnServer: onDisk || true,
-      downloadUrl: `/api/backup/download/${encodeURIComponent(safeFilename)}`,
     };
   });
 }
@@ -270,7 +269,6 @@ export async function executeServerBackup(
       orders: metadata.counts.orders,
     },
     storedOnServer: config.saveOnServer !== false,
-    downloadUrl: `/api/backup/download/${encodeURIComponent(filename)}`,
   };
 
   // Grava na tabela `backups` do PostgreSQL e aplica política de retenção no banco

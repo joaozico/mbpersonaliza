@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Product, Category, Subcategory, CartItem, UserProfile, ProductVariant, CompanySettings, BackupHistoryEntry } from './types';
 import { StorageService, VISITOR_PROFILE } from './services/storage';
-import { bootstrapSession, authFetch } from './services/authClient';
+import { bootstrapSession, authFetch, safeParseJson } from './services/authClient';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { CartDrawer } from './components/CartDrawer';
@@ -194,7 +194,7 @@ export default function App() {
       try {
         const res = await fetch('/api/system/maintenance', { cache: 'no-store' });
         if (res.ok) {
-          const data = await res.json();
+          const data = await safeParseJson(res);
           if (active && data && data.maintenance) {
             StorageService.setMaintenanceMemory(data.maintenance);
             setCompanySettings(StorageService.getCompanySettings());
@@ -333,18 +333,6 @@ export default function App() {
           cfg.lastRunMessage = 'Backup agendado executado automaticamente.';
           cfg.nextRunAt = StorageService.calculateNextBackupRun(cfg);
           StorageService.saveBackupScheduleConfig(cfg);
-
-          if (cfg.autoDownloadBrowser) {
-            const blob = new Blob([backup.jsonString], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = backup.filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-          }
 
           try {
             await authFetch('/api/backup/export', {

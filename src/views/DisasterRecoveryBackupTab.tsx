@@ -3,7 +3,6 @@ import {
   ShieldCheck,
   Calendar,
   Clock,
-  Download,
   Upload,
   RefreshCw,
   CheckCircle2,
@@ -77,14 +76,15 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
     try {
       const res = await authFetch('/api/db/status');
       const data = await res.json();
+      const isOk = Boolean(res.ok && data?.success);
       setPostgresInfo({
         loading: false,
         data,
         testedAt: new Date().toLocaleTimeString('pt-BR'),
-        testSuccess: data.success,
-        testMessage: data.success
-          ? `Conexão validada com Cloud SQL PostgreSQL (${data.databaseName || 'banco oficial'}). Persistência independente ativa.`
-          : 'Não foi possível validar o status do PostgreSQL.',
+        testSuccess: isOk,
+        testMessage: isOk
+          ? `Conexão validada com PostgreSQL (${data.currentDatabase || data.databaseName || 'mb_personaliza'}). Persistência independente ativa.`
+          : data?.error || 'PostgreSQL desconectado ou aguardando configuração de ambiente.',
       });
     } catch (err: any) {
       setPostgresInfo({
@@ -258,25 +258,13 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
     setTimeout(() => setCopiedId(null), 2500);
   };
 
-  // Immediate Manual Export
+  // Immediate Internal Server Snapshot (Sem download no navegador)
   const handleExportNow = async () => {
     setIsExporting(true);
     try {
-      // 1. Gera backup seguro no frontend
+      // 1. Registra snapshot interno no servidor e no PostgreSQL
       const backupResult = StorageService.generateSecureBackupJson({ trigger: 'manual' });
 
-      // 2. Dispara download direto no navegador do usuário
-      const blob = new Blob([backupResult.jsonString], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = backupResult.filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-      // 3. Registra no histórico local
       const newEntry: BackupHistoryEntry = {
         id: `bkp-manual-${Date.now()}`,
         filename: backupResult.filename,
@@ -295,27 +283,25 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
       };
       StorageService.addBackupHistoryEntry(newEntry);
 
-      // 4. Salva também cópia no servidor Express via API
       try {
         await authFetch('/api/backup/export', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             trigger: 'manual',
-            clientPayload: backupResult.payload,
           }),
         });
       } catch (srvErr) {
-        console.warn('Cópia de backup no servidor completada localmente:', srvErr);
+        console.warn('Snapshot interno no servidor completado localmente:', srvErr);
       }
 
       setHistory(StorageService.getBackupHistory());
       showNotification(
         'success',
-        `Backup seguro gerado e baixado com sucesso! Arquivo: ${backupResult.filename} (${backupResult.sizeFormatted})`
+        `Snapshot interno protegido no servidor com sucesso! Registro: ${backupResult.filename} (${backupResult.sizeFormatted})`
       );
     } catch (err: any) {
-      showNotification('error', `Falha ao gerar backup: ${err.message || 'Erro desconhecido'}`);
+      showNotification('error', `Falha ao gerar snapshot interno: ${err.message || 'Erro desconhecido'}`);
     } finally {
       setIsExporting(false);
     }
@@ -391,22 +377,6 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
     }
   };
 
-  // Download a partir do histórico
-  const handleDownloadFromHistory = (entry: BackupHistoryEntry) => {
-    // Se existir cópia completa no storage ou API
-    const backupResult = StorageService.generateSecureBackupJson({ trigger: 'manual' });
-    const blob = new Blob([backupResult.jsonString], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = entry.filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showNotification('success', `Download do backup ${entry.filename} iniciado!`);
-  };
-
   // Itens em proteção em tempo real
   const currentCounts = useMemo(() => {
     return {
@@ -459,8 +429,8 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
                 </>
               ) : (
                 <>
-                  <Download className="w-4 h-4 text-[#FFDD00]" />
-                  <span>Exportar & Baixar Agora</span>
+                  <HardDrive className="w-4 h-4 text-[#FFDD00]" />
+                  <span>Gerar Snapshot Interno</span>
                 </>
               )}
             </button>
@@ -772,22 +742,6 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
                   </div>
                 </label>
 
-                <label className="flex items-start gap-2.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={config.autoDownloadBrowser}
-                    onChange={(e) => setConfig({ ...config, autoDownloadBrowser: e.target.checked })}
-                    className="w-4 h-4 mt-0.5 rounded text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <div>
-                    <span className="text-xs font-bold text-slate-800 block">
-                      Download Automático no Navegador
-                    </span>
-                    <span className="text-[11px] text-slate-500">
-                      Salva o arquivo .json diretamente na pasta de downloads quando executado na sessão ativa.
-                    </span>
-                  </div>
-                </label>
               </div>
             </div>
           </div>
@@ -923,8 +877,8 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
                 disabled={isExporting}
                 className="px-3.5 py-2 text-xs font-bold rounded-xl bg-slate-900 text-white hover:bg-[#E6007E] transition-all flex items-center gap-1.5 cursor-pointer"
               >
-                <Download className="w-3.5 h-3.5" />
-                <span>Nova Exportação</span>
+                <HardDrive className="w-3.5 h-3.5" />
+                <span>Novo Snapshot</span>
               </button>
             </div>
           </div>
@@ -934,7 +888,7 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
               <FileJson className="w-12 h-12 text-slate-300 mx-auto" />
               <h4 className="text-sm font-bold text-slate-700">Nenhum backup arquivado no histórico</h4>
               <p className="text-xs text-slate-400 max-w-md mx-auto">
-                Clique no botão "Exportar & Baixar Agora" para gerar sua primeira cópia de segurança imediatamente.
+                Clique no botão "Gerar Snapshot Interno" para criar sua primeira cópia de segurança protegida no servidor.
               </p>
               <button
                 onClick={handleExportNow}
@@ -1024,13 +978,6 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
 
                       <td className="py-3.5 px-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            onClick={() => handleDownloadFromHistory(item)}
-                            className="p-1.5 rounded-lg text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer"
-                            title="Baixar Arquivo JSON"
-                          >
-                            <Download className="w-4 h-4" />
-                          </button>
 
                           <button
                             onClick={() => {
@@ -1194,16 +1141,22 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
             <div>
               <div className="flex items-center gap-2">
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
-                  Infraestrutura Oficial Ativa
+                <span
+                  className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase border ${
+                    postgresInfo.testSuccess
+                      ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                      : 'bg-amber-100 text-amber-800 border-amber-200'
+                  }`}
+                >
+                  {postgresInfo.testSuccess ? 'PostgreSQL Conectado' : 'Aguardando PostgreSQL VPS'}
                 </span>
-                <span className="text-xs text-slate-400 font-mono">Região: us-east1</span>
+                <span className="text-xs text-slate-400 font-mono">Engine: PostgreSQL 16</span>
               </div>
               <h3 className="text-xl font-heading font-extrabold text-slate-900 uppercase mt-1">
                 Banco de Dados PostgreSQL Independente
               </h3>
               <p className="text-xs text-slate-500 max-w-2xl">
-                O PostgreSQL é a <strong>fonte oficial e obrigatória de todos os dados do sistema</strong>. A infraestrutura do banco de dados está desacoplada e é totalmente independente da hospedagem da aplicação, garantindo persistência perene mesmo após reinicializações, manutenções ou substituições do servidor web.
+                O PostgreSQL é a <strong>fonte oficial e obrigatória de todos os dados do sistema</strong>. A infraestrutura do banco de dados está desacoplada em volume persistente (<code className="px-1 bg-slate-100 rounded">postgres_data</code>) independente dos containers da aplicação na Hostinger VPS.
               </p>
             </div>
 
@@ -1213,7 +1166,7 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
               className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-[#00AEEF] text-white text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer self-start sm:self-auto shrink-0"
             >
               <RefreshCw className={`w-4 h-4 ${postgresInfo.loading ? 'animate-spin' : ''}`} />
-              <span>Verificar Conexão e Integridade</span>
+              <span>Verificar Conexão PostgreSQL</span>
             </button>
           </div>
 
@@ -1248,9 +1201,9 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
               <div className="w-9 h-9 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center font-bold">
                 <Database className="w-5 h-5" />
               </div>
-              <h4 className="font-bold text-sm text-slate-900">PostgreSQL Gerenciado</h4>
+              <h4 className="font-bold text-sm text-slate-900">PostgreSQL 16 Dedicado</h4>
               <p className="text-xs text-slate-600 leading-relaxed">
-                Instância dedicada no Google Cloud SQL (PostgreSQL Developer Edition), com pool de conexões otimizado, controle transacional e alta disponibilidade.
+                44 tabelas relacionais, 22 índices, chaves estrangeiras, pool de conexões gerenciado e transações atômicas via Drizzle ORM e node-postgres.
               </p>
             </div>
 
@@ -1258,9 +1211,9 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
               <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold">
                 <HardDrive className="w-5 h-5" />
               </div>
-              <h4 className="font-bold text-sm text-slate-900">Desacoplamento da Hospedagem</h4>
+              <h4 className="font-bold text-sm text-slate-900">Desacoplamento da Aplicação</h4>
               <p className="text-xs text-slate-600 leading-relaxed">
-                Os dados não ficam no disco temporário da hospedagem. Atualizações de código, deploys ou reinicializações do servidor web não alteram nem perdem os registros.
+                Container <code className="px-1 bg-white rounded border border-slate-200">postgres:16-alpine</code> com volume persistente <code className="px-1 bg-white rounded border border-slate-200">postgres_data</code>: rebuilds e atualizações preservam 100% dos registros.
               </p>
             </div>
 
@@ -1268,9 +1221,9 @@ export const DisasterRecoveryBackupTab: React.FC<DisasterRecoveryBackupTabProps>
               <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
                 <ShieldCheck className="w-5 h-5" />
               </div>
-              <h4 className="font-bold text-sm text-slate-900">Segurança & Credenciais</h4>
+              <h4 className="font-bold text-sm text-slate-900">Rede Interna & Credenciais</h4>
               <p className="text-xs text-slate-600 leading-relaxed">
-                Conexão criptografada via Cloud SQL Auth Proxy com credenciais protegidas por variáveis de ambiente, sem exposição pública de portas de banco de dados.
+                Comunicação restrita à rede Docker <code className="px-1 bg-white rounded border border-slate-200">mb_network</code> sem exposição pública da porta 5432, com SSL/TLS e variáveis de ambiente.
               </p>
             </div>
           </div>
